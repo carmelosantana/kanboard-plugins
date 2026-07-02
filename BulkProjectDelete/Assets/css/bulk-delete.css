@@ -14,6 +14,19 @@
     display: none !important;
 }
 
+/* ── Focus-visible rings (accessibility — task-06) ───────────────────────── */
+/* Applied to all interactive BPD elements so keyboard users see a clear ring.
+ * :focus-visible avoids showing rings on mouse click in supporting browsers.
+ * TODO(kbx-tokens): replace #4a6fa5 with var(--kbx-color-primary).
+ */
+.bpd-btn:focus-visible,
+.bpd-typed-confirm__input:focus-visible,
+input.bpd-cb:focus-visible,
+input#bpd-select-all:focus-visible {
+    outline: 3px solid #4a6fa5;     /* TODO(kbx-tokens): var(--kbx-color-primary) */
+    outline-offset: 2px;
+}
+
 /* ── Toolbar toggle button ───────────────────────────────────────────────── */
 .bpd-btn {
     display: inline-flex;
@@ -110,4 +123,111 @@
 .bpd-toolbar-item {
     display: inline-flex;
     align-items: center;
+}
+
+/* ── Confirm modal layout (task-06) ──────────────────────────────────────── */
+.bpd-confirm-wrap {
+    padding: 16px;
+}
+
+.bpd-confirm-title {
+    margin-top: 0;
+    font-size: 1.2em;
+}
+
+/* ── Irreversibility warning — prominent, unmissable (task-06) ───────────── */
+/* The --critical modifier makes the warning visually stand out as the most
+ * important element on the page. aria-live="assertive" + role="alert" ensure
+ * screen-readers announce it immediately on page load.
+ * TODO(kbx-tokens): replace hard-coded danger colours with var(--kbx-color-danger-*).
+ */
+.bpd-confirm-warning--critical {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 12px 0 16px;
+    padding: 12px 16px;
+    border: 2px solid #a93226;          /* TODO(kbx-tokens): var(--kbx-color-danger-dark) */
+    border-radius: 4px;
+    background: #fdf3f2;                /* TODO(kbx-tokens): var(--kbx-color-danger-subtle) */
+    color: #7b2020;                     /* TODO(kbx-tokens): var(--kbx-color-danger-text) */
+}
+
+.bpd-warning-headline {
+    font-size: 1em;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.bpd-warning-detail {
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+/* ── Impact table ────────────────────────────────────────────────────────── */
+.bpd-impact-table {
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+.bpd-col-num {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.bpd-totals-row th {
+    font-weight: 700;
+}
+
+/* ── Typed-confirmation input block (task-06) ────────────────────────────── */
+.bpd-typed-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 16px 0;
+}
+
+.bpd-typed-confirm__label {
+    font-weight: 600;
+    font-size: 0.95em;
+}
+
+.bpd-typed-confirm__label strong {
+    font-family: monospace;
+    color: #a93226;                     /* TODO(kbx-tokens): var(--kbx-color-danger-dark) */
+    letter-spacing: 0.05em;
+}
+
+.bpd-typed-confirm__input {
+    width: 200px;
+    max-width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #bbb;            /* TODO(kbx-tokens): var(--kbx-color-border) */
+    border-radius: 3px;
+    font-size: 1em;
+    font-family: monospace;
+    letter-spacing: 0.08em;
+}
+
+.bpd-typed-confirm__input::placeholder {
+    color: #aaa;
+    letter-spacing: 0.05em;
+}
+
+.bpd-typed-confirm__hint {
+    font-size: 0.82em;
+    color: #666;                        /* TODO(kbx-tokens): var(--kbx-color-text-muted) */
+}
+
+/* ── Confirm action buttons row ──────────────────────────────────────────── */
+.bpd-confirm-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.bpd-btn--cancel {
+    text-decoration: none;
 }

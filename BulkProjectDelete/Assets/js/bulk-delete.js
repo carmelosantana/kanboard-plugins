@@ -253,9 +253,72 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
         }
     }
 
+    // ── Typed-confirmation arm/disarm (task-06) ────────────────────────────────
+    //
+    // The confirm modal (Template/remove/confirm.php) contains:
+    //   #bpd-confirm-form  — POST form with csrf + hidden project_ids[]
+    //   #bpd-confirm-input — text input the user must type DELETE into
+    //   #bpd-submit-btn    — submit button; disabled until armed
+    //
+    // Strategy: on every `input` event, compare the trimmed value to 'DELETE'
+    // (exact, case-sensitive).  Toggle disabled + aria-disabled accordingly.
+    // We do NOT prevent native form submission — when the button is enabled the
+    // browser submits #bpd-confirm-form normally (action, method, csrf, ids are
+    // all already in the form markup).
+    //
+    // bindConfirmGate() is called once, after the modal's HTML has been injected
+    // into the DOM (see onDeleteClick → form.submit() navigates away, so the
+    // gate lives on the confirm page itself; but if a future modal injection
+    // approach is used, call bindConfirmGate() after innerHTML is set).
+
+    function bindConfirmGate() {
+        var confirmInput = document.getElementById('bpd-confirm-input');
+        var submitBtn    = document.getElementById('bpd-submit-btn');
+
+        if (!confirmInput || !submitBtn) {
+            return; // not on the confirm page — nothing to wire
+        }
+
+        function arm() {
+            submitBtn.disabled = false;
+            submitBtn.removeAttribute('aria-disabled');
+        }
+
+        function disarm() {
+            submitBtn.disabled = true;
+            submitBtn.setAttribute('aria-disabled', 'true');
+        }
+
+        function onConfirmInput() {
+            // Exact match, case-sensitive: user must type DELETE.
+            if (confirmInput.value === 'DELETE') {
+                arm();
+            } else {
+                disarm();
+            }
+        }
+
+        confirmInput.addEventListener('input', onConfirmInput);
+
+        // Guard: if the form is somehow submitted while the button is still
+        // disabled (e.g. via keyboard Enter on the input), abort.
+        var form = document.getElementById('bpd-confirm-form');
+        if (form) {
+            form.addEventListener('submit', function (e) {
+                if (confirmInput.value !== 'DELETE') {
+                    e.preventDefault();
+                    confirmInput.focus();
+                }
+            });
+        }
+    }
+
     // ── Component entry point ──────────────────────────────────────────────────
 
     this.render = function () {
         bindStaticButtons();
+        // Wire typed-confirm gate if we are already on the confirm page
+        // (e.g. the page was loaded as a full page rather than via modal injection).
+        bindConfirmGate();
     };
 });
