@@ -3,18 +3,25 @@
 namespace Kanboard\Plugin\FeatureSync;
 
 use Kanboard\Core\Plugin\Base;
+use Kanboard\Plugin\FeatureSync\Model\FeatureSyncModel;
 
 class Plugin extends Base
 {
     public function initialize()
     {
+        // Register FeatureSyncModel in the DI container.
+        $this->container['featureSyncModel'] = function ($c) {
+            return new FeatureSyncModel($c);
+        };
+
         // Sidebar link in Settings (admin context)
         $this->hook->on('template:config:sidebar', [
             'template' => 'FeatureSync:config/sidebar',
         ]);
 
-        // Route to the admin page
-        $this->route->addRoute('feature-sync', 'FeatureSync:FeatureSyncController', 'index');
+        // Route to the admin page.
+        // addRoute($path, $controller, $action, $plugin)  — see Core/Http/Route.php:61
+        $this->route->addRoute('feature-sync', 'FeatureSyncController', 'index', 'FeatureSync');
     }
 
     public function getPluginName()        { return 'FeatureSync'; }
