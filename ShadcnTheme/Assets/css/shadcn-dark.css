@@ -1,0 +1,394 @@
+/*!
+ * ShadcnTheme Dark Mode
+ * Dark theme colors inspired by shadcn/ui design system
+ * Author: Carmelo Santana <carmelo@carmelosantana.com>
+ * License: MIT
+ */
+
+/* ================================
+   SHADCN DARK THEME COLORS
+   ================================ */
+
+.theme-dark {
+  color-scheme: dark;
+  
+  /* Base colors using OKLCH color space for better perceptual uniformity */
+  --background: oklch(0.147 0.004 49.25);              /* Dark slate */
+  --foreground: oklch(0.985 0.001 106.423);           /* Off white */
+  
+  /* Card colors */
+  --card: oklch(0.216 0.006 56.043);                  /* Darker slate */
+  --card-foreground: oklch(0.985 0.001 106.423);       /* Off white */
+  
+  /* Popover colors */
+  --popover: oklch(0.216 0.006 56.043);               /* Darker slate */
+  --popover-foreground: oklch(0.985 0.001 106.423);    /* Off white */
+  
+  /* Primary colors - lighter for dark theme */
+  --primary: oklch(0.923 0.003 48.717);               /* Light gray */
+  --primary-foreground: oklch(0.216 0.006 56.043);     /* Dark slate */
+  
+  /* Secondary colors */
+  --secondary: oklch(0.268 0.007 34.298);             /* Dark gray */
+  --secondary-foreground: oklch(0.985 0.001 106.423);  /* Off white */
+  
+  /* Muted colors */
+  --muted: oklch(0.268 0.007 34.298);                 /* Dark gray */
+  --muted-foreground: oklch(0.709 0.01 56.259);       /* Medium gray */
+  
+  /* Accent colors */
+  --accent: oklch(0.268 0.007 34.298);                /* Dark gray */
+  --accent-foreground: oklch(0.985 0.001 106.423);     /* Off white */
+  
+  /* Destructive colors */
+  --destructive: oklch(0.704 0.191 22.216);           /* Red for dark theme */
+  --destructive-foreground: oklch(0.985 0.001 106.423); /* Off white */
+  
+  /* Border and input colors */
+  --border: oklch(1 0 0 / 10%);                       /* Subtle border */
+  --input: oklch(1 0 0 / 15%);                        /* Input border */
+  --ring: oklch(0.553 0.013 58.071);                  /* Focus ring */
+  
+  /* Chart colors for dark theme */
+  --chart-1: oklch(0.488 0.243 264.376);              /* Blue */
+  --chart-2: oklch(0.696 0.17 162.48);                /* Teal */
+  --chart-3: oklch(0.769 0.188 70.08);                /* Orange */
+  --chart-4: oklch(0.627 0.265 303.9);                /* Purple */
+  --chart-5: oklch(0.645 0.246 16.439);               /* Red */
+}
+
+/* ================================
+   KANBOARD DARK THEME OVERRIDES
+   ================================ */
+
+.theme-dark {
+  /* Override Kanboard's existing CSS variables with shadcn dark colors */
+  --body-background-color: var(--background);
+  --header-background-color: var(--background);
+  --color-primary: var(--foreground);
+  --color-light: var(--muted-foreground);
+  --color-lighter: var(--muted);
+  --color-dark: var(--background);
+  --color-medium: var(--muted-foreground);
+  --color-error: var(--destructive);
+  
+  /* Link colors */
+  --link-color-primary: var(--primary);
+  --link-color-focus: oklch(0.8 0.003 48.717);
+  --link-color-hover: oklch(0.8 0.003 48.717);
+  
+  /* Alert colors */
+  --alert-color-default: var(--foreground);
+  --alert-color-success: oklch(0.6 0.127 164.4);
+  --alert-color-error: oklch(0.8 0.191 22.216);
+  --alert-color-info: oklch(0.7 0.118 184.704);
+  --alert-color-normal: var(--foreground);
+  
+  --alert-background-color-default: var(--muted);
+  --alert-background-color-success: oklch(0.2 0.024 164.4);
+  --alert-background-color-error: oklch(0.25 0.038 22.216);
+  --alert-background-color-info: oklch(0.2 0.019 184.704);
+  --alert-background-color-normal: var(--muted);
+  
+  --alert-border-color-default: var(--border);
+  --alert-border-color-success: oklch(0.4 0.127 164.4);
+  --alert-border-color-error: oklch(0.5 0.191 22.216);
+  --alert-border-color-info: oklch(0.4 0.118 184.704);
+  --alert-border-color-normal: var(--border);
+  
+  /* Button colors */
+  --button-default-color: var(--secondary-foreground);
+  --button-default-background-color: var(--secondary);
+  --button-default-border-color: var(--border);
+  --button-default-color-focus: var(--secondary-foreground);
+  --button-default-background-color-focus: var(--accent);
+  --button-default-border-color-focus: var(--border);
+  
+  --button-primary-color: var(--primary-foreground);
+  --button-primary-background-color: var(--primary);
+  --button-primary-border-color: var(--primary);
+  --button-primary-color-focus: var(--primary-foreground);
+  --button-primary-background-color-focus: oklch(0.8 0.003 48.717);
+  --button-primary-border-color-focus: oklch(0.8 0.003 48.717);
+  
+  --button-danger-color: var(--destructive-foreground);
+  --button-danger-background-color: var(--destructive);
+  --button-danger-border-color: var(--destructive);
+  --button-danger-color-focus: var(--destructive-foreground);
+  --button-danger-background-color-focus: oklch(0.6 0.191 22.216);
+  --button-danger-border-color-focus: oklch(0.6 0.191 22.216);
+  
+  /* Table colors */
+  --table-header-background-color: var(--muted);
+  --table-nth-background-color: oklch(0.18 0.005 49.25);
+  --table-border-color: var(--border);
+  
+  /* Board and task colors */
+  --board-task-limit-color: var(--destructive);
+  
+  /* Input colors */
+  --input-focus-color: var(--foreground);
+  --input-focus-border-color: var(--ring);
+  --input-focus-shadow-color: var(--ring);
+  --input-background-color: var(--muted);
+  --input-border-color: var(--border);
+  --input-placeholder-color: var(--muted-foreground);
+  
+  /* Dropdown colors */
+  --dropdown-background-color: var(--popover);
+  --dropdown-border-color: var(--border);
+  --dropdown-li-border-color: var(--border);
+  
+  /* Sidebar colors */
+  --sidebar-border-color: var(--border);
+  
+  /* Panel colors */
+  --panel-background-color: var(--card);
+  --panel-border-color: var(--border);
+  
+  /* Tooltip colors */
+  --tooltip-background-color: var(--popover);
+  --tooltip-border-color: var(--border);
+  --tooltip-shadow-color: oklch(0 0 0 / 0.5);
+  
+  /* Activity colors */
+  --activity-title-color: var(--foreground);
+  --activity-title-border-color: var(--border);
+  --activity-event-background-color: var(--muted);
+  --activity-event-hover-color: var(--accent);
+  
+  /* Comment colors */
+  --comment-title-border-color: var(--border);
+  --comment-nth-background-color: var(--muted);
+  --comment-highlighted-background-color: var(--accent);
+  --comment-highlighted-hover-background-color: var(--accent);
+  --comment-highlighted-border-color: var(--border);
+  
+  /* Draggable colors */
+  --draggable-item-selected-background-color: var(--background);
+  --draggable-item-selected-border-color: var(--primary);
+  --draggable-item-hover-background-color: var(--accent);
+  --draggable-row-handle-color: var(--muted-foreground);
+  --draggable-placeholder-background-color: var(--muted);
+  --draggable-placeholder-border-color: var(--border);
+  
+  /* Form colors */
+  --form-help-color: var(--muted-foreground);
+  --form-error-color: var(--destructive);
+  
+  /* Avatar colors */
+  --avatar-color-letter: var(--primary-foreground);
+  
+  /* Task list colors */
+  --task-list-icons-color: var(--muted-foreground);
+  
+  /* User mention colors */
+  --user-mention-color: var(--primary);
+  
+  /* Table list colors */
+  --table-list-header-border-color: var(--border);
+  --table-list-header-background-color: var(--muted);
+  --table-list-nth-background-color: oklch(0.18 0.005 49.25);
+  --table-list-border-color: var(--border);
+  --table-list-row-hover-border-color: var(--border);
+  --table-list-row-background-color: var(--accent);
+  
+  /* Input addon colors */
+  --input-addon-background-color: var(--muted);
+  --input-addon-color: var(--muted-foreground);
+  
+  /* Views colors */
+  --views-background-color: var(--muted);
+  --views-border-color: var(--border);
+  --views-active-color: var(--foreground);
+}
+
+/* ================================
+   DARK THEME SPECIFIC ADJUSTMENTS
+   ================================ */
+
+.theme-dark .page-header h2 {
+  color: var(--foreground);
+  border-bottom-color: var(--border);
+}
+
+.theme-dark header {
+  background-color: var(--background);
+  border-bottom-color: var(--border);
+}
+
+.theme-dark .sidebar {
+  background-color: var(--background);
+  border-right-color: var(--border);
+}
+
+.theme-dark #modal-box {
+  background-color: var(--card);
+  border-color: var(--border);
+}
+
+.theme-dark .table-list-header {
+  background-color: var(--muted);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
+
+.theme-dark .table-list-row {
+  border-bottom-color: var(--border);
+}
+
+.theme-dark .table-list-row:hover {
+  background-color: var(--accent);
+}
+
+/* Dark theme task board styling */
+.theme-dark .task-board {
+  background-color: var(--card);
+  border-color: var(--border);
+  color: var(--card-foreground);
+}
+
+.theme-dark .task-board:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+/* Dark theme board styling */
+.theme-dark .board-column-header {
+  background-color: var(--card);
+  border-color: var(--border);
+  color: var(--card-foreground);
+}
+
+.theme-dark .board-task-list {
+  background-color: var(--muted);
+  border-color: var(--border);
+}
+
+/* Dark theme form styling */
+.theme-dark input[type="text"]:not(.input-addon-field),
+.theme-dark input[type="email"],
+.theme-dark input[type="password"],
+.theme-dark input[type="number"],
+.theme-dark input[type="date"],
+.theme-dark select,
+.theme-dark textarea {
+  background-color: var(--muted);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.theme-dark input[type="text"]:not(.input-addon-field)::placeholder,
+.theme-dark input[type="email"]::placeholder,
+.theme-dark input[type="password"]::placeholder,
+.theme-dark textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+/* Dark theme link styling */
+.theme-dark a {
+  color: var(--primary);
+}
+
+.theme-dark a:hover {
+  color: oklch(0.8 0.003 48.717);
+}
+
+/* ================================
+   DARK THEME DROPDOWN IMPROVEMENTS
+   ================================ */
+
+.theme-dark .dropdown-submenu-open,
+.theme-dark #select-dropdown-menu {
+  background-color: var(--popover);
+  border-color: var(--border);
+  color: var(--popover-foreground);
+}
+
+.theme-dark .dropdown-submenu-open li,
+.theme-dark .select-dropdown-menu-item {
+  color: var(--popover-foreground);
+}
+
+.theme-dark .dropdown-submenu-open li:hover,
+.theme-dark .dropdown-submenu-open li:not(.no-hover):hover,
+.theme-dark .select-dropdown-menu-item:hover,
+.theme-dark .select-dropdown-menu-item.active {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* ================================
+   DARK THEME ACCESSIBILITY
+   ================================ */
+
+.theme-dark a:focus-visible,
+.theme-dark button:focus-visible,
+.theme-dark input:focus-visible,
+.theme-dark select:focus-visible,
+.theme-dark textarea:focus-visible,
+.theme-dark [tabindex]:focus-visible {
+  outline-color: var(--ring);
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Better contrast for dark theme text selection */
+.theme-dark ::selection {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* ================================
+   IMPROVED VISUAL HIERARCHY
+   ================================ */
+
+.theme-dark h1,
+.theme-dark h2,
+.theme-dark h3,
+.theme-dark h4,
+.theme-dark h5,
+.theme-dark h6 {
+  color: var(--foreground);
+}
+
+.theme-dark .text-muted {
+  color: var(--muted-foreground);
+}
+
+.theme-dark .bg-muted {
+  background-color: var(--muted);
+}
+
+/* ================================
+   SCROLLBAR STYLING FOR DARK THEME
+   ================================ */
+
+.theme-dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.theme-dark ::-webkit-scrollbar-track {
+  background-color: var(--muted);
+  border-radius: var(--radius);
+}
+
+.theme-dark ::-webkit-scrollbar-thumb {
+  background-color: var(--muted-foreground);
+  border-radius: var(--radius);
+}
+
+.theme-dark ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--foreground);
+}
+
+/* ================================
+   DARK THEME CODE BLOCKS
+   ================================ */
+
+.theme-dark .markdown pre,
+.theme-dark code {
+  background-color: var(--muted);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}

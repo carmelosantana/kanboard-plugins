@@ -1,0 +1,318 @@
+/*!
+ * ShadcnTheme Light Mode
+ * Light theme colors inspired by shadcn/ui design system
+ * Author: Carmelo Santana <carmelo@carmelosantana.com>
+ * License: MIT
+ */
+
+/* ================================
+   SHADCN LIGHT THEME COLORS
+   ================================ */
+
+:root {
+  /* Base colors using OKLCH color space for better perceptual uniformity */
+  --background: oklch(1 0 0);                          /* Pure white */
+  --foreground: oklch(0.15 0.004 49.25);              /* Near black */
+  
+  /* Card colors */
+  --card: oklch(1 0 0);                                /* White */
+  --card-foreground: oklch(0.15 0.004 49.25);         /* Near black */
+  
+  /* Popover colors */
+  --popover: oklch(1 0 0);                             /* White */
+  --popover-foreground: oklch(0.15 0.004 49.25);      /* Near black */
+  
+  /* Primary colors - shadcn slate */
+  --primary: oklch(0.216 0.006 56.043);               /* Dark slate */
+  --primary-foreground: oklch(0.985 0.001 106.423);   /* Off white */
+  
+  /* Secondary colors */
+  --secondary: oklch(0.97 0.001 106.424);             /* Light gray */
+  --secondary-foreground: oklch(0.216 0.006 56.043);  /* Dark slate */
+  
+  /* Muted colors */
+  --muted: oklch(0.97 0.001 106.424);                 /* Light gray */
+  --muted-foreground: oklch(0.553 0.013 58.071);      /* Medium gray */
+  
+  /* Accent colors */
+  --accent: oklch(0.97 0.001 106.424);                /* Light gray */
+  --accent-foreground: oklch(0.216 0.006 56.043);     /* Dark slate */
+  
+  /* Destructive colors */
+  --destructive: oklch(0.627 0.241 29.699);           /* Red */
+  --destructive-foreground: oklch(0.985 0.001 106.423); /* Off white */
+  
+  /* Border and input colors */
+  --border: oklch(0.923 0.003 48.717);                /* Light border */
+  --input: oklch(0.923 0.003 48.717);                 /* Light input border */
+  --ring: oklch(0.216 0.006 56.043);                  /* Focus ring */
+  
+  /* Chart colors */
+  --chart-1: oklch(0.646 0.222 41.116);               /* Blue */
+  --chart-2: oklch(0.6 0.118 184.704);                /* Teal */
+  --chart-3: oklch(0.398 0.07 227.392);               /* Purple */
+  --chart-4: oklch(0.828 0.189 84.429);               /* Yellow */
+  --chart-5: oklch(0.769 0.188 70.08);                /* Orange */
+}
+
+/* Theme class to control when light theme is active */
+.theme-light,
+:root:not(.theme-dark) {
+  color-scheme: light;
+}
+
+/* ================================
+   KANBOARD SPECIFIC OVERRIDES
+   ================================ */
+
+/* Update existing Kanboard variables to use shadcn colors */
+:root {
+  /* Override Kanboard's existing CSS variables with shadcn colors */
+  --body-background-color: var(--background);
+  --header-background-color: var(--card);
+  --color-primary: var(--foreground);
+  --color-light: var(--muted-foreground);
+  --color-lighter: var(--muted);
+  --color-dark: var(--foreground);
+  --color-medium: var(--muted-foreground);
+  --color-error: var(--destructive);
+  
+  /* Link colors */
+  --link-color-primary: var(--primary);
+  --link-color-focus: var(--primary);
+  --link-color-hover: var(--primary);
+  
+  /* Alert colors */
+  --alert-color-default: var(--foreground);
+  --alert-color-success: oklch(0.468 0.127 164.4);
+  --alert-color-error: var(--destructive);
+  --alert-color-info: oklch(0.6 0.118 184.704);
+  --alert-color-normal: var(--foreground);
+  
+  --alert-background-color-default: var(--background);
+  --alert-background-color-success: oklch(0.946 0.024 164.4);
+  --alert-background-color-error: oklch(0.971 0.038 29.699);
+  --alert-background-color-info: oklch(0.956 0.019 184.704);
+  --alert-background-color-normal: var(--muted);
+  
+  --alert-border-color-default: var(--border);
+  --alert-border-color-success: oklch(0.468 0.127 164.4);
+  --alert-border-color-error: var(--destructive);
+  --alert-border-color-info: oklch(0.6 0.118 184.704);
+  --alert-border-color-normal: var(--border);
+  
+  /* Button colors */
+  --button-default-color: var(--secondary-foreground);
+  --button-default-background-color: var(--secondary);
+  --button-default-border-color: var(--border);
+  --button-default-color-focus: var(--secondary-foreground);
+  --button-default-background-color-focus: var(--accent);
+  --button-default-border-color-focus: var(--border);
+  
+  --button-primary-color: var(--primary-foreground);
+  --button-primary-background-color: var(--primary);
+  --button-primary-border-color: var(--primary);
+  --button-primary-color-focus: var(--primary-foreground);
+  --button-primary-background-color-focus: var(--primary);
+  --button-primary-border-color-focus: var(--primary);
+  
+  --button-danger-color: var(--destructive-foreground);
+  --button-danger-background-color: var(--destructive);
+  --button-danger-border-color: var(--destructive);
+  --button-danger-color-focus: var(--destructive-foreground);
+  --button-danger-background-color-focus: var(--destructive);
+  --button-danger-border-color-focus: var(--destructive);
+  
+  /* Table colors */
+  --table-header-background-color: var(--muted);
+  --table-nth-background-color: var(--background);
+  --table-border-color: var(--border);
+  
+  /* Board and task colors */
+  --board-task-limit-color: var(--destructive);
+  
+  /* Input colors */
+  --input-focus-color: var(--foreground);
+  --input-focus-border-color: var(--ring);
+  --input-focus-shadow-color: var(--ring);
+  --input-background-color: var(--background);
+  --input-border-color: var(--input);
+  --input-placeholder-color: var(--muted-foreground);
+  
+  /* Dropdown colors */
+  --dropdown-background-color: var(--popover);
+  --dropdown-border-color: var(--border);
+  --dropdown-li-border-color: var(--border);
+  
+  /* Sidebar colors */
+  --sidebar-border-color: var(--border);
+  
+  /* Panel colors */
+  --panel-background-color: var(--card);
+  --panel-border-color: var(--border);
+  
+  /* Tooltip colors */
+  --tooltip-background-color: var(--popover);
+  --tooltip-border-color: var(--border);
+  --tooltip-shadow-color: oklch(0 0 0 / 0.1);
+  
+  /* Activity colors */
+  --activity-title-color: var(--foreground);
+  --activity-title-border-color: var(--border);
+  --activity-event-background-color: var(--muted);
+  --activity-event-hover-color: var(--accent);
+  
+  /* Comment colors */
+  --comment-title-border-color: var(--border);
+  --comment-nth-background-color: var(--muted);
+  --comment-highlighted-background-color: var(--accent);
+  --comment-highlighted-hover-background-color: var(--accent);
+  --comment-highlighted-border-color: var(--border);
+  
+  /* Draggable colors */
+  --draggable-item-selected-background-color: var(--background);
+  --draggable-item-selected-border-color: var(--primary);
+  --draggable-item-hover-background-color: var(--accent);
+  --draggable-row-handle-color: var(--muted-foreground);
+  --draggable-placeholder-background-color: var(--muted);
+  --draggable-placeholder-border-color: var(--border);
+  
+  /* Form colors */
+  --form-help-color: var(--muted-foreground);
+  --form-error-color: var(--destructive);
+  
+  /* Avatar colors */
+  --avatar-color-letter: var(--primary-foreground);
+  
+  /* Task list colors */
+  --task-list-icons-color: var(--muted-foreground);
+  
+  /* User mention colors */
+  --user-mention-color: var(--primary);
+  
+  /* Table list colors */
+  --table-list-header-border-color: var(--border);
+  --table-list-header-background-color: var(--muted);
+  --table-list-nth-background-color: var(--background);
+  --table-list-border-color: var(--border);
+  --table-list-row-hover-border-color: var(--border);
+  --table-list-row-background-color: var(--accent);
+  
+  /* Input addon colors */
+  --input-addon-background-color: var(--muted);
+  --input-addon-color: var(--muted-foreground);
+  
+  /* Views colors */
+  --views-background-color: var(--background);
+  --views-border-color: var(--border);
+  --views-active-color: var(--foreground);
+}
+
+/* ================================
+   ENHANCED VISUAL ELEMENTS
+   ================================ */
+
+/* Subtle improvements for better visual hierarchy */
+.page-header h2 {
+  font-weight: 600;
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Enhanced task board appearance */
+.task-board {
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
+}
+
+/* Enhanced header */
+header {
+  background-color: var(--background);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Enhanced sidebar */
+.sidebar {
+  background-color: var(--background);
+  border-right: 1px solid var(--border);
+}
+
+/* Enhanced modal */
+#modal-box {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xl);
+}
+
+/* Enhanced table styling */
+.table-list-header {
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.table-list-row {
+  border-bottom: 1px solid var(--border);
+  transition: all var(--transition-fast);
+}
+
+.table-list-row:hover {
+  background-color: var(--accent);
+}
+
+/* ================================
+   ACCESSIBILITY ENHANCEMENTS
+   ================================ */
+
+/* Improved focus indicators for better accessibility */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-color: var(--ring);
+}
+
+/* Better contrast for links */
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary);
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+/* ================================
+   RESPONSIVE DESIGN IMPROVEMENTS
+   ================================ */
+
+@media (max-width: 768px) {
+  :root {
+    --space-1: 0.125rem;
+    --space-2: 0.25rem;
+    --space-3: 0.5rem;
+    --space-4: 0.75rem;
+  }
+  
+  .btn {
+    min-height: 2.25rem;
+    padding: var(--space-2) var(--space-3);
+  }
+  
+  input[type="text"]:not(.input-addon-field),
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  select {
+    min-height: 2.25rem;
+  }
+}

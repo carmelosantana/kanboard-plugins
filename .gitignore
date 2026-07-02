@@ -1,0 +1,5 @@
+# SDD scratch (briefs, reports, review packages, progress ledger internals)
+.superpowers/
+# Docker/test scratch
+testing/*.snapshot
+testing/.env
