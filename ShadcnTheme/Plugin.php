@@ -3,6 +3,7 @@
 namespace Kanboard\Plugin\ShadcnTheme;
 
 use Kanboard\Core\Plugin\Base;
+use Kanboard\Core\Security\Role;
 
 /**
  * ShadcnTheme Plugin
@@ -107,6 +108,7 @@ class Plugin extends Base
     private function hookTemplates()
     {
         // Inject synchronous no-FOUC script in <head> before first paint
+        // Also injects the custom favicon <link> when shadcn_favicon_path is configured.
         $this->hook->on('template:layout:head', [
             'template' => 'ShadcnTheme:layout/head'
         ]);
@@ -116,10 +118,18 @@ class Plugin extends Base
             'template' => 'ShadcnTheme:header/theme_toggle'
         ]);
 
-        // Login card header (product name + subtitle above the form fields)
+        // Login card header (logo or product name + subtitle above the form fields)
         $this->hook->on('template:auth:login-form:before', [
             'template' => 'ShadcnTheme:auth/login_header'
         ]);
+
+        // Sidebar link in Admin Settings
+        $this->hook->on('template:config:sidebar', [
+            'template' => 'ShadcnTheme:config/sidebar'
+        ]);
+
+        // Override the header brand fragment to show the uploaded logo when set
+        $this->template->setTemplateOverride('header/title', 'ShadcnTheme:header/title');
     }
 
     /**
@@ -143,7 +153,7 @@ class Plugin extends Base
     }
 
     /**
-     * Add custom routes for theme API
+     * Add custom routes for theme API and settings
      *
      * @return void
      */
@@ -151,6 +161,17 @@ class Plugin extends Base
     {
         $this->route->addRoute('theme/set/:mode', 'ShadcnTheme:ThemeController', 'setTheme');
         $this->route->addRoute('theme/get', 'ShadcnTheme:ThemeController', 'getTheme');
+
+        // Admin settings page
+        $this->route->addRoute('shadcn-theme/settings', 'ShadcnTheme:SettingsController', 'show');
+        $this->route->addRoute('shadcn-theme/upload', 'ShadcnTheme:SettingsController', 'upload');
+
+        // Asset serving route (logo / favicon) — accessible to unauthenticated users
+        // so the favicon and logo img show on the login page.
+        // The router resolves the controller name to 'SettingsController' (without plugin prefix)
+        // via the plugin= query parameter, so the ACL entry uses the bare controller name.
+        $this->route->addRoute('shadcn-theme/asset/:slot', 'ShadcnTheme:SettingsController', 'serveAsset');
+        $this->applicationAccessMap->add('SettingsController', ['serveAsset'], Role::APP_PUBLIC);
     }
 
     /**

@@ -8,3 +8,9 @@
     document.documentElement.className += (document.documentElement.className ? ' ' : '') + cls;
 }());
 </script>
+<?php
+$shadcnFaviconPath = $this->app->config('shadcn_favicon_path');
+if (! empty($shadcnFaviconPath)):
+?>
+<link rel="icon" href="<?= $this->url->href('SettingsController', 'serveAsset', ['plugin' => 'ShadcnTheme', 'slot' => 'favicon']) ?>">
+<?php endif ?>

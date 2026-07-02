@@ -518,6 +518,38 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
+/* ================================
+   BRANDING — HEADER LOGO
+   ================================ */
+
+/* Custom logo in the header .logo span */
+.shadcn-header-logo {
+  display: block;
+  max-height: 36px;
+  max-width: 160px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  /* Override any inherited text decoration from the parent <a> */
+  border: none;
+  text-decoration: none;
+}
+
+/* Custom logo on the login page */
+.auth-card-logo {
+  display: block;
+  max-height: 56px;
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 0 auto var(--space-3, 0.75rem);
+}
+
+/* ================================
+   kbx-badge — inline label chip
+   ================================ */
+
 /* kbx-badge — inline label chip */
 .kbx-badge {
   display: inline-flex;
