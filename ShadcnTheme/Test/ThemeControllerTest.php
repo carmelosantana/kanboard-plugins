@@ -35,11 +35,18 @@ class ThemeControllerTest extends Base
      *  - request.getStringParam('mode') returning $mode
      *  - token.validateCSRFToken() returning $validCsrf
      *  - response.json() silenced (would call header())
+     *
+     * @param int    $userId      User ID (0 = guest)
+     * @param string $mode        Theme mode string passed as request param
+     * @param bool   $validCsrf   Whether the CSRF token is considered valid
+     * @param array  &$jsonCalls  Optional reference; each response->json() call appends
+     *                            [$payload, $status] so callers can assert the response.
      */
     private function buildController(
-        int    $userId   = 1,
-        string $mode     = 'dark',
-        bool   $validCsrf = true
+        int    $userId    = 1,
+        string $mode      = 'dark',
+        bool   $validCsrf = true,
+        array  &$jsonCalls = []
     ): ThemeController {
         // Stub userSession
         $userSession = $this
@@ -82,13 +89,19 @@ class ThemeControllerTest extends Base
         unset($this->container['request']);
         $this->container['request'] = $request;
 
-        // Stub response to silence json() / status() calls (they call header())
+        // Spy response: json() is silenced (no header() call) but records its arguments
+        // into $jsonCalls so tests can assert the exact payload the controller emits.
+        $capture = &$jsonCalls;
         $response = $this
             ->getMockBuilder(\Kanboard\Core\Http\Response::class)
             ->disableOriginalConstructor()
             ->onlyMethods(['json', 'status', 'redirect'])
             ->getMock();
-        $response->method('json')->willReturn(null);
+        $response->method('json')->willReturnCallback(
+            function ($payload, int $status = 200) use (&$capture): void {
+                $capture[] = [$payload, $status];
+            }
+        );
         $response->method('status')->willReturn(null);
         $response->method('redirect')->willReturn(null);
         unset($this->container['response']);
@@ -126,7 +139,8 @@ class ThemeControllerTest extends Base
         $saved = $model->save(1, ['shadcn_theme_mode' => 'dark']);
 
         $this->assertTrue((bool)$saved, 'save() must return truthy on success');
-        $this->assertSame('dark', $model->get(1, 'shadcn_theme_mode', 'dark'));
+        // Use empty-string default so a silently-failed write cannot be masked by 'dark' fallback
+        $this->assertSame('dark', $model->get(1, 'shadcn_theme_mode', ''));
     }
 
     // ── T-3: set light → read back light ─────────────────────────────────────
@@ -195,28 +209,35 @@ class ThemeControllerTest extends Base
     // ── T-7: guest user (userId = 0) falls back to $_SESSION ─────────────────
 
     /**
-     * When no user is logged in (getId() = 0), getTheme() falls back to
-     * $_SESSION['shadcn_theme_mode'].  We verify this by checking what the
-     * controller reads directly via the session array (the controller itself
-     * calls response->json() which we've silenced).
+     * When no user is logged in (getId() = 0), getTheme() must read the mode from
+     * $_SESSION['shadcn_theme_mode'] and pass it to response->json(['mode' => ...]).
      *
-     * We test the session-based branch by seeding $_SESSION and then reading
-     * it back after the controller runs, confirming the session key is used.
+     * We capture the json() call via a spy (the $jsonCalls reference added to
+     * buildController) and assert the payload's 'mode' key equals the session value.
+     * This test FAILS if getTheme() ignores the session (e.g. always returns 'dark'):
+     * the captured payload would show 'dark' instead of 'light'.
+     *
+     * RED evidence: temporarily replace the session-branch in ThemeController::getTheme()
+     * with `$mode = 'dark';` → this test fails with:
+     *   Failed asserting that 'dark' is identical to 'light'.
      */
     public function testGuestUserThemeFallsBackToSession()
     {
-        // Seed session with a known mode
+        // Seed session with a distinctive mode (not the fallback default 'dark')
         $_SESSION['shadcn_theme_mode'] = 'light';
 
-        // Build a controller with userId = 0 (guest)
-        $controller = $this->buildController(userId: 0, mode: 'light', validCsrf: true);
+        $jsonCalls  = [];
+        $controller = $this->buildController(userId: 0, mode: 'light', validCsrf: true, jsonCalls: $jsonCalls);
 
-        // getTheme() should read from $_SESSION when userId = 0
-        // We confirm the session value is intact (not cleared by the controller)
+        // getTheme() must read $_SESSION and emit ['mode' => 'light'] via response->json()
         $controller->getTheme();
 
-        $this->assertSame('light', $_SESSION['shadcn_theme_mode'],
-            'Guest session theme must be preserved by getTheme()');
+        $this->assertNotEmpty($jsonCalls, 'getTheme() must call response->json() exactly once');
+        [$payload] = $jsonCalls[0];
+        $this->assertIsArray($payload, 'response->json() payload must be an array');
+        $this->assertArrayHasKey('mode', $payload, "Payload must contain key 'mode'");
+        $this->assertSame('light', $payload['mode'],
+            'getTheme() for a guest must return the mode stored in $_SESSION');
     }
 
     // ── T-8: setTheme() for guest user writes to $_SESSION ────────────────────
