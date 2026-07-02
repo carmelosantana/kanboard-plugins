@@ -14,7 +14,7 @@
      */
     class ShadcnThemeSwitcher {
         constructor() {
-            this.currentTheme = 'system';
+            this.currentTheme = 'dark';
             this.systemTheme = 'light';
             this.init();
         }
@@ -60,10 +60,12 @@
             if (typeof window.shadcnThemeMode !== 'undefined') {
                 this.currentTheme = window.shadcnThemeMode;
             } else {
-                // Fallback to localStorage
+                // Fallback to localStorage; if nothing stored, default to dark
                 const stored = localStorage.getItem('shadcn-theme-mode');
                 if (stored && ['light', 'dark', 'system'].includes(stored)) {
                     this.currentTheme = stored;
+                } else {
+                    this.currentTheme = 'dark';
                 }
             }
         }

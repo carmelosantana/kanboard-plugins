@@ -62,9 +62,9 @@ class ThemeController extends BaseController
         $userId = $this->userSession->getId();
         
         if ($userId) {
-            $mode = $this->userMetadataModel->get($userId, 'shadcn_theme_mode', 'system');
+            $mode = $this->userMetadataModel->get($userId, 'shadcn_theme_mode', 'dark');
         } else {
-            $mode = isset($_SESSION['shadcn_theme_mode']) ? $_SESSION['shadcn_theme_mode'] : 'system';
+            $mode = isset($_SESSION['shadcn_theme_mode']) ? $_SESSION['shadcn_theme_mode'] : 'dark';
         }
         
         $this->response->json(['mode' => $mode]);

@@ -52,15 +52,15 @@ class Plugin extends Base
         $currentUserId = $this->userSession->getId();
         if ($currentUserId) {
             $themePreference = $this->userMetadataModel->get(
-                $currentUserId, 
-                'shadcn_theme_mode', 
-                'system'
+                $currentUserId,
+                'shadcn_theme_mode',
+                'dark'
             );
-            
+
             // Set theme mode in session for JavaScript access
             $_SESSION['shadcn_theme_mode'] = $themePreference;
         } else {
-            $_SESSION['shadcn_theme_mode'] = 'system';
+            $_SESSION['shadcn_theme_mode'] = 'dark';
         }
     }
 
@@ -101,6 +101,11 @@ class Plugin extends Base
      */
     private function hookTemplates()
     {
+        // Inject synchronous no-FOUC script in <head> before first paint
+        $this->hook->on('template:layout:head', [
+            'template' => 'ShadcnTheme:layout/head'
+        ]);
+
         // Add theme toggle to page header dropdown
         $this->hook->on('template:header:dropdown', [
             'template' => 'ShadcnTheme:header/theme_toggle'
