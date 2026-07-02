@@ -146,6 +146,72 @@ class FeatureSyncModel extends Base
     }
 
     /**
+     * Resolve and normalise the POST form parameters for the Feature Sync page.
+     *
+     * Encapsulates the controller's three resolution rules so they can be unit-tested
+     * independently of the HTTP stack:
+     *
+     *   1. source_project_id < 1  → clamped to 0 (no selection).
+     *   2. target_project_ids     → cast to int, id=0 and id=source stripped, re-indexed.
+     *   3. sync_mode              → defaults to 'add_missing'; invalid values clamped to it.
+     *
+     * @param  array $post             Raw POST values (e.g. from request->getValues()).
+     * @param  int   $sourceFromGet    Fallback source project id from the GET parameter
+     *                                 (used when source_project_id is absent from POST).
+     * @return array{
+     *     sourceProjectId:  int,
+     *     selectedFeatures: list<string>,
+     *     targetProjectIds: list<int>,
+     *     syncMode:         string,
+     * }
+     */
+    public function resolveFormParams(array $post, $sourceFromGet = 0)
+    {
+        // --- 1. Source project id ---
+        $sourceProjectId = isset($post['source_project_id'])
+            ? (int) $post['source_project_id']
+            : (int) $sourceFromGet;
+
+        // Guard: id < 1 is invalid ("None" / not chosen).
+        if ($sourceProjectId < 1) {
+            $sourceProjectId = 0;
+        }
+
+        // --- 2. Selected feature checkboxes ---
+        $selectedFeatures = isset($post['features']) ? $post['features'] : array();
+        if (! is_array($selectedFeatures)) {
+            $selectedFeatures = array($selectedFeatures);
+        }
+
+        // --- 3. Target project ids ---
+        $rawTargetIds = isset($post['target_project_ids']) ? $post['target_project_ids'] : array();
+        if (! is_array($rawTargetIds)) {
+            $rawTargetIds = array($rawTargetIds);
+        }
+
+        $src = $sourceProjectId;  // captured for the closure
+        $targetProjectIds = array_values(array_filter(
+            array_map('intval', $rawTargetIds),
+            function ($id) use ($src) {
+                return $id > 0 && $id !== $src;
+            }
+        ));
+
+        // --- 4. Sync mode ---
+        $syncMode = isset($post['sync_mode']) ? $post['sync_mode'] : 'add_missing';
+        if (! in_array($syncMode, array('add_missing', 'replace'), true)) {
+            $syncMode = 'add_missing';
+        }
+
+        return array(
+            'sourceProjectId'  => $sourceProjectId,
+            'selectedFeatures' => $selectedFeatures,
+            'targetProjectIds' => $targetProjectIds,
+            'syncMode'         => $syncMode,
+        );
+    }
+
+    /**
      * Copy a single feature from source project to destination project.
      *
      * STUB — implementation comes in task-05.  The copier map is already wired;

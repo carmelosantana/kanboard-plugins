@@ -144,15 +144,28 @@ class PluginTest extends Base
     // ── Task-03: source-guard + target validation ────────────────────────────
 
     /**
-     * source_project_id=0 must be treated as "no selection" (less than 1).
-     * The controller normalises it to 0 before passing to the template.
-     * Modelling this as a pure logic assertion here (no HTTP request needed).
+     * source_project_id=0 must be clamped to 0 by resolveFormParams().
+     *
+     * Invokes the real model helper and asserts on its output, so the test
+     * genuinely exercises the guard:
+     *   RED evidence: removing the `if ($sourceProjectId < 1) { $sourceProjectId = 0; }`
+     *   block from resolveFormParams() causes this test to FAIL because — if the guard
+     *   is absent AND the POST value is negative (e.g. -99) — sourceProjectId would
+     *   be -99 rather than 0.  To make it crisp we POST source_project_id=-99:
+     *   with guard → 0; without guard → -99.  The assertSame(0, ...) goes red.
      */
     public function testSourceProjectIdZeroIsInvalid()
     {
-        $sourceProjectId = 0;
-        $this->assertLessThan(1, $sourceProjectId,
-            'source_project_id=0 must be treated as invalid (no project selected)');
+        $model = new FeatureSyncModel($this->container);
+
+        // A clearly-invalid negative id (not just 0) makes the guard essential.
+        $result = $model->resolveFormParams(array('source_project_id' => '-99'));
+
+        $this->assertSame(
+            0,
+            $result['sourceProjectId'],
+            'resolveFormParams() must clamp source_project_id < 1 to 0 (guard in FeatureSyncModel::resolveFormParams)'
+        );
     }
 
     /**
@@ -235,14 +248,28 @@ class PluginTest extends Base
     }
 
     /**
-     * Sync mode must default to 'add_missing' and reject unknown values.
+     * sync_mode must default to 'add_missing' when absent from POST.
      *
-     * Mirrors controller normalisation: only 'add_missing' and 'replace' are valid.
+     * Invokes the real model helper with an empty POST array (no sync_mode key),
+     * so the default-resolution path in resolveFormParams() is genuinely exercised.
+     *
+     * RED evidence: removing the `$syncMode = ... : 'add_missing'` default assignment
+     * from resolveFormParams() would leave $syncMode undefined / null and the
+     * assertSame('add_missing', ...) assertion would fail.  Similarly, replacing the
+     * default with any other string (e.g. 'replace') would also make this test red.
      */
     public function testSyncModeDefaultsToAddMissing()
     {
-        $syncMode = isset($_POST['sync_mode']) ? $_POST['sync_mode'] : 'add_missing';
-        $this->assertSame('add_missing', $syncMode);
+        $model = new FeatureSyncModel($this->container);
+
+        // POST contains no sync_mode key at all — default must kick in.
+        $result = $model->resolveFormParams(array());
+
+        $this->assertSame(
+            'add_missing',
+            $result['syncMode'],
+            'resolveFormParams() must default syncMode to add_missing when sync_mode is absent from POST'
+        );
     }
 
     public function testSyncModeRejectsUnknownValues()

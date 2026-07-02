@@ -38,49 +38,16 @@ class FeatureSyncController extends BaseController
         $featureList = $featureSyncModel->getFeatureList();
 
         // Retain form state across POST round-trips.
+        // Delegate all resolution logic to the model helper (also unit-tested there).
         $postValues = $this->request->getValues();  // validated POST (CSRF-checked)
+        $sourceFromGet = $this->request->getIntegerParam('source_project_id', 0);
 
-        // source_project_id: from POST, or GET param on first load — default 0.
-        $sourceProjectId = isset($postValues['source_project_id'])
-            ? (int) $postValues['source_project_id']
-            : (int) $this->request->getIntegerParam('source_project_id', 0);
+        $resolved = $featureSyncModel->resolveFormParams($postValues, $sourceFromGet);
 
-        // Validate source: id=0 is the "None" landmine — reject it.
-        // The controller re-renders with source=0 and the template shows no selection.
-        if ($sourceProjectId < 1) {
-            $sourceProjectId = 0;
-        }
-
-        // Selected feature checkboxes.
-        $selectedFeatures = isset($postValues['features']) ? $postValues['features'] : array();
-
-        // Ensure it is always an array even if a single checkbox value is posted.
-        if (! is_array($selectedFeatures)) {
-            $selectedFeatures = array($selectedFeatures);
-        }
-
-        // Target project ids (multi-select checkboxes in step 3).
-        $targetProjectIds = isset($postValues['target_project_ids'])
-            ? $postValues['target_project_ids']
-            : array();
-
-        if (! is_array($targetProjectIds)) {
-            $targetProjectIds = array($targetProjectIds);
-        }
-
-        // Cast to int and strip any id=0 and the source itself.
-        $targetProjectIds = array_values(array_filter(
-            array_map('intval', $targetProjectIds),
-            function ($id) use ($sourceProjectId) {
-                return $id > 0 && $id !== $sourceProjectId;
-            }
-        ));
-
-        // Sync mode: 'add_missing' (default) or 'replace'.
-        $syncMode = isset($postValues['sync_mode']) ? $postValues['sync_mode'] : 'add_missing';
-        if (! in_array($syncMode, array('add_missing', 'replace'), true)) {
-            $syncMode = 'add_missing';
-        }
+        $sourceProjectId  = $resolved['sourceProjectId'];
+        $selectedFeatures = $resolved['selectedFeatures'];
+        $targetProjectIds = $resolved['targetProjectIds'];
+        $syncMode         = $resolved['syncMode'];
 
         // Target project list = all projects except the source.
         $targetProjects = array();
