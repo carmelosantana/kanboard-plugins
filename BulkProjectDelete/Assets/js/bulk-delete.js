@@ -18,19 +18,17 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
     'use strict';
 
     // ── Page guard ─────────────────────────────────────────────────────────────
-    // The project list has a `.table-list` div containing `.table-list-row` rows.
-    // If that wrapper is absent we are not on the project-list page — do nothing.
+    // #bpd-toggle is injected by toolbar.php exclusively on the project list page.
+    // Other list pages (task list, user list, etc.) also have .table-list, so we
+    // key off this button instead — it is a reliable project-list-only signal.
     var TABLE_LIST_SELECTOR  = '.table-list';
     var ROW_SELECTOR         = '.table-list-row';
     var CB_CLASS             = 'bpd-cb';
     var SELECT_ALL_ID        = 'bpd-select-all';
 
+    if (!document.getElementById('bpd-toggle')) { this.render = function () {}; return; }
+
     var tableList = document.querySelector(TABLE_LIST_SELECTOR);
-    if (!tableList) {
-        // Not the project list — strict no-op.
-        this.render = function () {};
-        return;
-    }
 
     // ── State ──────────────────────────────────────────────────────────────────
     var active = false;   // whether selection mode is on
@@ -132,7 +130,9 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
         cb.type  = 'checkbox';
         cb.className = CB_CLASS;
         cb.setAttribute('data-project-id', String(id));
-        cb.setAttribute('aria-label', 'Select project ' + id);
+        var nameEl = row.querySelector('a.board-selector, .table-list-title a, a[href*="project_id"]');
+        var projectName = nameEl && nameEl.textContent ? nameEl.textContent.trim() : null;
+        cb.setAttribute('aria-label', 'Select project ' + (projectName || id));
         cb.addEventListener('change', updateCounter);
 
         // Prepend the checkbox as the first child of the row so it sits to the left.
