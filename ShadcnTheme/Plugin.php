@@ -101,14 +101,8 @@ class Plugin extends Base
      */
     private function hookTemplates()
     {
-        // Override header template for theme toggle
-        $this->template->setTemplateOverride(
-            'header/user_dropdown', 
-            'ShadcnTheme:header/user_dropdown'
-        );
-        
-        // Add theme toggle to page header
-        $this->hook->on('template:header:dropdown:menu', [
+        // Add theme toggle to page header dropdown
+        $this->hook->on('template:header:dropdown', [
             'template' => 'ShadcnTheme:header/theme_toggle'
         ]);
     }
