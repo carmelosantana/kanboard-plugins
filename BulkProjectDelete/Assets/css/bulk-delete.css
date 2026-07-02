@@ -125,6 +125,66 @@ input#bpd-select-all:focus-visible {
     align-items: center;
 }
 
+/* ── Confirm modal overlay (task-06 fix) ─────────────────────────────────── */
+/* Self-contained modal that shows the confirm partial without a full-page nav.
+ * TODO(kbx-tokens): replace hard-coded colours with design tokens once plugin
+ * #2 (ShadcnTheme) exports the kbx-* token set.
+ */
+.bpd-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bpd-modal.bpd-hidden {
+    display: none !important;
+}
+
+/* Semi-transparent backdrop — clicking it closes the modal */
+.bpd-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);   /* TODO(kbx-tokens): var(--kbx-overlay-bg) */
+    cursor: pointer;
+}
+
+/* Centred card — scrollable so a long impact table stays usable */
+.bpd-modal__card {
+    position: relative;
+    z-index: 1;
+    background: #fff;                   /* TODO(kbx-tokens): var(--kbx-color-surface) */
+    border: 1px solid #ccc;            /* TODO(kbx-tokens): var(--kbx-color-border) */
+    border-radius: 4px;                 /* TODO(kbx-tokens): var(--kbx-border-radius) */
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.20);
+    width: min(680px, 95vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+/* Close (×) button — top-right corner of the card */
+.bpd-modal__close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    padding: 2px 8px;
+    font-size: 1.2em;
+    line-height: 1;
+    border: none;
+    background: transparent;
+    color: #666;                        /* TODO(kbx-tokens): var(--kbx-color-text-muted) */
+    cursor: pointer;
+    z-index: 2;
+}
+
+.bpd-modal__close:hover {
+    color: #333;                        /* TODO(kbx-tokens): var(--kbx-color-text) */
+    background: #f0f0f0;
+}
+
 /* ── Confirm modal layout (task-06) ──────────────────────────────────────── */
 .bpd-confirm-wrap {
     padding: 16px;

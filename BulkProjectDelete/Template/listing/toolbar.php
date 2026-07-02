@@ -30,6 +30,30 @@ if (! $this->user->isAdmin()) {
     </div>
 </li>
 
+<!-- BPD confirm modal — hidden until onDeleteClick() fetches the confirm partial and injects it.
+     Lives here (on the project-list page) so the plugin CSS (template:layout:css) is already loaded.
+     JS clears bpd-hidden to show, adds it back to close. -->
+<div
+    id="bpd-modal"
+    class="bpd-modal bpd-hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="bpd-modal-title"
+>
+    <div class="bpd-modal__backdrop" id="bpd-modal-backdrop" aria-hidden="true"></div>
+    <div class="bpd-modal__card">
+        <button
+            id="bpd-modal-close"
+            type="button"
+            class="bpd-btn bpd-modal__close"
+            aria-label="<?= t('Close') ?>"
+        >&times;</button>
+        <div id="bpd-modal-content">
+            <!-- confirm partial injected here by JS -->
+        </div>
+    </div>
+</div>
+
 <?= $this->app->component('bpd-bulk-select', [
     'confirmUrl' => $this->url->to('BulkDeleteController', 'confirm', ['plugin' => 'BulkProjectDelete']),
 ]) ?>

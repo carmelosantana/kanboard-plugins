@@ -205,6 +205,56 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
         if (toggle) { toggle.setAttribute('aria-pressed', 'false'); }
     }
 
+    // ── Modal helpers ──────────────────────────────────────────────────────────
+
+    // Track the element that opened the modal so we can restore focus on close.
+    var _modalOpener = null;
+
+    function openModal(html) {
+        var modal   = document.getElementById('bpd-modal');
+        var content = document.getElementById('bpd-modal-content');
+        if (!modal || !content) { return; }
+
+        content.innerHTML = html;
+        modal.classList.remove('bpd-hidden');
+
+        // Wire gate on freshly injected content.
+        bindConfirmGate();
+
+        // Wire close button inside the injected partial (if confirm.php has a
+        // Cancel link, it stays a link — but wire the static close button too).
+        var closeBtn = document.getElementById('bpd-modal-close');
+        if (closeBtn) { closeBtn.onclick = closeModal; }
+
+        var backdrop = document.getElementById('bpd-modal-backdrop');
+        if (backdrop) { backdrop.onclick = closeModal; }
+
+        // Move focus to the typed-confirm input for accessibility.
+        var input = document.getElementById('bpd-confirm-input');
+        if (input) { input.focus(); }
+    }
+
+    function closeModal() {
+        var modal   = document.getElementById('bpd-modal');
+        var content = document.getElementById('bpd-modal-content');
+        if (modal)   { modal.classList.add('bpd-hidden'); }
+        if (content) { content.innerHTML = ''; }
+
+        // Restore focus to the element that triggered the modal.
+        if (_modalOpener && _modalOpener.focus) { _modalOpener.focus(); }
+        _modalOpener = null;
+    }
+
+    // Escape key closes the modal.
+    function onKeyDown(e) {
+        if ((e.key === 'Escape' || e.keyCode === 27)) {
+            var modal = document.getElementById('bpd-modal');
+            if (modal && !modal.classList.contains('bpd-hidden')) {
+                closeModal();
+            }
+        }
+    }
+
     // ── Delete button ──────────────────────────────────────────────────────────
 
     function onDeleteClick() {
@@ -213,23 +263,35 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
             return;
         }
 
-        // Build a form and POST the selected ids to the confirm URL (task-04/05).
-        // Using a POST form avoids exposing ids in the URL and lets task-04 render
-        // a full confirmation page with CSRF protection.
-        var form = document.createElement('form');
-        form.method  = 'POST';
-        form.action  = confirmUrl;
+        // Remember opener for focus restoration.
+        _modalOpener = document.getElementById('bpd-delete-btn');
 
-        for (var i = 0; i < ids.length; i++) {
-            var input = document.createElement('input');
-            input.type  = 'hidden';
-            input.name  = 'project_ids[]';
-            input.value = String(ids[i]);
-            form.appendChild(input);
-        }
+        // POST the selected ids to the confirm URL via fetch.
+        // confirm() is read-only (no mutation) and does not require a CSRF token;
+        // it returns the impact partial HTML which we inject into the modal.
+        var body = ids.map(function (id) {
+            return 'project_ids%5B%5D=' + encodeURIComponent(id);
+        }).join('&');
 
-        document.body.appendChild(form);
-        form.submit();
+        fetch(confirmUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            credentials: 'same-origin',
+            body: body,
+        })
+        .then(function (res) {
+            if (!res.ok) {
+                throw new Error('confirm route returned ' + res.status);
+            }
+            return res.text();
+        })
+        .then(function (html) {
+            openModal(html);
+        })
+        .catch(function (err) {
+            // Fallback: surface a simple alert rather than silently swallowing.
+            window.alert('BulkProjectDelete: could not load confirmation. ' + err.message);
+        });
     }
 
     // ── Wire up static buttons (rendered server-side in toolbar.php) ──────────
@@ -251,11 +313,14 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
         if (deleteBtn) {
             deleteBtn.addEventListener('click', onDeleteClick);
         }
+
+        // Escape key closes the modal from anywhere on the page.
+        document.addEventListener('keydown', onKeyDown);
     }
 
     // ── Typed-confirmation arm/disarm (task-06) ────────────────────────────────
     //
-    // The confirm modal (Template/remove/confirm.php) contains:
+    // The confirm partial (Template/remove/confirm.php) contains:
     //   #bpd-confirm-form  — POST form with csrf + hidden project_ids[]
     //   #bpd-confirm-input — text input the user must type DELETE into
     //   #bpd-submit-btn    — submit button; disabled until armed
@@ -266,10 +331,8 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
     // browser submits #bpd-confirm-form normally (action, method, csrf, ids are
     // all already in the form markup).
     //
-    // bindConfirmGate() is called once, after the modal's HTML has been injected
-    // into the DOM (see onDeleteClick → form.submit() navigates away, so the
-    // gate lives on the confirm page itself; but if a future modal injection
-    // approach is used, call bindConfirmGate() after innerHTML is set).
+    // bindConfirmGate() is called from openModal() after the confirm partial HTML
+    // is injected into #bpd-modal-content via innerHTML.
 
     function bindConfirmGate() {
         var confirmInput = document.getElementById('bpd-confirm-input');
@@ -317,8 +380,9 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
 
     this.render = function () {
         bindStaticButtons();
-        // Wire typed-confirm gate if we are already on the confirm page
-        // (e.g. the page was loaded as a full page rather than via modal injection).
+        // bindConfirmGate() is also called from openModal() after the partial is
+        // injected. Calling it here is harmless — it guards on #bpd-confirm-input
+        // not being present on the project-list page.
         bindConfirmGate();
     };
 });
