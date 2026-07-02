@@ -67,6 +67,52 @@ class SettingsControllerTest extends Base
         $controller->upload();
     }
 
+    // ── Helper: stub userSession so isAdmin() returns true ───────────────────
+
+    private function stubAdmin(): void
+    {
+        $this->container['userSession'] = $this
+            ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['isAdmin'])
+            ->getMock();
+
+        $this->container['userSession']
+            ->method('isAdmin')
+            ->willReturn(true);
+    }
+
+    // ── upload() CSRF ─────────────────────────────────────────────────────────
+
+    /**
+     * upload() must throw AccessForbiddenException when CSRF validation fails,
+     * even for an admin user.
+     *
+     * RED evidence: temporarily removing checkCSRFForm() from upload() causes
+     * this test to fail (no exception is thrown, PHPUnit reports "Failed
+     * asserting that exception of type AccessForbiddenException is thrown").
+     */
+    public function testUploadThrowsForBadCSRF()
+    {
+        $this->stubAdmin();
+
+        // Stub the token service so validateCSRFToken() always returns false.
+        $this->container['token'] = $this
+            ->getMockBuilder(\Kanboard\Core\Security\Token::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['validateCSRFToken'])
+            ->getMock();
+
+        $this->container['token']
+            ->method('validateCSRFToken')
+            ->willReturn(false);
+
+        $controller = new SettingsController($this->container);
+
+        $this->expectException(AccessForbiddenException::class);
+        $controller->upload();
+    }
+
     // ── configModel persistence ───────────────────────────────────────────────
 
     /**

@@ -180,6 +180,8 @@ class SettingsController extends BaseController
             $etag = md5($path);
             $this->response->withCache(86400, $etag);
             $this->response->withContentType($mime);
+            $this->response->withSecurityHeaders();
+            $this->response->withContentSecurityPolicy(['default-src' => "'none'"]);
 
             if ($this->request->getHeader('If-None-Match') !== '"' . $etag . '"') {
                 $this->response->send();
