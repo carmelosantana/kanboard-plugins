@@ -166,10 +166,15 @@ class RemoveEndpointTest extends Base
             postValues: ['project_ids' => [$pid]]
         );
 
-        $this->expectException(AccessForbiddenException::class);
-        $controller->remove();
+        $threw = false;
+        try {
+            $controller->remove();
+        } catch (AccessForbiddenException $e) {
+            $threw = true;
+        }
+        $this->assertTrue($threw, 'Expected AccessForbiddenException');
 
-        // Verify the project still exists.
+        // Verify the project still exists (survival assertion — actually executes now).
         $row = $this->container['db']->table('projects')->eq('id', $pid)->findOne();
         $this->assertNotEmpty($row, 'Project must not be deleted when admin gate fires');
     }
@@ -189,9 +194,15 @@ class RemoveEndpointTest extends Base
             validCsrf: false
         );
 
-        $this->expectException(AccessForbiddenException::class);
-        $controller->remove();
+        $threw = false;
+        try {
+            $controller->remove();
+        } catch (AccessForbiddenException $e) {
+            $threw = true;
+        }
+        $this->assertTrue($threw, 'Expected AccessForbiddenException');
 
+        // Verify the project still exists (survival assertion — actually executes now).
         $row = $this->container['db']->table('projects')->eq('id', $pid)->findOne();
         $this->assertNotEmpty($row, 'Project must not be deleted when CSRF fails');
     }
