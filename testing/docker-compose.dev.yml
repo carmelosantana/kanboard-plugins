@@ -1,0 +1,21 @@
+# Unified dev harness for all four Kanboard plugins (Linux/SQLite)
+# Usage: docker compose -f testing/docker-compose.dev.yml up -d
+name: kanboard-suite
+
+services:
+  kanboard:
+    image: kanboard/kanboard:latest
+    container_name: kb-suite
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - kb-suite-data:/var/www/app/data
+      - ../BulkProjectDelete:/var/www/app/plugins/BulkProjectDelete
+      - ../ShadcnTheme:/var/www/app/plugins/ShadcnTheme
+      - ../FeatureSync:/var/www/app/plugins/FeatureSync
+      - ../SubtaskGenerator:/var/www/app/plugins/SubtaskGenerator
+
+volumes:
+  kb-suite-data:
+    driver: local
