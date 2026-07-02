@@ -1,1 +1,113 @@
-/* BulkProjectDelete — styles placeholder (implemented in task-03). */
+/**
+ * BulkProjectDelete — selection UI styles.
+ *
+ * Self-contained for now. When the kbx-* shared-token system lands (plugin #2),
+ * replace the raw colour/spacing literals below with the equivalent kbx-* tokens,
+ * e.g. var(--kbx-color-danger), var(--kbx-spacing-sm), var(--kbx-border-radius).
+ * ──────────────────────────────────────────────────────────────────────────────
+ * TODO(kbx-tokens): swap hard-coded values once #2 exports the design tokens.
+ * ──────────────────────────────────────────────────────────────────────────────
+ */
+
+/* ── Utility ─────────────────────────────────────────────────────────────── */
+.bpd-hidden {
+    display: none !important;
+}
+
+/* ── Toolbar toggle button ───────────────────────────────────────────────── */
+.bpd-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1px solid #bbb;        /* TODO(kbx-tokens): var(--kbx-color-border) */
+    border-radius: 3px;            /* TODO(kbx-tokens): var(--kbx-border-radius) */
+    background: #fff;              /* TODO(kbx-tokens): var(--kbx-color-surface) */
+    color: #333;                   /* TODO(kbx-tokens): var(--kbx-color-text) */
+    font-size: 0.9em;
+    cursor: pointer;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.bpd-btn:hover {
+    background: #f5f5f5;           /* TODO(kbx-tokens): var(--kbx-color-surface-hover) */
+}
+
+.bpd-btn--toggle[aria-pressed="true"] {
+    background: #e8f0fe;           /* TODO(kbx-tokens): var(--kbx-color-primary-subtle) */
+    border-color: #4a6fa5;         /* TODO(kbx-tokens): var(--kbx-color-primary) */
+    color: #2c4a80;                /* TODO(kbx-tokens): var(--kbx-color-primary-dark) */
+}
+
+/* ── Destructive (delete) button ─────────────────────────────────────────── */
+.bpd-btn--destructive {
+    background: #c0392b;           /* TODO(kbx-tokens): var(--kbx-color-danger) */
+    border-color: #a93226;         /* TODO(kbx-tokens): var(--kbx-color-danger-dark) */
+    color: #fff;                   /* TODO(kbx-tokens): var(--kbx-color-on-danger) */
+    font-weight: 600;
+}
+
+.bpd-btn--destructive:hover:not(:disabled) {
+    background: #a93226;           /* TODO(kbx-tokens): var(--kbx-color-danger-dark) */
+    border-color: #922b21;
+}
+
+.bpd-btn--destructive:disabled,
+.bpd-btn--destructive[aria-disabled="true"] {
+    background: #e0aba6;           /* TODO(kbx-tokens): var(--kbx-color-danger-muted) */
+    border-color: #d4928d;
+    color: #fff;
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+/* ── Action bar ──────────────────────────────────────────────────────────── */
+.bpd-action-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px;
+    background: #fff8e1;           /* TODO(kbx-tokens): var(--kbx-color-warning-subtle) */
+    border: 1px solid #f0c040;    /* TODO(kbx-tokens): var(--kbx-color-warning-border) */
+    border-radius: 3px;
+    vertical-align: middle;
+}
+
+/* ── Count badge ─────────────────────────────────────────────────────────── */
+.bpd-count-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    background: #4a6fa5;           /* TODO(kbx-tokens): var(--kbx-color-primary) */
+    color: #fff;                   /* TODO(kbx-tokens): var(--kbx-color-on-primary) */
+    border-radius: 10px;           /* TODO(kbx-tokens): var(--kbx-border-radius-pill) */
+    font-size: 0.82em;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ── Per-row checkboxes ──────────────────────────────────────────────────── */
+.table-list-row input.bpd-cb {
+    margin-right: 8px;             /* TODO(kbx-tokens): var(--kbx-spacing-xs) */
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+    accent-color: #4a6fa5;         /* TODO(kbx-tokens): var(--kbx-color-primary) */
+}
+
+.table-list-row-header input#bpd-select-all {
+    margin-right: 8px;
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+    accent-color: #4a6fa5;         /* TODO(kbx-tokens): var(--kbx-color-primary) */
+}
+
+/* ── Toolbar list-item alignment ─────────────────────────────────────────── */
+.bpd-toolbar-item {
+    display: inline-flex;
+    align-items: center;
+}

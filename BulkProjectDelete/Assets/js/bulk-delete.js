@@ -1,11 +1,261 @@
 /**
- * BulkProjectDelete — client-side component stub.
- * Implemented in task-03 (selection UI).
+ * BulkProjectDelete — selection UI component.
  *
- * Global JS is injected on every page via template:layout:js, so guard on a
- * page marker before doing anything. Nothing active yet.
+ * Injected globally via template:layout:js (loads on every page).
+ * Guards on the presence of the project-list table body before doing anything,
+ * so it is a strict no-op on all other pages.
+ *
+ * Project-id source: each `.table-list-row` on the project list contains a project
+ * link rendered by project_list/project_title.php whose href has the query string
+ * `?project_id=N` (or `&project_id=N`). We parse that parameter from the first
+ * matching anchor inside the row to get the id.
+ *
+ * KB.component registers the constructor; KB.render() instantiates it by finding
+ * `.js-bpd-bulk-select` in the DOM and calling `component.render()`.
  */
-KB.component('bulk-project-delete', function (containerElement, options) {
-    // stub — no-op until task-03
-    this.render = function () {};
+KB.component('bpd-bulk-select', function (containerElement, options) {
+
+    'use strict';
+
+    // ── Page guard ─────────────────────────────────────────────────────────────
+    // The project list has a `.table-list` div containing `.table-list-row` rows.
+    // If that wrapper is absent we are not on the project-list page — do nothing.
+    var TABLE_LIST_SELECTOR  = '.table-list';
+    var ROW_SELECTOR         = '.table-list-row';
+    var CB_CLASS             = 'bpd-cb';
+    var SELECT_ALL_ID        = 'bpd-select-all';
+
+    var tableList = document.querySelector(TABLE_LIST_SELECTOR);
+    if (!tableList) {
+        // Not the project list — strict no-op.
+        this.render = function () {};
+        return;
+    }
+
+    // ── State ──────────────────────────────────────────────────────────────────
+    var active = false;   // whether selection mode is on
+    var confirmUrl = options && options.confirmUrl ? options.confirmUrl : '';
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * Extract the project id from a `.table-list-row`.
+     *
+     * Strategy: find the first anchor inside the row whose href contains
+     * `project_id=<N>` and return the integer value of that parameter.
+     * This mirrors what project_list/project_title.php renders:
+     *   $this->url->link(..., 'BoardViewController', 'show', ['project_id' => $project['id']])
+     * as well as the dropdown links that all carry `project_id=N`.
+     *
+     * Falls back to null if no such link is found (should never happen on a
+     * well-formed project-list page).
+     *
+     * @param {HTMLElement} row
+     * @returns {number|null}
+     */
+    function getProjectId(row) {
+        var anchors = row.querySelectorAll('a[href]');
+        for (var i = 0; i < anchors.length; i++) {
+            var href = anchors[i].getAttribute('href');
+            var match = href.match(/[?&]project_id=(\d+)/);
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Return all project-list rows currently in the DOM.
+     * @returns {NodeList}
+     */
+    function getRows() {
+        return tableList.querySelectorAll(ROW_SELECTOR);
+    }
+
+    /**
+     * Return an array of the ids of all currently checked rows.
+     * @returns {number[]}
+     */
+    function getSelectedIds() {
+        var ids = [];
+        var checkboxes = tableList.querySelectorAll('.' + CB_CLASS + ':checked');
+        for (var i = 0; i < checkboxes.length; i++) {
+            var id = parseInt(checkboxes[i].getAttribute('data-project-id'), 10);
+            if (id) {
+                ids.push(id);
+            }
+        }
+        return ids;
+    }
+
+    // ── Counter + button state ─────────────────────────────────────────────────
+
+    function updateCounter() {
+        var n = getSelectedIds().length;
+        var badge     = document.getElementById('bpd-count-badge');
+        var countLbl  = document.getElementById('bpd-count-label');
+        var deleteBtn = document.getElementById('bpd-delete-btn');
+
+        if (badge)     { badge.textContent    = n + ' selected'; }
+        if (countLbl)  { countLbl.textContent = n; }
+        if (deleteBtn) {
+            deleteBtn.disabled = (n === 0);
+            deleteBtn.setAttribute('aria-disabled', String(n === 0));
+        }
+
+        // Keep select-all in sync
+        var selectAll = document.getElementById(SELECT_ALL_ID);
+        if (selectAll) {
+            var total = tableList.querySelectorAll('.' + CB_CLASS).length;
+            selectAll.checked       = (total > 0 && n === total);
+            selectAll.indeterminate = (n > 0 && n < total);
+        }
+    }
+
+    // ── Checkbox injection ─────────────────────────────────────────────────────
+
+    /**
+     * Add a per-row checkbox to a single `.table-list-row`.
+     * @param {HTMLElement} row
+     */
+    function addRowCheckbox(row) {
+        if (row.querySelector('.' + CB_CLASS)) {
+            return; // already injected
+        }
+        var id = getProjectId(row);
+        if (id === null) {
+            return; // defensive — skip rows without a project id
+        }
+
+        var cb = document.createElement('input');
+        cb.type  = 'checkbox';
+        cb.className = CB_CLASS;
+        cb.setAttribute('data-project-id', String(id));
+        cb.setAttribute('aria-label', 'Select project ' + id);
+        cb.addEventListener('change', updateCounter);
+
+        // Prepend the checkbox as the first child of the row so it sits to the left.
+        row.insertBefore(cb, row.firstChild);
+    }
+
+    /**
+     * Add the select-all checkbox to the table header (first sibling before the rows).
+     */
+    function addSelectAllCheckbox() {
+        if (document.getElementById(SELECT_ALL_ID)) {
+            return;
+        }
+
+        // The header row is rendered by project_list/header.php and sits directly
+        // inside .table-list, before the .table-list-row divs.
+        var header = tableList.querySelector('.table-list-row-header');
+        if (!header) {
+            return;
+        }
+
+        var cb = document.createElement('input');
+        cb.type  = 'checkbox';
+        cb.id    = SELECT_ALL_ID;
+        cb.setAttribute('aria-label', 'Select all projects');
+        cb.addEventListener('change', function () {
+            var checkboxes = tableList.querySelectorAll('.' + CB_CLASS);
+            for (var i = 0; i < checkboxes.length; i++) {
+                checkboxes[i].checked = cb.checked;
+            }
+            updateCounter();
+        });
+
+        header.insertBefore(cb, header.firstChild);
+    }
+
+    // ── Remove checkboxes ──────────────────────────────────────────────────────
+
+    function removeCheckboxes() {
+        var checkboxes = document.querySelectorAll('.' + CB_CLASS + ', #' + SELECT_ALL_ID);
+        for (var i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].parentNode.removeChild(checkboxes[i]);
+        }
+    }
+
+    // ── Toggle ─────────────────────────────────────────────────────────────────
+
+    function enableSelectionMode() {
+        active = true;
+        var rows = getRows();
+        for (var i = 0; i < rows.length; i++) {
+            addRowCheckbox(rows[i]);
+        }
+        addSelectAllCheckbox();
+
+        var bar    = document.getElementById('bpd-action-bar');
+        var toggle = document.getElementById('bpd-toggle');
+        if (bar)    { bar.classList.remove('bpd-hidden'); }
+        if (toggle) { toggle.setAttribute('aria-pressed', 'true'); }
+        updateCounter();
+    }
+
+    function disableSelectionMode() {
+        active = false;
+        removeCheckboxes();
+
+        var bar    = document.getElementById('bpd-action-bar');
+        var toggle = document.getElementById('bpd-toggle');
+        if (bar)    { bar.classList.add('bpd-hidden'); }
+        if (toggle) { toggle.setAttribute('aria-pressed', 'false'); }
+    }
+
+    // ── Delete button ──────────────────────────────────────────────────────────
+
+    function onDeleteClick() {
+        var ids = getSelectedIds();
+        if (!ids.length || !confirmUrl) {
+            return;
+        }
+
+        // Build a form and POST the selected ids to the confirm URL (task-04/05).
+        // Using a POST form avoids exposing ids in the URL and lets task-04 render
+        // a full confirmation page with CSRF protection.
+        var form = document.createElement('form');
+        form.method  = 'POST';
+        form.action  = confirmUrl;
+
+        for (var i = 0; i < ids.length; i++) {
+            var input = document.createElement('input');
+            input.type  = 'hidden';
+            input.name  = 'project_ids[]';
+            input.value = String(ids[i]);
+            form.appendChild(input);
+        }
+
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // ── Wire up static buttons (rendered server-side in toolbar.php) ──────────
+
+    function bindStaticButtons() {
+        var toggle    = document.getElementById('bpd-toggle');
+        var deleteBtn = document.getElementById('bpd-delete-btn');
+
+        if (toggle) {
+            toggle.addEventListener('click', function () {
+                if (active) {
+                    disableSelectionMode();
+                } else {
+                    enableSelectionMode();
+                }
+            });
+        }
+
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', onDeleteClick);
+        }
+    }
+
+    // ── Component entry point ──────────────────────────────────────────────────
+
+    this.render = function () {
+        bindStaticButtons();
+    };
 });
