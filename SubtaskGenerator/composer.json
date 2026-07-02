@@ -1,0 +1,40 @@
+{
+    "name": "vctrs-io/kanboard-subtask-generator",
+    "description": "Kanboard plugin — AI-powered subtask generation via Anthropic, OpenAI, or Grok",
+    "type": "kanboard-plugin",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Carmelo Santana",
+            "email": "carmelo@vctrs.io"
+        }
+    ],
+    "require": {
+        "php": ">=8.4",
+        "carmelosantana/php-agents": "dev-main"
+    },
+    "replace": {
+        "psr/log": "*",
+        "psr/container": "*"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "/home/carmelo/Projects/CoquiBot/Core/php-agents",
+            "options": {
+                "symlink": false
+            }
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Kanboard\\Plugin\\SubtaskGenerator\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "vendor-dir": "vendor"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
