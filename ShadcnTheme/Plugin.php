@@ -221,7 +221,7 @@ class Plugin extends Base
      */
     public function getCompatibleVersion(): string
     {
-        return '>=1.2.30';
+        return '>=1.2.47';
     }
 
     /**

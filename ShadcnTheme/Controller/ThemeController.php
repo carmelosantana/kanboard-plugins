@@ -35,7 +35,7 @@ class ThemeController extends BaseController
         
         if ($userId) {
             // Save theme preference to user metadata
-            $result = $this->userMetadataModel->save($userId, 'shadcn_theme_mode', $mode);
+            $result = $this->userMetadataModel->save($userId, ['shadcn_theme_mode' => $mode]);
             
             if ($result) {
                 // Update session
