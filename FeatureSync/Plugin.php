@@ -34,6 +34,9 @@ class Plugin extends Base
 
         // Route to the preview page (Step 4 — dry-run diff, POST from index).
         $this->route->addRoute('feature-sync/preview', 'FeatureSyncController', 'preview', 'FeatureSync');
+
+        // Route to the apply action (Step 5 — POST from preview, writes to DB).
+        $this->route->addRoute('feature-sync/apply', 'FeatureSyncController', 'apply', 'FeatureSync');
     }
 
     public function getPluginName()        { return 'FeatureSync'; }

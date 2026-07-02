@@ -154,6 +154,8 @@ class FeatureSyncModel extends Base
      *   1. source_project_id < 1  → clamped to 0 (no selection).
      *   2. target_project_ids     → cast to int, id=0 and id=source stripped, re-indexed.
      *   3. sync_mode              → defaults to 'add_missing'; invalid values clamped to it.
+     *   4. features               → INTERSECTED with getFeatureList() keys so unknown feature
+     *                               keys can never reach the copiers (prevents uncaught exceptions).
      *
      * @param  array $post             Raw POST values (e.g. from request->getValues()).
      * @param  int   $sourceFromGet    Fallback source project id from the GET parameter
@@ -178,10 +180,13 @@ class FeatureSyncModel extends Base
         }
 
         // --- 2. Selected feature checkboxes ---
-        $selectedFeatures = isset($post['features']) ? $post['features'] : array();
-        if (! is_array($selectedFeatures)) {
-            $selectedFeatures = array($selectedFeatures);
+        //     INTERSECT with known feature keys so unknown values can never reach copiers.
+        $rawFeatures = isset($post['features']) ? $post['features'] : array();
+        if (! is_array($rawFeatures)) {
+            $rawFeatures = array($rawFeatures);
         }
+        $knownFeatureKeys = array_keys($this->getFeatureList());
+        $selectedFeatures = array_values(array_intersect($rawFeatures, $knownFeatureKeys));
 
         // --- 3. Target project ids ---
         $rawTargetIds = isset($post['target_project_ids']) ? $post['target_project_ids'] : array();
@@ -457,26 +462,413 @@ class FeatureSyncModel extends Base
     /**
      * Copy a single feature from source project to destination project.
      *
-     * STUB — implementation comes in task-05.  The copier map is already wired;
-     * this method is here so the container key and method reference are exercised.
+     * Implements add_missing and replace modes using core copier methods.
+     * Called INSIDE a per-target transaction managed by apply().
+     *
+     * Per-feature behaviour:
+     *
+     *   add_missing mode — copy ONLY what is missing; idempotent (re-run = no duplicates):
+     *     actions    → copy source actions not already in target (keyed event::action_name)
+     *     tags       → copy source tags not already in target (keyed by name)
+     *     columns    → copy source columns not already in target (keyed by title)
+     *     categories → copy source categories not already in target (keyed by name)
+     *     swimlanes  → SwimlaneModel::duplicate() already deduplicates by name — used directly
+     *
+     *   replace mode — clear all target items for the feature, then copy full source set:
+     *     actions    → remove all target actions → ActionModel::duplicate()
+     *     tags       → remove all target tags → TagDuplicationModel::duplicate()
+     *     columns    → remove target columns that have NO tasks → add columns not yet present;
+     *                  columns with tasks are LEFT IN PLACE (safe fallback, limitation documented)
+     *     categories → remove all target categories → CategoryModel::duplicate()
+     *     swimlanes  → remove target swimlanes that have NO tasks → SwimlaneModel::duplicate();
+     *                  swimlanes with tasks are LEFT IN PLACE (core SwimlaneModel::remove()
+     *                  already refuses to delete swimlanes with tasks)
+     *
+     * PicoDb transaction API (verified libs/picodb/lib/PicoDb/Database.php:292-320):
+     *   $this->db->startTransaction() / closeTransaction() / cancelTransaction()
+     * Note: this method is called INSIDE an outer transaction started by apply(), so
+     * nested startTransaction() calls are safe (PicoDb checks inTransaction() first).
+     *
+     * Core clear methods verified against kanboard-1.2.47:
+     *   ActionModel::remove($action_id)          app/Model/ActionModel.php:124
+     *   TagModel::remove($tag_id)                app/Model/TagModel.php:195
+     *   ColumnModel::remove($column_id)          app/Model/ColumnModel.php:225
+     *   CategoryModel::remove($category_id)      app/Model/CategoryModel.php:185
+     *   SwimlaneModel::remove($projectId, $id)   app/Model/SwimlaneModel.php:339
+     *     ↑ refuses to remove if swimlane has tasks (returns false) — handled gracefully
      *
      * @param  string  $feature         One of the FEATURE_* constants.
      * @param  integer $src_project_id  Source project ID.
      * @param  integer $dst_project_id  Destination project ID.
      * @param  string  $mode            'add_missing' (default) or 'replace'.
-     * @return never
+     * @return int                      Count of items actually added/replaced.
      * @throws \InvalidArgumentException when $feature is not in the copier map.
-     * @throws \RuntimeException         always — implementation stub for task-05.
      */
     public function copyFeature($feature, $src_project_id, $dst_project_id, $mode = 'add_missing')
     {
-        $map = $this->getCopierMap();
-
-        if (! isset($map[$feature])) {
+        if (! isset($this->getCopierMap()[$feature])) {
             throw new \InvalidArgumentException("FeatureSyncModel: unknown feature '{$feature}'");
         }
 
-        // task-05 will implement the actual logic here (add_missing / replace modes).
-        throw new \RuntimeException("FeatureSyncModel::copyFeature() — not yet implemented (task-05)");
+        switch ($feature) {
+            case self::FEATURE_ACTIONS:
+                return $this->copyActions($src_project_id, $dst_project_id, $mode);
+
+            case self::FEATURE_TAGS:
+                return $this->copyTags($src_project_id, $dst_project_id, $mode);
+
+            case self::FEATURE_COLUMNS:
+                return $this->copyColumns($src_project_id, $dst_project_id, $mode);
+
+            case self::FEATURE_CATEGORIES:
+                return $this->copyCategories($src_project_id, $dst_project_id, $mode);
+
+            case self::FEATURE_SWIMLANES:
+                return $this->copySwimlanes($src_project_id, $dst_project_id, $mode);
+
+            default:
+                throw new \InvalidArgumentException("FeatureSyncModel: unknown feature '{$feature}'");
+        }
+    }
+
+    // ── Per-feature copy helpers ─────────────────────────────────────────────
+
+    /**
+     * Copy automated actions from source to destination.
+     *
+     * add_missing: only copies actions whose event::action_name key is absent from target.
+     * replace: removes ALL target actions first, then calls ActionModel::duplicate().
+     *
+     * Core copy:  ActionModel::duplicate($src, $dst)   app/Model/ActionModel.php:171
+     * Core clear: ActionModel::remove($action_id)       app/Model/ActionModel.php:124
+     *   (action_has_params rows are deleted by FK cascade on actions.id)
+     *
+     * @param  int    $src  Source project ID.
+     * @param  int    $dst  Destination project ID.
+     * @param  string $mode 'add_missing' or 'replace'.
+     * @return int          Count of actions added.
+     */
+    private function copyActions($src, $dst, $mode)
+    {
+        if ($mode === 'replace') {
+            // Clear all existing target actions.
+            $existing = $this->actionModel->getAllByProject($dst);
+            foreach ($existing as $action) {
+                $this->actionModel->remove($action['id']);
+            }
+            // Duplicate all source actions to target.
+            $this->actionModel->duplicate($src, $dst);
+            return count($this->actionModel->getAllByProject($src));
+        }
+
+        // add_missing: only copy actions not already present (by event::action_name key).
+        $srcActions = $this->actionModel->getAllByProject($src);
+        $dstActions = $this->actionModel->getAllByProject($dst);
+
+        $dstKeySet = array();
+        foreach ($dstActions as $a) {
+            $dstKeySet[$a['event_name'] . '::' . $a['action_name']] = true;
+        }
+
+        $added = 0;
+        foreach ($srcActions as $action) {
+            $key = $action['event_name'] . '::' . $action['action_name'];
+            if (! isset($dstKeySet[$key])) {
+                $values = array(
+                    'project_id'  => $dst,
+                    'event_name'  => $action['event_name'],
+                    'action_name' => $action['action_name'],
+                    'params'      => $action['params'],
+                );
+                $this->actionModel->create($values);
+                $added++;
+            }
+        }
+        return $added;
+    }
+
+    /**
+     * Copy project tags from source to destination.
+     *
+     * add_missing: only creates tags whose name is absent from target (case-sensitive).
+     * replace: removes ALL target tags first, then calls TagDuplicationModel::duplicate().
+     *
+     * Core copy:  TagDuplicationModel::duplicate($src, $dst)  app/Model/TagDuplicationModel.php:23
+     * Core clear: TagModel::remove($tag_id)                    app/Model/TagModel.php:195
+     *
+     * @param  int    $src  Source project ID.
+     * @param  int    $dst  Destination project ID.
+     * @param  string $mode 'add_missing' or 'replace'.
+     * @return int          Count of tags added.
+     */
+    private function copyTags($src, $dst, $mode)
+    {
+        if ($mode === 'replace') {
+            // Clear all existing target tags.
+            $existing = $this->tagModel->getAllByProject($dst);
+            foreach ($existing as $tag) {
+                $this->tagModel->remove($tag['id']);
+            }
+            // Duplicate all source tags to target.
+            $srcTags = $this->tagModel->getAllByProject($src);
+            $this->tagDuplicationModel->duplicate($src, $dst);
+            return count($srcTags);
+        }
+
+        // add_missing: only copy tags not already in target (by name).
+        $srcTags = $this->tagModel->getAllByProject($src);
+        $dstTags = $this->tagModel->getAllByProject($dst);
+
+        $dstNameSet = array();
+        foreach ($dstTags as $t) {
+            $dstNameSet[$t['name']] = true;
+        }
+
+        $added = 0;
+        foreach ($srcTags as $tag) {
+            if (! isset($dstNameSet[$tag['name']])) {
+                $this->tagModel->create($dst, $tag['name'], $tag['color_id']);
+                $added++;
+            }
+        }
+        return $added;
+    }
+
+    /**
+     * Copy board columns from source to destination.
+     *
+     * add_missing: only creates columns whose title is absent from target (idempotent).
+     * replace:
+     *   - Removes target columns that have NO open tasks (via ColumnModel::remove()).
+     *   - Columns with open tasks are LEFT IN PLACE (safe fallback) — removing them
+     *     would orphan tasks (task.column_id → NULL in Kanboard's schema, which is unsafe).
+     *   - Source columns not yet in target (by title) are then added.
+     *   LIMITATION: replace-columns is effectively "remove safe + add missing" when tasks
+     *   exist in some target columns. The preview already warns about this risk.
+     *
+     * Core copy:  BoardModel::duplicate($from, $to)  app/Model/BoardModel.php:87
+     *   ↑ copies ALL source columns without dedup — NOT used directly here to preserve idempotency.
+     * Core add:   ColumnModel::create(...)            app/Model/ColumnModel.php:183
+     * Core clear: ColumnModel::remove($column_id)     app/Model/ColumnModel.php:225
+     *   ↑ deletes the column row; tasks in that column get column_id set to first column by FK.
+     *
+     * @param  int    $src  Source project ID.
+     * @param  int    $dst  Destination project ID.
+     * @param  string $mode 'add_missing' or 'replace'.
+     * @return int          Count of columns added.
+     */
+    private function copyColumns($src, $dst, $mode)
+    {
+        $srcColumns = $this->columnModel->getAll($src);
+        $dstColumns = $this->columnModel->getAll($dst);
+
+        // Build a set of destination column titles.
+        $dstTitleSet = array();
+        foreach ($dstColumns as $col) {
+            $dstTitleSet[$col['title']] = true;
+        }
+
+        if ($mode === 'replace') {
+            // Remove target columns that have NO tasks. Columns with tasks are left in place.
+            foreach ($dstColumns as $col) {
+                $taskCount = $this->taskFinderModel->countByColumnId($dst, (int)$col['id']);
+                if ($taskCount === 0) {
+                    $this->columnModel->remove((int)$col['id']);
+                    unset($dstTitleSet[$col['title']]);
+                }
+            }
+        }
+
+        // Add source columns not already in target (by title) — same logic for both modes.
+        $added = 0;
+        foreach ($srcColumns as $col) {
+            if (! isset($dstTitleSet[$col['title']])) {
+                $this->columnModel->create(
+                    $dst,
+                    $col['title'],
+                    (int) $col['task_limit'],
+                    (string) $col['description'],
+                    (int) $col['hide_in_dashboard']
+                );
+                $added++;
+            }
+        }
+        return $added;
+    }
+
+    /**
+     * Copy task categories from source to destination.
+     *
+     * add_missing: only creates categories whose name is absent from target.
+     * replace: removes ALL target categories first (CategoryModel::remove() nullifies
+     *          task.category_id on associated tasks), then copies source categories.
+     *
+     * Core copy:  CategoryModel::duplicate($src, $dst)  app/Model/CategoryModel.php:209
+     *   ↑ inserts ALL without dedup — NOT used directly here.
+     * Core add:   CategoryModel::create(array $values)   app/Model/CategoryModel.php:159
+     * Core clear: CategoryModel::remove($category_id)    app/Model/CategoryModel.php:185
+     *   ↑ sets task.category_id=0 for affected tasks before deleting — safe.
+     *
+     * @param  int    $src  Source project ID.
+     * @param  int    $dst  Destination project ID.
+     * @param  string $mode 'add_missing' or 'replace'.
+     * @return int          Count of categories added.
+     */
+    private function copyCategories($src, $dst, $mode)
+    {
+        if ($mode === 'replace') {
+            // Clear all target categories (CategoryModel::remove nullifies task.category_id).
+            $existing = $this->categoryModel->getAll($dst);
+            foreach ($existing as $cat) {
+                $this->categoryModel->remove($cat['id']);
+            }
+            // Copy all source categories.
+            $srcCategories = $this->categoryModel->getAll($src);
+            foreach ($srcCategories as $cat) {
+                $this->categoryModel->create(array(
+                    'project_id'  => $dst,
+                    'name'        => $cat['name'],
+                    'description' => $cat['description'],
+                    'color_id'    => $cat['color_id'],
+                ));
+            }
+            return count($srcCategories);
+        }
+
+        // add_missing: only copy categories not already in target (by name).
+        $srcCategories = $this->categoryModel->getAll($src);
+        $dstCategories = $this->categoryModel->getAll($dst);
+
+        $dstNameSet = array();
+        foreach ($dstCategories as $cat) {
+            $dstNameSet[$cat['name']] = true;
+        }
+
+        $added = 0;
+        foreach ($srcCategories as $cat) {
+            if (! isset($dstNameSet[$cat['name']])) {
+                $this->categoryModel->create(array(
+                    'project_id'  => $dst,
+                    'name'        => $cat['name'],
+                    'description' => $cat['description'],
+                    'color_id'    => $cat['color_id'],
+                ));
+                $added++;
+            }
+        }
+        return $added;
+    }
+
+    /**
+     * Copy swimlanes from source to destination.
+     *
+     * add_missing: SwimlaneModel::duplicate() already deduplicates by name (checks
+     *   `EXISTS` before inserting) — call it directly. Returns count of src swimlanes
+     *   as an upper bound; actual added count computed by comparing before/after.
+     * replace:
+     *   - Attempts to remove each target swimlane via SwimlaneModel::remove($pid, $id).
+     *     That method refuses to remove swimlanes with tasks (returns false) and
+     *     handles its own internal transaction — those lanes are left in place.
+     *   - Then calls SwimlaneModel::duplicate() for source lanes not yet in target.
+     *
+     * Core copy:  SwimlaneModel::duplicate($srcId, $dstId)  app/Model/SwimlaneModel.php:437
+     *   ↑ already deduplicates by name — safe for add_missing.
+     * Core clear: SwimlaneModel::remove($projectId, $id)     app/Model/SwimlaneModel.php:339
+     *   ↑ refuses (returns false) if swimlane has tasks — handles tx internally.
+     *
+     * LIMITATION (replace mode): swimlanes that contain tasks cannot be safely removed.
+     * They are skipped; only task-free swimlanes are removed. The source lanes are then
+     * added for any name not yet present. This is consistent with the columns limitation
+     * and is documented here and in the preview warning.
+     *
+     * @param  int    $src  Source project ID.
+     * @param  int    $dst  Destination project ID.
+     * @param  string $mode 'add_missing' or 'replace'.
+     * @return int          Count of swimlanes actually added.
+     */
+    private function copySwimlanes($src, $dst, $mode)
+    {
+        if ($mode === 'replace') {
+            // Attempt to remove each target swimlane. Those with tasks will be skipped
+            // by SwimlaneModel::remove() itself (returns false, no throw).
+            $dstSwimlanes = $this->swimlaneModel->getAll($dst);
+            foreach ($dstSwimlanes as $lane) {
+                // SwimlaneModel::remove() manages its own transaction internally.
+                $this->swimlaneModel->remove($dst, (int)$lane['id']);
+            }
+        }
+
+        // Count before so we can report how many were actually added.
+        $beforeNames = array();
+        foreach ($this->swimlaneModel->getAll($dst) as $lane) {
+            $beforeNames[$lane['name']] = true;
+        }
+
+        // SwimlaneModel::duplicate() already deduplicates by name (EXISTS check).
+        // Safe for both add_missing and replace (adds what's missing after clear).
+        $this->swimlaneModel->duplicate($src, $dst);
+
+        $added = 0;
+        foreach ($this->swimlaneModel->getAll($dst) as $lane) {
+            if (! isset($beforeNames[$lane['name']])) {
+                $added++;
+            }
+        }
+        return $added;
+    }
+
+    /**
+     * Apply selected features from source to multiple target projects.
+     *
+     * For each target project, a PicoDb transaction is started. A failure in one target
+     * rolls back that target's changes and does NOT abort the batch — other targets
+     * continue to be processed.
+     *
+     * PicoDb transaction API (verified libs/picodb/lib/PicoDb/Database.php:292-320):
+     *   $this->db->startTransaction()  → beginTransaction() if not already in one
+     *   $this->db->closeTransaction()  → commit()
+     *   $this->db->cancelTransaction() → rollBack()
+     *
+     * @param  integer   $sourceProjectId   Source project ID.
+     * @param  integer[] $targetProjectIds  List of target project IDs.
+     * @param  string[]  $features          List of FEATURE_* constants to copy.
+     * @param  string    $mode              'add_missing' or 'replace'.
+     * @return array                         [targetId => ['status' => 'ok'|'error',
+     *                                                     'features' => [feature => count|error_msg],
+     *                                                     'error' => msg|null]]
+     */
+    public function apply($sourceProjectId, array $targetProjectIds, array $features, $mode)
+    {
+        $report = array();
+
+        foreach ($targetProjectIds as $targetId) {
+            $targetId = (int) $targetId;
+            $featureResults = array();
+
+            $this->db->startTransaction();
+
+            try {
+                foreach ($features as $feature) {
+                    $count = $this->copyFeature($feature, $sourceProjectId, $targetId, $mode);
+                    $featureResults[$feature] = $count;
+                }
+
+                $this->db->closeTransaction();
+                $report[$targetId] = array(
+                    'status'   => 'ok',
+                    'features' => $featureResults,
+                    'error'    => null,
+                );
+            } catch (\Exception $e) {
+                $this->db->cancelTransaction();
+                $report[$targetId] = array(
+                    'status'   => 'error',
+                    'features' => $featureResults,
+                    'error'    => $e->getMessage(),
+                );
+            }
+        }
+
+        return $report;
     }
 }

@@ -176,4 +176,92 @@ class FeatureSyncController extends BaseController
             'postValues'        => $postValues,
         )));
     }
+
+    /**
+     * POST — admin-only apply action (Step 5).
+     *
+     * Reads the resolved params from POST, validates CSRF + admin, applies the
+     * selected features from source to each target project in its own transaction,
+     * and renders a per-target success/failure report.
+     *
+     * WRITES to the database. A failure on one target does NOT abort the batch.
+     *
+     * @throws AccessForbiddenException when the current user is not an app admin
+     */
+    public function apply()
+    {
+        $this->requireAdmin();
+        $this->checkCSRFForm();
+
+        /** @var FeatureSyncModel $featureSyncModel */
+        $featureSyncModel = $this->container['featureSyncModel'];
+
+        // Resolve and validate all form params from POST.
+        $postValues       = $this->request->getValues();
+        $sourceFromGet    = $this->request->getIntegerParam('source_project_id', 0);
+        $resolved         = $featureSyncModel->resolveFormParams($postValues, $sourceFromGet);
+
+        $sourceProjectId  = $resolved['sourceProjectId'];
+        $selectedFeatures = $resolved['selectedFeatures'];
+        $targetProjectIds = $resolved['targetProjectIds'];
+        $syncMode         = $resolved['syncMode'];
+
+        // Guard: must have a source, at least one feature, and at least one target.
+        if ($sourceProjectId < 1 || empty($targetProjectIds) || empty($selectedFeatures)) {
+            $this->flash->failure(t('Please select a source project, at least one feature, and at least one target project.'));
+            $this->response->redirect($this->helper->url->href('FeatureSyncController', 'index', array(), 'FeatureSync'));
+            return;
+        }
+
+        // Apply: per-target transaction, per-feature copy, collect report.
+        $applyReport = $featureSyncModel->apply(
+            $sourceProjectId,
+            $targetProjectIds,
+            $selectedFeatures,
+            $syncMode
+        );
+
+        // Build flash summary.
+        $successCount = 0;
+        $failureCount = 0;
+        foreach ($applyReport as $result) {
+            if ($result['status'] === 'ok') {
+                $successCount++;
+            } else {
+                $failureCount++;
+            }
+        }
+
+        if ($failureCount === 0) {
+            $this->flash->success(t(
+                'Feature Sync complete: %d target project(s) updated successfully.',
+                $successCount
+            ));
+        } else {
+            $this->flash->failure(t(
+                'Feature Sync partial: %d target(s) succeeded, %d failed. See report below.',
+                $successCount,
+                $failureCount
+            ));
+        }
+
+        // Project name map for display.
+        $projects          = $this->projectModel->getList(false, false);
+        $featureList       = $featureSyncModel->getFeatureList();
+        $sourceProjectName = isset($projects[$sourceProjectId]) ? $projects[$sourceProjectId] : "#{$sourceProjectId}";
+
+        $this->response->html($this->helper->layout->config('FeatureSync:sync/report', array(
+            'title'             => t('Settings') . ' &gt; ' . t('Feature Sync') . ' &gt; ' . t('Report'),
+            'sourceProjectId'   => $sourceProjectId,
+            'sourceProjectName' => $sourceProjectName,
+            'selectedFeatures'  => $selectedFeatures,
+            'targetProjectIds'  => $targetProjectIds,
+            'syncMode'          => $syncMode,
+            'featureList'       => $featureList,
+            'applyReport'       => $applyReport,
+            'projects'          => $projects,
+            'successCount'      => $successCount,
+            'failureCount'      => $failureCount,
+        )));
+    }
 }

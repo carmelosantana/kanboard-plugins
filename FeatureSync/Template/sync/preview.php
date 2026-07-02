@@ -174,7 +174,7 @@
             <input type="hidden" name="target_project_ids[]" value="<?= (int)$tid ?>">
         <?php endforeach ?>
 
-        <button type="submit" class="btn btn-red fs-btn-apply" <?= $syncMode === 'replace' ? '' : '' ?>>
+        <button type="submit" class="btn btn-red fs-btn-apply">
             <?= t('Confirm &amp; Apply') ?>
         </button>
     </form>

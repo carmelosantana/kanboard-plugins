@@ -130,15 +130,25 @@ class PluginTest extends Base
     }
 
     /**
-     * copyFeature() must throw RuntimeException (not-implemented stub) for valid
-     * features — confirms the stub is wired and the feature key is recognised.
+     * copyFeature() must NOT throw for valid features (task-05: stub replaced with real impl).
+     * We run it with project id=1 (may not exist) and expect either an int or false — no throw.
+     *
+     * This replaces the old "stub throws RuntimeException" test now that copyFeature() is real.
      */
-    public function testCopyFeatureStubThrowsRuntimeExceptionForValidFeature()
+    public function testCopyFeatureDoesNotThrowForValidFeature()
     {
-        $this->expectException(\RuntimeException::class);
-
         $model = new FeatureSyncModel($this->container);
-        $model->copyFeature(FeatureSyncModel::FEATURE_ACTIONS, 1, 2);
+
+        // Create two real projects so copyFeature() has something to work with.
+        $srcId = $this->container['projectModel']->create(array('name' => 'CopyFeatureSrc'));
+        $dstId = $this->container['projectModel']->create(array('name' => 'CopyFeatureDst'));
+
+        $this->assertGreaterThan(0, $srcId);
+        $this->assertGreaterThan(0, $dstId);
+
+        // Should return an int (count of items added), not throw.
+        $result = $model->copyFeature(FeatureSyncModel::FEATURE_ACTIONS, $srcId, $dstId);
+        $this->assertIsInt($result, 'copyFeature() must return an int (items added count)');
     }
 
     // ── Task-03: source-guard + target validation ────────────────────────────
