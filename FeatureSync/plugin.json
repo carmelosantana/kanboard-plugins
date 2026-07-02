@@ -1,0 +1,9 @@
+{
+    "name": "FeatureSync",
+    "version": "0.1.0",
+    "description": "Bulk-copy project features (actions, tags, columns) from a source project to many target projects.",
+    "author": "Carmelo Santana",
+    "homepage": "https://github.com/vctrs-io/kanboard-feature-sync",
+    "kanboard_version": ">=1.2.47",
+    "php_version": ">=8.4"
+}
