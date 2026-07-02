@@ -398,3 +398,152 @@ button:focus-visible,
     --border: var(--foreground);
   }
 }
+
+/* ================================
+   KBX- SHARED PRIMITIVES
+   Namespaced, self-contained classes for other plugins (BulkProjectDelete,
+   FeatureSync, etc.). Each property uses var(--token, <hardcoded-fallback>)
+   so they render sanely even when ShadcnTheme is NOT installed.
+   ================================ */
+
+/* kbx-toolbar — a horizontal toolbar strip */
+.kbx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  background-color: var(--card, #1c1c1e);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: var(--radius, 0.5rem);
+  flex-wrap: wrap;
+}
+
+/* kbx-btn — base button (secondary style) */
+.kbx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  min-height: 2.25rem;
+  border-radius: var(--radius, 0.5rem);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background-color: var(--secondary, #2a2a2e);
+  color: var(--secondary-foreground, #f5f5f5);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.15));
+  transition: opacity 150ms ease, box-shadow 150ms ease;
+}
+
+.kbx-btn:hover {
+  opacity: 0.85;
+  box-shadow: var(--shadow, 0 2px 4px rgb(0 0 0 / 0.2));
+}
+
+.kbx-btn:focus-visible {
+  outline: 2px solid var(--ring, oklch(0.62 0.19 293 / 70%));
+  outline-offset: 2px;
+}
+
+.kbx-btn:disabled {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+/* kbx-btn--destructive — red/danger action button */
+.kbx-btn--destructive {
+  background-color: var(--destructive, oklch(0.704 0.191 22.216));
+  color: var(--destructive-foreground, #f5f5f5);
+  border-color: var(--destructive, oklch(0.704 0.191 22.216));
+}
+
+.kbx-btn--destructive:hover {
+  opacity: 0.88;
+}
+
+/* kbx-modal — modal/dialog container */
+.kbx-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4, 1rem);
+  background-color: rgb(0 0 0 / 0.55);
+}
+
+.kbx-modal__panel {
+  background-color: var(--card, #1c1c1e);
+  color: var(--card-foreground, #f5f5f5);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: var(--radius, 0.5rem);
+  box-shadow: var(--shadow-lg, 0 10px 25px rgb(0 0 0 / 0.5));
+  padding: var(--space-6, 1.5rem);
+  width: 100%;
+  max-width: 32rem;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* kbx-checkbox — styled checkbox */
+.kbx-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--foreground, #f5f5f5);
+  user-select: none;
+}
+
+.kbx-checkbox input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  border-radius: calc(var(--radius, 0.5rem) / 2);
+  border: 1px solid var(--border, rgba(255,255,255,0.15));
+  background-color: var(--muted, #2a2a2e);
+  accent-color: var(--primary, oklch(0.62 0.19 293));
+  cursor: pointer;
+}
+
+.kbx-checkbox input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--ring, oklch(0.62 0.19 293 / 70%));
+  outline-offset: 2px;
+}
+
+/* kbx-badge — inline label chip */
+.kbx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0.2em 0.55em;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  background-color: var(--muted, #2a2a2e);
+  color: var(--muted-foreground, #b0b0b0);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+}
+
+/* kbx-badge variant: accent (violet) */
+.kbx-badge--accent {
+  background-color: color-mix(in oklch, var(--primary, oklch(0.62 0.19 293)) 20%, var(--card, #1c1c1e));
+  color: var(--primary, oklch(0.62 0.19 293));
+  border-color: var(--primary, oklch(0.62 0.19 293));
+}
+
+/* kbx-badge variant: destructive (red) */
+.kbx-badge--destructive {
+  background-color: color-mix(in oklch, var(--destructive, oklch(0.704 0.191 22.216)) 20%, var(--card, #1c1c1e));
+  color: var(--destructive, oklch(0.704 0.191 22.216));
+  border-color: var(--destructive, oklch(0.704 0.191 22.216));
+}

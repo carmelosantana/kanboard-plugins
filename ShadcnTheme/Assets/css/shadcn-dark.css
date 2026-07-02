@@ -24,9 +24,9 @@
   --popover: oklch(0.216 0.006 56.043);               /* Darker slate */
   --popover-foreground: oklch(0.985 0.001 106.423);    /* Off white */
   
-  /* Primary colors - lighter for dark theme */
-  --primary: oklch(0.923 0.003 48.717);               /* Light gray */
-  --primary-foreground: oklch(0.216 0.006 56.043);     /* Dark slate */
+  /* Primary colors - violet brand accent (shadcn default) */
+  --primary: oklch(0.62 0.19 293);                     /* Violet brand accent */
+  --primary-foreground: oklch(0.985 0 0);              /* Off-white for contrast */
   
   /* Secondary colors */
   --secondary: oklch(0.268 0.007 34.298);             /* Dark gray */
@@ -34,7 +34,7 @@
   
   /* Muted colors */
   --muted: oklch(0.268 0.007 34.298);                 /* Dark gray */
-  --muted-foreground: oklch(0.709 0.01 56.259);       /* Medium gray */
+  --muted-foreground: oklch(0.76 0.01 56.259);        /* Raised for WCAG AA legibility */
   
   /* Accent colors */
   --accent: oklch(0.268 0.007 34.298);                /* Dark gray */
@@ -47,7 +47,12 @@
   /* Border and input colors */
   --border: oklch(1 0 0 / 10%);                       /* Subtle border */
   --input: oklch(1 0 0 / 15%);                        /* Input border */
-  --ring: oklch(0.553 0.013 58.071);                  /* Focus ring */
+  --ring: oklch(0.62 0.19 293 / 70%);                 /* Accent-tinted focus ring */
+
+  /* Shadow tokens (dark mode — deeper than :root defaults) */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.45), 0 2px 4px -2px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 10px 20px -4px rgb(0 0 0 / 0.55), 0 4px 8px -4px rgb(0 0 0 / 0.4);
   
   /* Chart colors for dark theme */
   --chart-1: oklch(0.488 0.243 264.376);              /* Blue */
@@ -74,8 +79,8 @@
   
   /* Link colors */
   --link-color-primary: var(--primary);
-  --link-color-focus: oklch(0.8 0.003 48.717);
-  --link-color-hover: oklch(0.8 0.003 48.717);
+  --link-color-focus: oklch(0.72 0.19 293);
+  --link-color-hover: oklch(0.72 0.19 293);
   
   /* Alert colors */
   --alert-color-default: var(--foreground);
@@ -108,8 +113,8 @@
   --button-primary-background-color: var(--primary);
   --button-primary-border-color: var(--primary);
   --button-primary-color-focus: var(--primary-foreground);
-  --button-primary-background-color-focus: oklch(0.8 0.003 48.717);
-  --button-primary-border-color-focus: oklch(0.8 0.003 48.717);
+  --button-primary-background-color-focus: oklch(0.72 0.19 293);
+  --button-primary-border-color-focus: oklch(0.72 0.19 293);
   
   --button-danger-color: var(--destructive-foreground);
   --button-danger-background-color: var(--destructive);
@@ -433,7 +438,7 @@
 }
 
 .theme-dark a:hover {
-  color: oklch(0.8 0.003 48.717);
+  color: oklch(0.72 0.19 293);
 }
 
 /* ================================
@@ -534,4 +539,177 @@
   background-color: var(--muted);
   color: var(--foreground);
   border: 1px solid var(--border);
+}
+
+/* ================================
+   DARK THEME CARD POLISH (C2)
+   Real class: .task-board (board/task_private.php, board/table_tasks.php)
+   Icons row: .task-board-icons / .task-board-icons-row (board/task_footer.php)
+   ================================ */
+
+/* Card rest state: subtle shadow; hover lifts with accent shadow */
+.theme-dark .task-board {
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius);
+  transition: box-shadow 150ms cubic-bezier(0.4,0,0.2,1),
+              transform 150ms cubic-bezier(0.4,0,0.2,1);
+}
+
+.theme-dark .task-board:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* Card footer meta row: badge/chip treatment */
+.theme-dark .task-board-icons {
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--border);
+}
+
+.theme-dark .task-board-icons-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  line-height: 1;
+}
+
+/* Chip style for each meta icon/span in the footer */
+.theme-dark .task-board-icons-row > span,
+.theme-dark .task-board-icons-row > a,
+.theme-dark .task-board-icons-row .task-score,
+.theme-dark .task-board-icons-row .task-date,
+.theme-dark .task-board-icons-row .task-time-estimated,
+.theme-dark .task-board-icons-row .task-icon-age {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0.15em 0.45em;
+  border-radius: calc(var(--radius) - 2px);
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* Overdue date chip: accent destructive tint */
+.theme-dark .task-board-icons-row .task-date-overdue {
+  background-color: color-mix(in oklch, var(--destructive) 20%, var(--card));
+  border-color: var(--destructive);
+  color: oklch(0.85 0.1 22);
+}
+
+/* Today date chip: accent violet tint */
+.theme-dark .task-board-icons-row .task-date-today {
+  background-color: color-mix(in oklch, var(--primary) 20%, var(--card));
+  border-color: var(--primary);
+  color: oklch(0.82 0.1 293);
+}
+
+/* ================================
+   DARK THEME COLUMN POLISH (C2)
+   Real classes: .board-column-header (th, board/table_column.php)
+                 .board-column-title  (board/table_column.php)
+                 .board-column-header-task-count (board/table_column.php)
+                 .board-task-list (div, board/table_tasks.php)
+   ================================ */
+
+/* Column header: quieter, small-caps title */
+.theme-dark .board-column-header {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-dark .board-column-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Column header title link should also be quiet */
+.theme-dark .board-column-title a,
+.theme-dark .board-column-title .dropdown-menu {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.theme-dark .board-column-title a:hover,
+.theme-dark .board-column-title .dropdown-menu:hover {
+  color: var(--foreground);
+}
+
+/* Muted task count badge in column header */
+.theme-dark .board-column-header-task-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.45em;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+}
+
+/* Recessed task list body so cards visually pop */
+.theme-dark .board-task-list {
+  background-color: oklch(0.165 0.004 49.25); /* slightly darker than --background */
+  padding: 0.5rem;
+  gap: 0;
+}
+
+/* ================================
+   DARK THEME DROPDOWN / POPOVER POLISH (C3)
+   Real class: .dropdown-submenu-open > ul (board/table_column.php line 29, 49)
+   Also: header nav dropdown ul (restored in task-01)
+   ================================ */
+
+/* Style native dropdown ul as elevated shadcn popover */
+.theme-dark .dropdown-submenu-open ul,
+.theme-dark .dropdown ul {
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 0.25rem;
+  min-width: 12rem;
+  z-index: 1000;
+}
+
+.theme-dark .dropdown-submenu-open ul li,
+.theme-dark .dropdown ul li {
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.375rem 0.625rem;
+  font-size: 0.875rem;
+  border: none;
+  list-style: none;
+  transition: background-color 150ms cubic-bezier(0.4,0,0.2,1);
+}
+
+.theme-dark .dropdown-submenu-open ul li:hover,
+.theme-dark .dropdown ul li:not(.no-hover):hover {
+  background-color: oklch(0.62 0.19 293 / 15%);
+  color: var(--primary);
+}
+
+.theme-dark .dropdown-submenu-open ul li a,
+.theme-dark .dropdown ul li a {
+  color: var(--popover-foreground);
+  text-decoration: none;
+  display: block;
+}
+
+.theme-dark .dropdown-submenu-open ul li:hover a,
+.theme-dark .dropdown ul li:not(.no-hover):hover a {
+  color: var(--primary);
 }
