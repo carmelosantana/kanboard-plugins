@@ -701,6 +701,15 @@ class RemoveEndpointTest extends Base
             'group_id' => $groupId, 'project_id' => $pid, 'role' => 'project-member',
         ]);
 
+        // project_has_categories (FK → project_id ON DELETE CASCADE)
+        // Seeded explicitly here so the POST assertion is load-bearing (not vacuous 0=0).
+        // Default categories are empty; we insert one directly to guarantee PRE count > 0.
+        $db->table('project_has_categories')->insert([
+            'name'       => 'exhaust-category',
+            'project_id' => $pid,
+            'color_id'   => 'yellow',
+        ]);
+
         // custom_filters (no FK cascade — must be explicitly cleaned by plugin)
         $this->seedCustomFilter($pid);
 
@@ -716,6 +725,10 @@ class RemoveEndpointTest extends Base
 
         $this->assertSame(1, $db->table('subtask_time_tracking')
             ->in('subtask_id', $subtaskIds)->count(), 'PRE: subtask_time_tracking row must exist');
+
+        // project_has_categories PRE assertion — must be 1 (load-bearing; not vacuous)
+        $this->assertSame(1, $db->table('project_has_categories')
+            ->eq('project_id', $pid)->count(), 'PRE: project_has_categories row must exist');
 
         $this->assertSame(1, $db->table('custom_filters')
             ->eq('project_id', $pid)->count(), 'PRE: custom_filters must exist');

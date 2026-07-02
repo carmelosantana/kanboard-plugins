@@ -4,27 +4,33 @@
 # Usage:
 #   ./testing/verify.sh <deleted_project_id> [deleted_project_id ...]
 #
-# Optional environment variables:
-#   SEEDED_FILE_PATHS   — colon-separated on-disk paths (relative to /var/www/app/data/files/)
-#                         that MUST be gone after deletion.  If unset, the script derives
-#                         them from the DB rows that existed before deletion (not available
-#                         post-delete, so provide them if you want per-path FS assertions).
-#   SURVIVING_FILE_PATH — a path (relative to /var/www/app/data/files/) that MUST still
-#                         exist (the dedup/surviving-file case).  Optional.
+# Required environment variables (set via capture.sh BEFORE the delete):
+#   SEEDED_TASK_IDS    — comma-separated literal task IDs that were deleted
+#                        (e.g. "7,8,9").  MUST be set; verify.sh FAILs if absent
+#                        and there is any task-child table to check.
+#   SEEDED_ACTION_IDS  — comma-separated literal action IDs that were deleted
+#                        (e.g. "12,13").  MUST be set; verify.sh FAILs if absent
+#                        and there are action-child rows to check.
+#   SEEDED_SUBTASK_IDS — comma-separated literal subtask IDs that were deleted
+#                        (e.g. "4,5,6").  MUST be set; verify.sh FAILs if absent
+#                        for the subtask_time_tracking check.
+#   SEEDED_FILE_PATHS  — colon-separated on-disk paths (relative to the files/
+#                        store) that MUST be gone after deletion.  MUST be set;
+#                        verify.sh FAILs if absent (never silently skips).
 #
-# For every table with a project_id or task_id FK the script runs
-#   SELECT COUNT(*) WHERE project_id IN (...)  OR  task_id IN (SELECT id FROM tasks WHERE …)
-# and expects 0.  custom_filters and invites are checked as explicit plugin cleanup.
+# Optional environment variables:
+#   SURVIVING_FILE_PATH — a path (relative to /var/www/app/data/files/) that MUST
+#                         still exist (the dedup/surviving-file case).  Optional.
+#
+# Typical workflow:
+#   eval "$(./testing/capture.sh 2 3 4 5)"   # capture BEFORE delete
+#   # …invoke bulk delete via JSON-RPC or UI…
+#   ./testing/verify.sh 2 3 4 5              # check AFTER delete
 #
 # Exit codes:
 #   0 — zero orphans (all checks passed)
-#   1 — one or more orphan rows / orphan files / surviving file missing
-#
-# FK-cascade enforcement note:
-#   SQLite enforces FOREIGN KEY constraints only when PRAGMA foreign_keys=ON is issued
-#   per connection.  The verify.sh script uses raw PHP PDO without that pragma, so it
-#   relies on the actual row counts — which is what we want: we're asserting the DELETE
-#   cascade actually fired (i.e. rows are gone), NOT relying on FK enforcement to run it.
+#   1 — one or more orphan rows / orphan files / surviving file missing /
+#       PRAGMA foreign_keys not ON / missing required env vars
 #
 # Run from the repo root:
 #   ./testing/verify.sh 2 3 4 5 6
@@ -119,6 +125,34 @@ echo "verify.sh — ZERO-ORPHANS check for project IDs: ${PROJECT_IDS_CSV}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
+# ── 0. PRAGMA foreign_keys enforcement check ─────────────────────────────────
+echo "── 0. PRAGMA foreign_keys enforcement check ────────────────────"
+# SQLite enforces FK constraints only when PRAGMA foreign_keys=ON is issued
+# per connection.  Kanboard's PicoDb Sqlite driver sets this on every connection
+# (/var/www/app/libs/picodb/lib/PicoDb/Driver/Sqlite.php line ~57):
+#   $this->pdo->exec('PRAGMA foreign_keys = ON');
+# We verify two things:
+#   (a) The SQLite build in this container supports FK enforcement (we can enable it).
+#   (b) Kanboard's PicoDb driver actually sets it (confirmed from source).
+# We enable FK in our own PDO connection and check it returns 1 — this proves
+# FK enforcement is functional in this environment and that delete cascades
+# (triggered by the application's PicoDb connection) would have fired correctly.
+FK_VAL=$(docker compose -f "$COMPOSE_FILE" exec -T kanboard \
+  php -r "
+\$db = new PDO('sqlite:${DB_PATH}');
+\$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+\$db->exec('PRAGMA foreign_keys = ON');
+\$stmt = \$db->query('PRAGMA foreign_keys');
+\$row = \$stmt->fetch(PDO::FETCH_NUM);
+echo \$row ? (int)\$row[0] : 0;
+")
+if [[ "$FK_VAL" == "1" ]]; then
+  pass "PRAGMA foreign_keys = 1 (ON) — FK enforcement functional; PicoDb enables this per connection"
+else
+  fail "PRAGMA foreign_keys = ${FK_VAL} after explicit enable — SQLite FK enforcement broken in this container!"
+fi
+echo ""
+
 # ── 1. Project row itself must be gone ───────────────────────────────────────
 echo "── 1. Project rows ─────────────────────────────────────────────"
 assert_zero "projects" "id IN (${PROJECT_IDS_CSV})" "projects"
@@ -148,44 +182,69 @@ assert_zero "tags"                          "project_id IN (${PROJECT_IDS_CSV})"
 assert_zero "transitions"                   "project_id IN (${PROJECT_IDS_CSV})"
 echo ""
 
-# ── 3. FK-cascade tables keyed on action_id (actions must already be gone) ──
-echo "── 3. action_has_params (cascades from actions) ────────────────"
+# ── 3. action_has_params — uses PRE-DELETE literal action IDs ───────────────
+echo "── 3. action_has_params (uses pre-delete action IDs) ───────────"
 # action_has_params.action_id → actions.id ON DELETE CASCADE
-# If actions rows are gone (asserted above), params cascade too.
-# We check directly via a subquery for completeness.
-assert_zero "action_has_params" \
-  "action_id IN (SELECT id FROM actions WHERE project_id IN (${PROJECT_IDS_CSV}))" \
-  "action_has_params"
+# We MUST use pre-delete literal action IDs because actions rows are gone
+# after deletion, making a subquery on actions always return empty → count=0
+# (always passes, never catches orphans).
+# Use bash variable-set test (-v) to distinguish "set to empty" from "not set".
+if [[ ! -v SEEDED_ACTION_IDS ]]; then
+  fail "SEEDED_ACTION_IDS is not set — cannot verify action_has_params (run capture.sh before the delete)"
+elif [[ -z "$SEEDED_ACTION_IDS" ]]; then
+  pass "action_has_params: no actions were seeded for these projects (SEEDED_ACTION_IDS is empty — nothing to check)"
+else
+  info "Using literal action IDs: ${SEEDED_ACTION_IDS}"
+  assert_zero "action_has_params" \
+    "action_id IN (${SEEDED_ACTION_IDS})" \
+    "action_has_params"
+fi
 echo ""
 
 # ── 4. tasks and all child tables ────────────────────────────────────────────
-echo "── 4. tasks and child tables (task_id) ─────────────────────────"
+echo "── 4. tasks and child tables (task_id — uses pre-delete literal ids)"
 assert_zero "tasks" "project_id IN (${PROJECT_IDS_CSV})"
 
-# For child tables we need the task IDs (they're gone from tasks, so we use a
-# literal "no rows expected" check via task_id IN (empty set) — which always
-# returns 0.  Instead, assert via project_id path where available, otherwise
-# rely on tasks being empty: if tasks=0, any row with those task_ids is orphaned.
-#
-# Strategy: check each child table for rows that reference task_ids belonging
-# to the deleted projects.  Since tasks rows are deleted, we build the subquery
-# directly; if the subquery returns empty, count will be 0 naturally.
-
-TASK_SUBQ="SELECT id FROM tasks WHERE project_id IN (${PROJECT_IDS_CSV})"
-
-assert_zero "subtasks"              "task_id IN (${TASK_SUBQ})"
-assert_zero "comments"              "task_id IN (${TASK_SUBQ})"
-assert_zero "task_has_files"        "task_id IN (${TASK_SUBQ})"
-assert_zero "task_has_metadata"     "task_id IN (${TASK_SUBQ})"
-assert_zero "task_has_tags"         "task_id IN (${TASK_SUBQ})"
-assert_zero "task_has_links"        "task_id IN (${TASK_SUBQ})"
-assert_zero "task_has_external_links" "task_id IN (${TASK_SUBQ})"
+# CRITICAL: task-child tables MUST use pre-delete literal task IDs.
+# After deletion the tasks rows are gone, so any subquery
+#   task_id IN (SELECT id FROM tasks WHERE project_id IN (<ids>))
+# returns an EMPTY set and COUNT is always 0 — it can NEVER detect orphans.
+# Instead we check with the literal IDs captured before the delete.
+if [[ ! -v SEEDED_TASK_IDS ]]; then
+  fail "SEEDED_TASK_IDS is not set — cannot verify task-child tables (run capture.sh before the delete)"
+  info "Skipping subtasks, comments, task_has_files, task_has_metadata, task_has_tags, task_has_links, task_has_external_links (no ids to check against)"
+elif [[ -z "$SEEDED_TASK_IDS" ]]; then
+  pass "task-child tables: no tasks were seeded for these projects (SEEDED_TASK_IDS is empty — nothing to check)"
+else
+  info "Using literal task IDs: ${SEEDED_TASK_IDS}"
+  assert_zero "subtasks"              "task_id IN (${SEEDED_TASK_IDS})"
+  assert_zero "comments"              "task_id IN (${SEEDED_TASK_IDS})"
+  assert_zero "task_has_files"        "task_id IN (${SEEDED_TASK_IDS})"
+  assert_zero "task_has_metadata"     "task_id IN (${SEEDED_TASK_IDS})"
+  assert_zero "task_has_tags"         "task_id IN (${SEEDED_TASK_IDS})"
+  # task_has_links has TWO FK columns to tasks — check both
+  assert_zero "task_has_links" "task_id IN (${SEEDED_TASK_IDS})"          "task_has_links (via task_id)"
+  assert_zero "task_has_links" "opposite_task_id IN (${SEEDED_TASK_IDS})" "task_has_links (via opposite_task_id)"
+  assert_zero "task_has_external_links" "task_id IN (${SEEDED_TASK_IDS})"
+fi
 echo ""
 
-# ── 5. subtask_time_tracking (cascades from subtasks) ────────────────────────
-echo "── 5. subtask_time_tracking (cascades from subtasks) ───────────"
-SUBTASK_SUBQ="SELECT id FROM subtasks WHERE task_id IN (${TASK_SUBQ})"
-assert_zero "subtask_time_tracking" "subtask_id IN (${SUBTASK_SUBQ})"
+# ── 5. subtask_time_tracking — uses PRE-DELETE literal subtask IDs ──────────
+echo "── 5. subtask_time_tracking (uses pre-delete subtask IDs) ──────"
+# subtask_time_tracking.subtask_id → subtasks.id ON DELETE CASCADE
+# MUST use pre-delete literal subtask IDs because subtasks rows are gone
+# post-delete (cascade from tasks) — a subquery on subtasks always returns
+# empty, so COUNT is always 0 and can never detect orphans.
+if [[ ! -v SEEDED_SUBTASK_IDS ]]; then
+  fail "SEEDED_SUBTASK_IDS is not set — cannot verify subtask_time_tracking (run capture.sh before the delete)"
+elif [[ -z "$SEEDED_SUBTASK_IDS" ]]; then
+  pass "subtask_time_tracking: no subtasks were seeded for these projects (SEEDED_SUBTASK_IDS is empty — nothing to check)"
+else
+  info "Using literal subtask IDs: ${SEEDED_SUBTASK_IDS}"
+  assert_zero "subtask_time_tracking" \
+    "subtask_id IN (${SEEDED_SUBTASK_IDS})" \
+    "subtask_time_tracking"
+fi
 echo ""
 
 # ── 6. Explicit plugin-cleanup tables (no FK cascade in core) ───────────────
@@ -196,17 +255,27 @@ assert_zero "invites"        "project_id IN (${PROJECT_IDS_CSV})" \
   "invites (plugin-explicit cleanup)"
 echo ""
 
-# ── 7. On-disk file checks ───────────────────────────────────────────────────
+# ── 7. On-disk file checks — MANDATORY ──────────────────────────────────────
 echo "── 7. On-disk file checks ──────────────────────────────────────"
 
-if [[ -n "${SEEDED_FILE_PATHS:-}" ]]; then
-  IFS=':' read -ra PATHS <<< "$SEEDED_FILE_PATHS"
-  for p in "${PATHS[@]}"; do
-    [[ -n "$p" ]] && assert_file_gone "$p"
-  done
+if [[ ! -v SEEDED_FILE_PATHS ]]; then
+  fail "SEEDED_FILE_PATHS is not set — cannot verify on-disk file removal (run capture.sh before the delete; never skip this check)"
+elif [[ -z "$SEEDED_FILE_PATHS" ]]; then
+  pass "on-disk file check: no file paths were captured for these projects (SEEDED_FILE_PATHS is empty — nothing to check)"
 else
-  info "SEEDED_FILE_PATHS not set — skipping per-path FS assertions."
-  info "Run with SEEDED_FILE_PATHS=path1:path2 to enable on-disk checks."
+  IFS=':' read -ra PATHS <<< "$SEEDED_FILE_PATHS"
+  CHECKED=0
+  for p in "${PATHS[@]}"; do
+    if [[ -n "$p" ]]; then
+      assert_file_gone "$p"
+      CHECKED=$(( CHECKED + 1 ))
+    fi
+  done
+  if [[ $CHECKED -eq 0 ]]; then
+    fail "SEEDED_FILE_PATHS was set but contained no non-empty paths — check capture.sh output"
+  else
+    info "Checked ${CHECKED} seeded file path(s)"
+  fi
 fi
 
 if [[ -n "${SURVIVING_FILE_PATH:-}" ]]; then
@@ -230,14 +299,11 @@ for pid_str in $(echo "$PROJECT_IDS_CSV" | tr ',' ' '); do
 done
 
 # Check /var/www/app/data/files/tasks/ for task subdirs belonging to deleted projects
+# Use SEEDED_TASK_IDS for literal task dir checks (tasks already gone from DB)
 echo ""
 echo "  Checking /var/www/app/data/files/tasks/ for orphaned task dirs..."
-TASK_IDS_RAW=$(db_scalar "SELECT GROUP_CONCAT(id) FROM tasks WHERE project_id IN (${PROJECT_IDS_CSV})" 2>/dev/null || echo "")
-if [[ -z "$TASK_IDS_RAW" || "$TASK_IDS_RAW" == "0" ]]; then
-  pass "No task dirs to check (tasks already gone from DB — cascade confirmed)"
-else
-  # There are still task ids referenced; check their on-disk dirs
-  IFS=',' read -ra TASK_IDS_ARR <<< "$TASK_IDS_RAW"
+if [[ -n "${SEEDED_TASK_IDS:-}" ]]; then
+  IFS=',' read -ra TASK_IDS_ARR <<< "$SEEDED_TASK_IDS"
   for tid_str in "${TASK_IDS_ARR[@]}"; do
     result=$(docker compose -f "$COMPOSE_FILE" exec -T kanboard \
       sh -c "test -d '${FILES_BASE}/tasks/${tid_str}' && echo exists || echo gone" 2>/dev/null || echo gone)
@@ -247,16 +313,10 @@ else
       fail "task files dir STILL EXISTS (possible orphan files): tasks/${tid_str}"
     fi
   done
+else
+  info "SEEDED_TASK_IDS not set — cannot check per-task file dirs (this was already flagged above)"
 fi
 
-echo ""
-
-# ── 8. FK-enforcement sanity check ──────────────────────────────────────────
-echo "── 8. FK-enforcement sanity (PRAGMA foreign_keys) ──────────────"
-echo "  Note: SQLite FKs only fire with PRAGMA foreign_keys=ON per connection."
-echo "  This script asserts row counts, not FK firing — zero counts mean"
-echo "  the DELETE cascade was effective regardless of how it was triggered."
-echo "  (Kanboard's own test framework enables FK pragmas via PicoDb.)"
 echo ""
 
 # ── Summary ──────────────────────────────────────────────────────────────────
