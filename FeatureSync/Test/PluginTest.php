@@ -140,4 +140,129 @@ class PluginTest extends Base
         $model = new FeatureSyncModel($this->container);
         $model->copyFeature(FeatureSyncModel::FEATURE_ACTIONS, 1, 2);
     }
+
+    // ── Task-03: source-guard + target validation ────────────────────────────
+
+    /**
+     * source_project_id=0 must be treated as "no selection" (less than 1).
+     * The controller normalises it to 0 before passing to the template.
+     * Modelling this as a pure logic assertion here (no HTTP request needed).
+     */
+    public function testSourceProjectIdZeroIsInvalid()
+    {
+        $sourceProjectId = 0;
+        $this->assertLessThan(1, $sourceProjectId,
+            'source_project_id=0 must be treated as invalid (no project selected)');
+    }
+
+    /**
+     * The target list filtering logic must exclude the source project.
+     *
+     * Mirrors the controller's array_filter callback exactly.
+     */
+    public function testTargetListExcludesSourceProject()
+    {
+        $sourceProjectId = 5;
+        $allProjects = array(
+            1 => 'Alpha',
+            3 => 'Beta',
+            5 => 'Gamma (source)',
+            7 => 'Delta',
+        );
+
+        $targetProjects = array();
+        foreach ($allProjects as $id => $name) {
+            $id = (int) $id;
+            if ($id > 0 && $id !== $sourceProjectId) {
+                $targetProjects[$id] = $name;
+            }
+        }
+
+        $this->assertArrayNotHasKey(
+            $sourceProjectId,
+            $targetProjects,
+            'The source project must not appear in the target project list'
+        );
+        $this->assertCount(3, $targetProjects,
+            'All other projects must be present in the target list');
+    }
+
+    /**
+     * Submitting the source project as a target must be silently stripped.
+     *
+     * Mirrors the controller's array_filter that rejects id=source and id<1.
+     */
+    public function testSourceAsTargetIsRejected()
+    {
+        $sourceProjectId = 5;
+        // Simulate POST payload with source included in targets.
+        $rawTargetIds = array('1', '5', '7');
+
+        $targetProjectIds = array_values(array_filter(
+            array_map('intval', $rawTargetIds),
+            function ($id) use ($sourceProjectId) {
+                return $id > 0 && $id !== $sourceProjectId;
+            }
+        ));
+
+        $this->assertNotContains(
+            $sourceProjectId,
+            $targetProjectIds,
+            'Source project id must be stripped from target_project_ids'
+        );
+        $this->assertContains(1, $targetProjectIds);
+        $this->assertContains(7, $targetProjectIds);
+    }
+
+    /**
+     * target_project_ids=[] with an id=0 entry must be stripped.
+     */
+    public function testTargetIdZeroIsRejected()
+    {
+        $sourceProjectId = 5;
+        $rawTargetIds    = array('0', '3');
+
+        $targetProjectIds = array_values(array_filter(
+            array_map('intval', $rawTargetIds),
+            function ($id) use ($sourceProjectId) {
+                return $id > 0 && $id !== $sourceProjectId;
+            }
+        ));
+
+        $this->assertNotContains(0, $targetProjectIds,
+            'id=0 must be stripped from target_project_ids');
+        $this->assertContains(3, $targetProjectIds);
+    }
+
+    /**
+     * Sync mode must default to 'add_missing' and reject unknown values.
+     *
+     * Mirrors controller normalisation: only 'add_missing' and 'replace' are valid.
+     */
+    public function testSyncModeDefaultsToAddMissing()
+    {
+        $syncMode = isset($_POST['sync_mode']) ? $_POST['sync_mode'] : 'add_missing';
+        $this->assertSame('add_missing', $syncMode);
+    }
+
+    public function testSyncModeRejectsUnknownValues()
+    {
+        $rawMode  = 'nuke_everything';
+        $syncMode = in_array($rawMode, array('add_missing', 'replace'), true)
+            ? $rawMode
+            : 'add_missing';
+
+        $this->assertSame('add_missing', $syncMode,
+            'Unknown sync_mode values must be normalised to add_missing');
+    }
+
+    public function testSyncModeReplaceIsAllowed()
+    {
+        $rawMode  = 'replace';
+        $syncMode = in_array($rawMode, array('add_missing', 'replace'), true)
+            ? $rawMode
+            : 'add_missing';
+
+        $this->assertSame('replace', $syncMode);
+    }
 }

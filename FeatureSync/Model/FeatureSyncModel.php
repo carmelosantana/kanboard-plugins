@@ -155,8 +155,9 @@ class FeatureSyncModel extends Base
      * @param  integer $src_project_id  Source project ID.
      * @param  integer $dst_project_id  Destination project ID.
      * @param  string  $mode            'add_missing' (default) or 'replace'.
-     * @return bool
+     * @return never
      * @throws \InvalidArgumentException when $feature is not in the copier map.
+     * @throws \RuntimeException         always — implementation stub for task-05.
      */
     public function copyFeature($feature, $src_project_id, $dst_project_id, $mode = 'add_missing')
     {

@@ -14,6 +14,15 @@ class Plugin extends Base
             return new FeatureSyncModel($c);
         };
 
+        // Inject plugin CSS + JS on every page (guarded inside the JS to only
+        // activate on the FeatureSync admin page).
+        $this->hook->on('template:layout:css', [
+            'template' => 'plugins/FeatureSync/Assets/css/feature-sync.css',
+        ]);
+        $this->hook->on('template:layout:js', [
+            'template' => 'plugins/FeatureSync/Assets/js/feature-sync.js',
+        ]);
+
         // Sidebar link in Settings (admin context)
         $this->hook->on('template:config:sidebar', [
             'template' => 'FeatureSync:config/sidebar',
