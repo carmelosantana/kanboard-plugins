@@ -84,6 +84,11 @@ class Plugin extends Base
             'template' => 'plugins/ShadcnTheme/Assets/css/shadcn-core.css'
         ]);
 
+        // Login card styles (injected on every page; rules are scoped to .form-login)
+        $this->hook->on('template:layout:css', [
+            'template' => 'plugins/ShadcnTheme/Assets/css/shadcn-login.css'
+        ]);
+
         // Add theme switching JavaScript
         $this->hook->on('template:layout:js', [
             'template' => 'plugins/ShadcnTheme/Assets/js/theme-switcher.js'
@@ -109,6 +114,11 @@ class Plugin extends Base
         // Add theme toggle to page header dropdown
         $this->hook->on('template:header:dropdown', [
             'template' => 'ShadcnTheme:header/theme_toggle'
+        ]);
+
+        // Login card header (product name + subtitle above the form fields)
+        $this->hook->on('template:auth:login-form:before', [
+            'template' => 'ShadcnTheme:auth/login_header'
         ]);
     }
 
