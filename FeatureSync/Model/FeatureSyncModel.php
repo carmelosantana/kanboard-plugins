@@ -611,7 +611,12 @@ class FeatureSyncModel extends Base
      * Copy a single feature from source project to destination project.
      *
      * Implements add_missing and replace modes using core copier methods.
-     * Called INSIDE a per-target transaction managed by apply().
+     * NOT wrapped in an outer transaction (see apply()): PicoDb has a flat
+     * single-connection transaction API and the core copier/clear methods below
+     * manage their own transactions, so an outer transaction here would be
+     * committed by the first core call and could not roll the feature back.
+     * apply() isolates failures with per-target + per-feature try/catch instead;
+     * a feature that fails mid-way may leave that target partially applied.
      *
      * Per-feature behaviour:
      *
@@ -631,11 +636,6 @@ class FeatureSyncModel extends Base
      *     swimlanes  → remove target swimlanes that have NO tasks → SwimlaneModel::duplicate();
      *                  swimlanes with tasks are LEFT IN PLACE (core SwimlaneModel::remove()
      *                  already refuses to delete swimlanes with tasks)
-     *
-     * PicoDb transaction API (verified libs/picodb/lib/PicoDb/Database.php:292-320):
-     *   $this->db->startTransaction() / closeTransaction() / cancelTransaction()
-     * Note: this method is called INSIDE an outer transaction started by apply(), so
-     * nested startTransaction() calls are safe (PicoDb checks inTransaction() first).
      *
      * Core clear methods verified against kanboard-1.2.47:
      *   ActionModel::remove($action_id)          app/Model/ActionModel.php:124
