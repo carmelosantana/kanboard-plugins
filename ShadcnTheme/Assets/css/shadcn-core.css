@@ -443,7 +443,7 @@ button:focus-visible,
 
 .kbx-btn:hover {
   opacity: 0.85;
-  box-shadow: var(--shadow, 0 2px 4px rgb(0 0 0 / 0.2));
+  box-shadow: var(--shadow-sm, 0 2px 4px rgb(0 0 0 / 0.2));
 }
 
 .kbx-btn:focus-visible {
