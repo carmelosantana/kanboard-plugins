@@ -6,7 +6,7 @@
     <?= t('Bulk-copy project features — automated actions, tags, and columns — from a source project to many target projects in one operation.') ?>
 </p>
 
-<form method="post" action="<?= $this->url->href('FeatureSyncController', 'index', [], 'FeatureSync') ?>">
+<form method="post" action="<?= $this->url->href('FeatureSyncController', 'preview', [], 'FeatureSync') ?>">
     <?= $this->form->csrf() ?>
 
     <div class="listing">
@@ -144,7 +144,7 @@
                 <strong><?= t('Step 4') ?></strong> &mdash; <?= t('Preview Changes') ?>
             </div>
             <div class="accordion-content">
-                <p class="form-help"><?= t('Dry-run diff per target — (Coming in task-04)') ?></p>
+                <p class="form-help"><?= t('Click "Continue to Preview" to see a dry-run diff of what will change per target project.') ?></p>
             </div>
         </section>
 

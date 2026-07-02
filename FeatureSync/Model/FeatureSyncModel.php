@@ -212,6 +212,249 @@ class FeatureSyncModel extends Base
     }
 
     /**
+     * Read the source items for a given feature (READ-ONLY).
+     *
+     * Match keys by feature:
+     *   actions    → "{event_name}::{action_name}"  (event + action class uniquely identify an action config)
+     *   tags       → tag name  (case-sensitive, as stored)
+     *   columns    → column title
+     *   categories → category name
+     *   swimlanes  → swimlane name
+     *
+     * Core read methods verified against kanboard-1.2.47:
+     *   ActionModel::getAllByProject($project_id)    app/Model/ActionModel.php:50
+     *   TagModel::getAllByProject($project_id)       app/Model/TagModel.php:40
+     *   ColumnModel::getAll($project_id)            app/Model/ColumnModel.php:118
+     *   CategoryModel::getAll($project_id)          app/Model/CategoryModel.php:122
+     *   SwimlaneModel::getAll($projectId)           app/Model/SwimlaneModel.php:133
+     *
+     * @param  string  $feature    One of the FEATURE_* constants.
+     * @param  integer $project_id Project to read items from.
+     * @return array[]             Rows from the database; each row is an associative array.
+     */
+    public function getFeatureItems($feature, $project_id)
+    {
+        switch ($feature) {
+            case self::FEATURE_ACTIONS:
+                // ActionModel::getAllByProject returns actions with their parameters attached.
+                // app/Model/ActionModel.php:50
+                return $this->actionModel->getAllByProject($project_id);
+
+            case self::FEATURE_TAGS:
+                // TagModel::getAllByProject returns rows: id, project_id, name, color_id
+                // app/Model/TagModel.php:40
+                return $this->tagModel->getAllByProject($project_id);
+
+            case self::FEATURE_COLUMNS:
+                // ColumnModel::getAll returns rows: id, project_id, title, position, task_limit,
+                // description, hide_in_dashboard — ordered by position asc.
+                // app/Model/ColumnModel.php:118
+                return $this->columnModel->getAll($project_id);
+
+            case self::FEATURE_CATEGORIES:
+                // CategoryModel::getAll returns rows: id, project_id, name, description, color_id
+                // app/Model/CategoryModel.php:122
+                return $this->categoryModel->getAll($project_id);
+
+            case self::FEATURE_SWIMLANES:
+                // SwimlaneModel::getAll returns all swimlanes (active + inactive) ordered by position.
+                // app/Model/SwimlaneModel.php:133
+                return $this->swimlaneModel->getAll($project_id);
+
+            default:
+                throw new \InvalidArgumentException("FeatureSyncModel: unknown feature '{$feature}'");
+        }
+    }
+
+    /**
+     * Return the match key for an item of a given feature (used for add/skip comparison).
+     *
+     * Match-key rationale per feature:
+     *   actions    → event_name + "::" + action_name  (uniquely identifies an action type)
+     *   tags       → name
+     *   columns    → title
+     *   categories → name
+     *   swimlanes  → name
+     *
+     * @param  string $feature One of the FEATURE_* constants.
+     * @param  array  $item    One row from getFeatureItems().
+     * @return string
+     */
+    public function getItemKey($feature, array $item)
+    {
+        switch ($feature) {
+            case self::FEATURE_ACTIONS:
+                return $item['event_name'] . '::' . $item['action_name'];
+            case self::FEATURE_TAGS:
+                return $item['name'];
+            case self::FEATURE_COLUMNS:
+                return $item['title'];
+            case self::FEATURE_CATEGORIES:
+                return $item['name'];
+            case self::FEATURE_SWIMLANES:
+                return $item['name'];
+            default:
+                throw new \InvalidArgumentException("FeatureSyncModel: unknown feature '{$feature}'");
+        }
+    }
+
+    /**
+     * Compute a read-only diff for one feature between source and one target project.
+     *
+     * Returns a structured result per feature:
+     *
+     *   add_missing mode:
+     *     'add'  — source items absent from target (would be added on apply)
+     *     'skip' — source items already present in target (no-op on apply)
+     *
+     *   replace mode:
+     *     'replace_add'    — source items that would be added (full source set)
+     *     'replace_remove' — target items that would be removed (full target set)
+     *     For counting: add=count(replace_add), skip=0, replace=count(replace_remove)
+     *
+     * NO WRITES — this method only SELECTs from the database.
+     *
+     * @param  string  $feature          One of the FEATURE_* constants.
+     * @param  integer $sourceProjectId  Source project ID.
+     * @param  integer $targetProjectId  Target project ID.
+     * @param  string  $mode             'add_missing' or 'replace'.
+     * @return array{
+     *     feature:        string,
+     *     mode:           string,
+     *     source_items:   array[],
+     *     target_items:   array[],
+     *     add:            array[],
+     *     skip:           array[],
+     *     replace_add:    array[],
+     *     replace_remove: array[],
+     *     count_add:      int,
+     *     count_skip:     int,
+     *     count_replace:  int,
+     * }
+     */
+    public function diffFeature($feature, $sourceProjectId, $targetProjectId, $mode)
+    {
+        // READ source and target items — no writes.
+        $sourceItems = $this->getFeatureItems($feature, $sourceProjectId);
+        $targetItems = $this->getFeatureItems($feature, $targetProjectId);
+
+        // Build a lookup set of target match-keys for O(1) membership checks.
+        $targetKeySet = array();
+        foreach ($targetItems as $item) {
+            $targetKeySet[$this->getItemKey($feature, $item)] = true;
+        }
+
+        $add  = array();
+        $skip = array();
+
+        foreach ($sourceItems as $item) {
+            $key = $this->getItemKey($feature, $item);
+            if (isset($targetKeySet[$key])) {
+                $skip[] = $item;
+            } else {
+                $add[] = $item;
+            }
+        }
+
+        if ($mode === 'replace') {
+            // Replace mode: the full source set would be added after the target set is cleared.
+            return array(
+                'feature'        => $feature,
+                'mode'           => $mode,
+                'source_items'   => $sourceItems,
+                'target_items'   => $targetItems,
+                'add'            => array(),
+                'skip'           => array(),
+                'replace_add'    => $sourceItems,
+                'replace_remove' => $targetItems,
+                'count_add'      => count($sourceItems),
+                'count_skip'     => 0,
+                'count_replace'  => count($targetItems),
+            );
+        }
+
+        // add_missing mode
+        return array(
+            'feature'        => $feature,
+            'mode'           => $mode,
+            'source_items'   => $sourceItems,
+            'target_items'   => $targetItems,
+            'add'            => $add,
+            'skip'           => $skip,
+            'replace_add'    => array(),
+            'replace_remove' => array(),
+            'count_add'      => count($add),
+            'count_skip'     => count($skip),
+            'count_replace'  => 0,
+        );
+    }
+
+    /**
+     * Compute a full read-only diff for all selected features across all target projects.
+     *
+     * Returns a map: targetProjectId → [feature → diffFeature result].
+     *
+     * NO WRITES — this method only SELECTs from the database.
+     *
+     * @param  integer   $sourceProjectId  Source project ID.
+     * @param  integer[] $targetProjectIds List of target project IDs.
+     * @param  string[]  $features         List of FEATURE_* constants to diff.
+     * @param  string    $mode             'add_missing' or 'replace'.
+     * @return array                        [targetProjectId => [feature => diff result]]
+     */
+    public function diff($sourceProjectId, array $targetProjectIds, array $features, $mode)
+    {
+        $result = array();
+
+        foreach ($targetProjectIds as $targetProjectId) {
+            $targetProjectId = (int) $targetProjectId;
+            $result[$targetProjectId] = array();
+
+            foreach ($features as $feature) {
+                $result[$targetProjectId][$feature] = $this->diffFeature(
+                    $feature,
+                    $sourceProjectId,
+                    $targetProjectId,
+                    $mode
+                );
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Check whether any of the target columns that would be removed in 'replace' mode
+     * contain open tasks (i.e. a risky replace-columns operation).
+     *
+     * Uses TaskFinderModel::countByColumnId() — READ-ONLY.
+     * Core: app/Model/TaskFinderModel.php:358
+     *
+     * @param  integer $targetProjectId   Target project ID.
+     * @param  array[] $targetColumns     Columns from getFeatureItems('columns', $targetProjectId).
+     * @return array                       [column_id => task_count] only for columns with tasks > 0.
+     */
+    public function getColumnsWithTasks($targetProjectId, array $targetColumns)
+    {
+        $risky = array();
+
+        foreach ($targetColumns as $col) {
+            $count = $this->taskFinderModel->countByColumnId(
+                $targetProjectId,
+                (int) $col['id']
+            );
+            if ($count > 0) {
+                $risky[(int)$col['id']] = array(
+                    'column' => $col,
+                    'task_count' => $count,
+                );
+            }
+        }
+
+        return $risky;
+    }
+
+    /**
      * Copy a single feature from source project to destination project.
      *
      * STUB — implementation comes in task-05.  The copier map is already wired;

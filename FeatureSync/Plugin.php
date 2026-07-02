@@ -31,6 +31,9 @@ class Plugin extends Base
         // Route to the admin page.
         // addRoute($path, $controller, $action, $plugin)  — see Core/Http/Route.php:61
         $this->route->addRoute('feature-sync', 'FeatureSyncController', 'index', 'FeatureSync');
+
+        // Route to the preview page (Step 4 — dry-run diff, POST from index).
+        $this->route->addRoute('feature-sync/preview', 'FeatureSyncController', 'preview', 'FeatureSync');
     }
 
     public function getPluginName()        { return 'FeatureSync'; }

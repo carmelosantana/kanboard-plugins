@@ -9,6 +9,18 @@ use Kanboard\Plugin\FeatureSync\Model\FeatureSyncModel;
 class FeatureSyncController extends BaseController
 {
     /**
+     * Guard: throw AccessForbiddenException if not admin. Call at top of every action.
+     *
+     * @throws AccessForbiddenException
+     */
+    private function requireAdmin()
+    {
+        if (! $this->userSession->isAdmin()) {
+            throw new AccessForbiddenException();
+        }
+    }
+
+    /**
      * GET/POST — admin-only Feature Sync page.
      *
      * Renders the 5-step workflow. Steps 1 (source project), 2 (feature types),
@@ -21,9 +33,7 @@ class FeatureSyncController extends BaseController
      */
     public function index()
     {
-        if (! $this->userSession->isAdmin()) {
-            throw new AccessForbiddenException();
-        }
+        $this->requireAdmin();
 
         /** @var FeatureSyncModel $featureSyncModel */
         $featureSyncModel = $this->container['featureSyncModel'];
@@ -67,6 +77,103 @@ class FeatureSyncController extends BaseController
             'targetProjects'    => $targetProjects,
             'targetProjectIds'  => $targetProjectIds,
             'syncMode'          => $syncMode,
+        )));
+    }
+
+    /**
+     * POST — admin-only dry-run preview page (Step 4).
+     *
+     * Reads the resolved params from POST, computes a read-only diff per target,
+     * detects risky replace-columns situations (columns with open tasks that would be
+     * removed), and renders the preview table.
+     *
+     * ABSOLUTELY NO WRITES — this action only SELECTs from the database.
+     *
+     * @throws AccessForbiddenException when the current user is not an app admin
+     */
+    public function preview()
+    {
+        $this->requireAdmin();
+
+        /** @var FeatureSyncModel $featureSyncModel */
+        $featureSyncModel = $this->container['featureSyncModel'];
+
+        // Resolve and validate all form params from POST.
+        $postValues       = $this->request->getValues();
+        $sourceFromGet    = $this->request->getIntegerParam('source_project_id', 0);
+        $resolved         = $featureSyncModel->resolveFormParams($postValues, $sourceFromGet);
+
+        $sourceProjectId  = $resolved['sourceProjectId'];
+        $selectedFeatures = $resolved['selectedFeatures'];
+        $targetProjectIds = $resolved['targetProjectIds'];
+        $syncMode         = $resolved['syncMode'];
+
+        // Guard: need a source and at least one target to preview.
+        if ($sourceProjectId < 1 || empty($targetProjectIds) || empty($selectedFeatures)) {
+            $this->flash->failure(t('Please select a source project, at least one feature, and at least one target project.'));
+            $this->response->redirect($this->helper->url->href('FeatureSyncController', 'index', array(), 'FeatureSync'));
+            return;
+        }
+
+        // Compute the read-only diff for all features × all targets.
+        // FeatureSyncModel::diff() only SELECTs — no writes.
+        $diffs = $featureSyncModel->diff($sourceProjectId, $targetProjectIds, $selectedFeatures, $syncMode);
+
+        // Detect risky replace-columns: target columns with open tasks that would be removed.
+        // Only relevant when columns is selected and mode is replace.
+        $columnRisks = array();  // [targetProjectId => risky columns map]
+        if ($syncMode === 'replace' && in_array(FeatureSyncModel::FEATURE_COLUMNS, $selectedFeatures, true)) {
+            foreach ($targetProjectIds as $targetId) {
+                $targetId = (int) $targetId;
+                if (isset($diffs[$targetId][FeatureSyncModel::FEATURE_COLUMNS])) {
+                    $featureDiff   = $diffs[$targetId][FeatureSyncModel::FEATURE_COLUMNS];
+                    $targetColumns = $featureDiff['replace_remove'];  // columns that would be cleared
+
+                    if (! empty($targetColumns)) {
+                        $risky = $featureSyncModel->getColumnsWithTasks($targetId, $targetColumns);
+                        if (! empty($risky)) {
+                            $columnRisks[$targetId] = $risky;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Project name map for display.
+        $projects         = $this->projectModel->getList(false, false);
+        $featureList      = $featureSyncModel->getFeatureList();
+        $sourceProjectName = isset($projects[$sourceProjectId]) ? $projects[$sourceProjectId] : "#{$sourceProjectId}";
+
+        // Build display rows: per-target summary.
+        $previewRows = array();
+        foreach ($targetProjectIds as $targetId) {
+            $targetId = (int) $targetId;
+            $featureSummaries = array();
+
+            foreach ($selectedFeatures as $feature) {
+                if (isset($diffs[$targetId][$feature])) {
+                    $featureSummaries[$feature] = $diffs[$targetId][$feature];
+                }
+            }
+
+            $previewRows[$targetId] = array(
+                'project_id'   => $targetId,
+                'project_name' => isset($projects[$targetId]) ? $projects[$targetId] : "#{$targetId}",
+                'features'     => $featureSummaries,
+                'column_risks' => isset($columnRisks[$targetId]) ? $columnRisks[$targetId] : array(),
+            );
+        }
+
+        $this->response->html($this->helper->layout->config('FeatureSync:sync/preview', array(
+            'title'             => t('Settings') . ' &gt; ' . t('Feature Sync') . ' &gt; ' . t('Preview'),
+            'sourceProjectId'   => $sourceProjectId,
+            'sourceProjectName' => $sourceProjectName,
+            'selectedFeatures'  => $selectedFeatures,
+            'targetProjectIds'  => $targetProjectIds,
+            'syncMode'          => $syncMode,
+            'featureList'       => $featureList,
+            'previewRows'       => $previewRows,
+            'postValues'        => $postValues,
         )));
     }
 }
