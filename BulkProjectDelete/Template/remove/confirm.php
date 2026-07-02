@@ -1,9 +1,13 @@
 <?php
 /**
- * BulkProjectDelete — impact pre-flight confirmation.
+ * BulkProjectDelete — impact pre-flight confirmation (partial fragment).
  *
  * Shows per-project counts of tasks, subtasks, comments, files, and total file bytes,
  * plus a totals row and an irreversibility warning.
+ *
+ * This is a partial fragment injected into the shared modal by the JS layer —
+ * it must NOT contain DOCTYPE/html/head/body. The plugin CSS is injected globally
+ * via template:layout:css, so the fragment's classes remain styled.
  *
  * This form POSTs to the remove() endpoint (task-05) with CSRF protection.
  */
@@ -21,17 +25,7 @@ function bpd_format_bytes($bytes) {
     return round($bytes / pow(1024, $exp), 1) . ' ' . $units[$exp];
 }
 ?>
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title><?= t('Confirm bulk delete') ?></title>
-<link rel="stylesheet" href="<?= $this->url->dir() ?>assets/css/app.css">
-<link rel="stylesheet" href="<?= $this->url->dir() ?>plugins/BulkProjectDelete/Assets/css/bulk-delete.css">
-</head>
-<body class="bpd-confirm-page">
-
-<main class="bpd-confirm-wrap">
+<div class="bpd-confirm-wrap">
 
     <h1 class="bpd-confirm-title"><?= t('Confirm project deletion') ?></h1>
 
@@ -99,7 +93,4 @@ function bpd_format_bytes($bytes) {
 
     <?php endif ?>
 
-</main>
-
-</body>
-</html>
+</div>

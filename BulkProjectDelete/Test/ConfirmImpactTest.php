@@ -218,19 +218,31 @@ class ConfirmImpactTest extends Base
     }
 
     /**
-     * AccessForbiddenException is thrown for non-admin — verified by examining the
-     * controller source: the first line of confirm() is the admin gate.
-     * This test verifies the exception class exists and can be instantiated so
-     * static analysis passes, and documents the expected behavior.
+     * confirm() throws AccessForbiddenException when the caller is not an admin.
+     *
+     * Stubs $this->container['userSession'] so that isAdmin() returns false,
+     * then instantiates the real BulkDeleteController and calls confirm().
+     * The test genuinely exercises the admin gate — removing the guard in
+     * BulkDeleteController::confirm() causes this test to go RED.
      */
-    public function testAccessForbiddenExceptionExists()
+    public function testConfirmThrowsForNonAdmin()
     {
-        $this->assertTrue(
-            class_exists(AccessForbiddenException::class),
-            'AccessForbiddenException must be loadable'
+        // Replace the real userSession with a stub whose isAdmin() returns false.
+        $this->container['userSession'] = $this
+            ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['isAdmin'])
+            ->getMock();
+
+        $this->container['userSession']
+            ->method('isAdmin')
+            ->willReturn(false);
+
+        $controller = new \Kanboard\Plugin\BulkProjectDelete\Controller\BulkDeleteController(
+            $this->container
         );
 
-        $ex = new AccessForbiddenException();
-        $this->assertInstanceOf(\Exception::class, $ex);
+        $this->expectException(AccessForbiddenException::class);
+        $controller->confirm();
     }
 }
