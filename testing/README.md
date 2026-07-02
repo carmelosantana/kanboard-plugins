@@ -5,8 +5,11 @@ One Docker stack that mounts all four plugins for local development and testing.
 ## Prerequisites
 
 - Docker + Docker Compose (Linux)
-- `sqlite3` available inside the container (built-in to `kanboard/kanboard:latest`)
+- `python3` on the host (used by `seed.sh` / `snapshot.sh` for safe SQL quoting and JSON parsing)
 - Port **8081** free on the host
+
+> **Note:** The `kanboard/kanboard:latest` Alpine image does **not** ship the `sqlite3` CLI.
+> The scripts talk to the DB through PHP PDO (`php -r "new PDO('sqlite:...')"`) executed inside the container.
 
 ---
 
@@ -91,7 +94,7 @@ echo "API_TOKEN=<your-token>" > testing/.env
 Prints:
 - Per-table row counts (projects, tasks, subtasks, comments, files, categories, …)
 - Unique file paths recorded in the DB
-- On-disk `data/files/` listing (shows dedup: the shared file appears **once**)
+- On-disk `data/files/` listing (one copy per task directory — Kanboard does **not** dedup files; the same content uploaded to two tasks produces two separate on-disk copies, one in each task's directory)
 - Installed plugin directories
 
 ### 6. Tear down
@@ -139,3 +142,46 @@ curl -u "jsonrpc:$API_TOKEN" http://localhost:8081/jsonrpc.php \
 | Port           | `8081`          |
 | Image          | `kanboard/kanboard:latest` |
 | Data volume    | `kanboard-suite_kb-suite-data` |
+
+---
+
+## Unit tests (host-side PHPUnit)
+
+Plugin unit tests run on the **host** against the real Kanboard v1.2.47 source using in-memory SQLite.
+This avoids needing PHPUnit inside the Docker container (which is a production Alpine image with no dev tooling).
+
+### One-time setup
+
+```bash
+# 1. Clone full Kanboard source (with tests/ and dev deps)
+git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git testing/kanboard-src
+
+# 2. Install dev dependencies (includes PHPUnit 9.x)
+composer install -d testing/kanboard-src
+```
+
+`testing/kanboard-src/` is gitignored — it is large and not part of this repo.
+Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically by the runner.
+
+### Running a plugin's tests
+
+```bash
+# From repo root:
+./testing/run-plugin-tests.sh <PluginName>
+
+# Example:
+./testing/run-plugin-tests.sh ShadcnTheme
+```
+
+The script:
+1. Verifies `kanboard-src/` and `vendor/bin/phpunit` are present.
+2. Creates symlinks for all four plugins inside `kanboard-src/plugins/` if missing.
+3. Prints a clear message if the plugin has no `Test/` directory yet.
+4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/units.sqlite.xml` (in-memory SQLite)
+   and a bootstrap that registers all plugin PSR-4 namespaces.
+
+### Plugin test conventions
+
+Each plugin's unit tests live in `<PluginName>/Test/` and extend `KanboardTests\units\Base` (which
+sets up a full in-memory Kanboard container). No manual `require_once` is needed — the bootstrap
+handles namespace registration for all plugins automatically.

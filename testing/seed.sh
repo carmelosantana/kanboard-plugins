@@ -164,7 +164,8 @@ print(list(items)[0]['id'])
     # Per-task file (unique per task)
     rpc "createTaskFile" "{\"project_id\":${PID},\"task_id\":${TID},\"filename\":\"task-${t}-proj-${i}.txt\",\"blob\":\"${SHARED_FILE_B64}\"}" > /dev/null
 
-    # Shared-path case: same filename uploaded to task 1 and task 2 (exercises dedup or collision)
+    # Shared-path case: same filename uploaded to task 1 and task 2.
+    # Kanboard does NOT dedup — each task gets its own on-disk copy under its own task directory.
     if [[ "$t" -le 2 ]]; then
       rpc "createTaskFile" "{\"project_id\":${PID},\"task_id\":${TID},\"filename\":\"${SHARED_FILENAME}\",\"blob\":\"${SHARED_FILE_B64}\"}" > /dev/null
     fi
