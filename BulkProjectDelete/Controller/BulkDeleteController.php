@@ -137,10 +137,64 @@ class BulkDeleteController extends BaseController
 
     /**
      * POST — perform the bulk delete.
-     * (stub: empty response until task-05 implements the delete endpoint)
+     *
+     * Loops over each submitted project id; for each, opens a PER-PROJECT transaction,
+     * deletes the two orphan-gap tables (custom_filters, invites) that core's cascade
+     * misses, then calls core's file-aware projectModel->remove().  One failure never
+     * aborts the rest.
+     *
+     * CSRF: the confirm template uses <?= $this->form->csrf() ?> (form-body token),
+     * so we verify with checkCSRFForm() — NOT checkCSRFParam().
+     *
+     * PicoDb tx API verified against libs/picodb/lib/PicoDb/Database.php:
+     *   startTransaction() / closeTransaction() / cancelTransaction()
      */
     public function remove()
     {
-        $this->response->html('');
+        if (! $this->userSession->isAdmin()) {
+            throw new AccessForbiddenException();
+        }
+
+        $this->checkCSRFForm();
+
+        $rawIds = $this->request->getValues()['project_ids'] ?? [];
+        // Cast to int, drop zeros (blank/whitespace entries cast to 0).
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array) $rawIds))));
+
+        $report = ['deleted' => [], 'failed' => []];
+
+        foreach ($ids as $projectId) {
+            $project = $this->projectModel->getById($projectId);
+            if (empty($project)) {
+                $report['failed'][$projectId] = 'not found';
+                continue;
+            }
+
+            $this->db->startTransaction();
+            try {
+                // Close orphan gaps that core's FK cascade does not cover.
+                // These must run BEFORE projectModel->remove() deletes the projects row.
+                $this->db->table('custom_filters')->eq('project_id', $projectId)->remove();
+                $this->db->table('invites')->eq('project_id', $projectId)->remove();
+
+                // Core file-aware cascade: removes disk files, task_has_files,
+                // project_has_files, tags, then the projects row itself.
+                if (! $this->projectModel->remove($projectId)) {
+                    throw new \RuntimeException('projectModel::remove returned false');
+                }
+
+                $this->db->closeTransaction();
+                $report['deleted'][$projectId] = $project['name'];
+            } catch (\Throwable $e) {
+                $this->db->cancelTransaction();
+                $report['failed'][$projectId] = $e->getMessage();
+            }
+        }
+
+        $this->flash->success(t('%d project(s) deleted.', count($report['deleted'])));
+        if (! empty($report['failed'])) {
+            $this->flash->failure(t('%d project(s) could not be deleted.', count($report['failed'])));
+        }
+        $this->response->redirect($this->helper->url->to('ProjectListController', 'show'));
     }
 }
