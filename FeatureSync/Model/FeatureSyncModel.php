@@ -362,7 +362,97 @@ class FeatureSyncModel extends Base
         }
 
         if ($mode === 'replace') {
-            // Replace mode: the full source set would be added after the target set is cleared.
+            // Replace mode: the full target set would be cleared, then the source set added.
+            //
+            // COLUMNS and SWIMLANES have a task-safety constraint: a target column/swimlane
+            // that holds open tasks cannot be removed. Those items "survive" and the source
+            // item whose match-key (title/name) collides with a surviving item is therefore
+            // SKIPPED rather than added. We use the SAME shared helpers that apply() uses so
+            // preview counts always equal applied counts.
+            if ($feature === self::FEATURE_COLUMNS) {
+                $survivingTitles = $this->getSurvivingColumnTitles($targetProjectId, $targetItems);
+                $replaceAdd    = array();
+                $replaceRemove = array();
+                $replaceSkip   = array();
+
+                // Which target columns will be removed (those without tasks)?
+                foreach ($targetItems as $col) {
+                    if (! isset($survivingTitles[$col['title']])) {
+                        $replaceRemove[] = $col;
+                    }
+                }
+
+                // Which source columns will be added vs skipped?
+                // A source column is SKIPPED only if its title collides with a SURVIVING
+                // target column (one that has tasks and cannot be removed). Non-surviving
+                // target columns will be removed, so source columns that only collide with
+                // them are counted as ADD (they will be created after the removal).
+                // This is the same rule apply() uses, ensuring preview == applied counts.
+                foreach ($sourceItems as $col) {
+                    if (isset($survivingTitles[$col['title']])) {
+                        $replaceSkip[] = $col;
+                    } else {
+                        $replaceAdd[] = $col;
+                    }
+                }
+
+                return array(
+                    'feature'        => $feature,
+                    'mode'           => $mode,
+                    'source_items'   => $sourceItems,
+                    'target_items'   => $targetItems,
+                    'add'            => array(),
+                    'skip'           => $replaceSkip,
+                    'replace_add'    => $replaceAdd,
+                    'replace_remove' => $replaceRemove,
+                    'count_add'      => count($replaceAdd),
+                    'count_skip'     => count($replaceSkip),
+                    'count_replace'  => count($replaceRemove),
+                );
+            }
+
+            if ($feature === self::FEATURE_SWIMLANES) {
+                $survivingNames = $this->getSurvivingSwimlanenames($targetItems);
+                $replaceAdd    = array();
+                $replaceRemove = array();
+                $replaceSkip   = array();
+
+                // Which target swimlanes will be removed (those without tasks)?
+                foreach ($targetItems as $lane) {
+                    if (! isset($survivingNames[$lane['name']])) {
+                        $replaceRemove[] = $lane;
+                    }
+                }
+
+                // Which source swimlanes will be added vs skipped?
+                // A source swimlane is SKIPPED only if its name collides with a SURVIVING
+                // target swimlane (one that has tasks — SwimlaneModel::remove() refuses to
+                // remove it). Non-surviving swimlanes will be removed, so source lanes that
+                // only collide with them are counted as ADD. Same rule as apply().
+                foreach ($sourceItems as $lane) {
+                    if (isset($survivingNames[$lane['name']])) {
+                        $replaceSkip[] = $lane;
+                    } else {
+                        $replaceAdd[] = $lane;
+                    }
+                }
+
+                return array(
+                    'feature'        => $feature,
+                    'mode'           => $mode,
+                    'source_items'   => $sourceItems,
+                    'target_items'   => $targetItems,
+                    'add'            => array(),
+                    'skip'           => $replaceSkip,
+                    'replace_add'    => $replaceAdd,
+                    'replace_remove' => $replaceRemove,
+                    'count_add'      => count($replaceAdd),
+                    'count_skip'     => count($replaceSkip),
+                    'count_replace'  => count($replaceRemove),
+                );
+            }
+
+            // All other features: full source set added after target is fully cleared.
             return array(
                 'feature'        => $feature,
                 'mode'           => $mode,
@@ -457,6 +547,64 @@ class FeatureSyncModel extends Base
         }
 
         return $risky;
+    }
+
+    /**
+     * Return the set of target column titles that survive a replace operation.
+     *
+     * A column "survives" when it has open tasks — it cannot be safely removed.
+     * This SHARED helper is used by BOTH diffFeature() (preview) and copyColumns()
+     * (apply) so the two paths can never diverge.
+     *
+     * READ-ONLY. Uses TaskFinderModel::countByColumnId().
+     * Core: app/Model/TaskFinderModel.php:358
+     *
+     * @param  integer $targetProjectId   Target project ID.
+     * @param  array[] $targetColumns     Columns from getFeatureItems('columns', $targetProjectId).
+     * @return array                       [column_title => true] for columns that must survive.
+     */
+    public function getSurvivingColumnTitles($targetProjectId, array $targetColumns)
+    {
+        $surviving = array();
+        foreach ($targetColumns as $col) {
+            $count = $this->taskFinderModel->countByColumnId(
+                $targetProjectId,
+                (int) $col['id']
+            );
+            if ($count > 0) {
+                $surviving[$col['title']] = true;
+            }
+        }
+        return $surviving;
+    }
+
+    /**
+     * Return the set of target swimlane names that survive a replace operation.
+     *
+     * A swimlane "survives" when it has tasks — SwimlaneModel::remove() refuses to
+     * delete it (returns false). This SHARED helper is used by BOTH diffFeature()
+     * (preview) and copySwimlanes() (apply) so the two paths cannot diverge.
+     *
+     * READ-ONLY. Checks tasks table directly (same condition as SwimlaneModel::remove()).
+     * Core: SwimlaneModel::remove() app/Model/SwimlaneModel.php:339 checks
+     *   $this->db->table(TaskModel::TABLE)->eq('swimlane_id', $swimlaneId)->exists()
+     *
+     * @param  array[] $targetSwimlanes   Swimlanes from getFeatureItems('swimlanes', $targetProjectId).
+     * @return array                       [swimlane_name => true] for swimlanes that must survive.
+     */
+    public function getSurvivingSwimlanenames(array $targetSwimlanes)
+    {
+        $surviving = array();
+        foreach ($targetSwimlanes as $lane) {
+            // Mirror SwimlaneModel::remove()'s own guard — any task (any status) in the lane.
+            $hasTasks = $this->db->table('tasks')
+                ->eq('swimlane_id', (int) $lane['id'])
+                ->exists();
+            if ($hasTasks) {
+                $surviving[$lane['name']] = true;
+            }
+        }
+        return $surviving;
     }
 
     /**
@@ -557,11 +705,27 @@ class FeatureSyncModel extends Base
                 $this->actionModel->remove($action['id']);
             }
             // Duplicate all source actions to target.
+            // ActionModel::duplicate() silently skips actions whose params cannot be
+            // resolved to the target project — so count what was ACTUALLY written, not
+            // the source count (which may be higher if some actions were unresolvable).
+            $beforeCount = count($this->actionModel->getAllByProject($dst));
             $this->actionModel->duplicate($src, $dst);
-            return count($this->actionModel->getAllByProject($src));
+            return count($this->actionModel->getAllByProject($dst)) - $beforeCount;
         }
 
         // add_missing: only copy actions not already present (by event::action_name key).
+        //
+        // We must NOT copy action params verbatim — params may reference source project
+        // column/category/swimlane/user IDs which must be resolved to equivalent IDs in
+        // the target project. We mirror what ActionModel::duplicate() does:
+        //   1. INSERT the action row directly (no params yet).
+        //   2. Call ActionParameterModel::duplicateParameters($dst, $new_action_id, $params)
+        //      which resolves each param via resolveParameter() before inserting.
+        //      If resolution fails, the action is skipped (same behaviour as core duplicate).
+        //
+        // Core reference:
+        //   ActionModel::duplicate()                      app/Model/ActionModel.php:171
+        //   ActionParameterModel::duplicateParameters()   app/Model/ActionParameterModel.php:111
         $srcActions = $this->actionModel->getAllByProject($src);
         $dstActions = $this->actionModel->getAllByProject($dst);
 
@@ -574,13 +738,31 @@ class FeatureSyncModel extends Base
         foreach ($srcActions as $action) {
             $key = $action['event_name'] . '::' . $action['action_name'];
             if (! isset($dstKeySet[$key])) {
-                $values = array(
+                // Insert the action row (no params yet) — mirrors ActionModel::duplicate().
+                $inserted = $this->db->table('actions')->insert(array(
                     'project_id'  => $dst,
                     'event_name'  => $action['event_name'],
                     'action_name' => $action['action_name'],
-                    'params'      => $action['params'],
-                );
-                $this->actionModel->create($values);
+                ));
+
+                if (! $inserted) {
+                    continue;
+                }
+
+                $newActionId = $this->db->getLastId();
+
+                // Resolve params to target project IDs via duplicateParameters().
+                // If any param cannot be resolved, skip the whole action (same as core).
+                if (! $this->actionParameterModel->duplicateParameters(
+                    $dst,
+                    $newActionId,
+                    $action['params']
+                )) {
+                    // Remove the action row we just inserted (can't leave it parameterless).
+                    $this->db->table('actions')->eq('id', $newActionId)->remove();
+                    continue;
+                }
+
                 $added++;
             }
         }
@@ -662,20 +844,25 @@ class FeatureSyncModel extends Base
         $srcColumns = $this->columnModel->getAll($src);
         $dstColumns = $this->columnModel->getAll($dst);
 
-        // Build a set of destination column titles.
+        // Build a set of destination column titles present BEFORE any removals.
         $dstTitleSet = array();
         foreach ($dstColumns as $col) {
             $dstTitleSet[$col['title']] = true;
         }
 
         if ($mode === 'replace') {
-            // Remove target columns that have NO tasks. Columns with tasks are left in place.
+            // Use the shared helper to determine which target columns survive (have tasks).
+            // Columns without tasks are removed; those with tasks are left in place.
+            // (Same helper used by diffFeature() so preview counts == applied counts.)
+            $survivingTitles = $this->getSurvivingColumnTitles($dst, $dstColumns);
+
             foreach ($dstColumns as $col) {
-                $taskCount = $this->taskFinderModel->countByColumnId($dst, (int)$col['id']);
-                if ($taskCount === 0) {
+                if (! isset($survivingTitles[$col['title']])) {
                     $this->columnModel->remove((int)$col['id']);
                     unset($dstTitleSet[$col['title']]);
                 }
+                // Surviving columns keep their entry in $dstTitleSet so source
+                // columns with the same title are skipped (not duplicated).
             }
         }
 
@@ -789,23 +976,30 @@ class FeatureSyncModel extends Base
     private function copySwimlanes($src, $dst, $mode)
     {
         if ($mode === 'replace') {
-            // Attempt to remove each target swimlane. Those with tasks will be skipped
-            // by SwimlaneModel::remove() itself (returns false, no throw).
-            $dstSwimlanes = $this->swimlaneModel->getAll($dst);
+            // Use the shared helper to determine which target swimlanes survive (have tasks).
+            // SwimlaneModel::remove() already refuses to remove swimlanes with tasks, but
+            // we call the same logic first so the remove calls are consistent with diffFeature().
+            $dstSwimlanes    = $this->swimlaneModel->getAll($dst);
+            $survivingNames  = $this->getSurvivingSwimlanenames($dstSwimlanes);
+
             foreach ($dstSwimlanes as $lane) {
-                // SwimlaneModel::remove() manages its own transaction internally.
-                $this->swimlaneModel->remove($dst, (int)$lane['id']);
+                if (! isset($survivingNames[$lane['name']])) {
+                    // SwimlaneModel::remove() manages its own internal transaction.
+                    $this->swimlaneModel->remove($dst, (int)$lane['id']);
+                }
+                // Swimlanes with tasks are intentionally skipped — SwimlaneModel::remove()
+                // would refuse anyway, but skipping here is explicit + matches diff().
             }
         }
 
-        // Count before so we can report how many were actually added.
+        // Snapshot existing names after the removals so we can report what was actually added.
         $beforeNames = array();
         foreach ($this->swimlaneModel->getAll($dst) as $lane) {
             $beforeNames[$lane['name']] = true;
         }
 
         // SwimlaneModel::duplicate() already deduplicates by name (EXISTS check).
-        // Safe for both add_missing and replace (adds what's missing after clear).
+        // Safe for both add_missing and replace (adds what's missing after the clear above).
         $this->swimlaneModel->duplicate($src, $dst);
 
         $added = 0;
@@ -820,22 +1014,40 @@ class FeatureSyncModel extends Base
     /**
      * Apply selected features from source to multiple target projects.
      *
-     * For each target project, a PicoDb transaction is started. A failure in one target
-     * rolls back that target's changes and does NOT abort the batch — other targets
-     * continue to be processed.
+     * ERROR ISOLATION:
+     *   - Per-TARGET: a failure (exception) on one target is caught and recorded; the batch
+     *     continues to the next target. Other targets are not affected.
+     *   - Per-FEATURE within a target: a failure on one feature is recorded for that
+     *     (target, feature) pair; the remaining features for the same target still attempt.
      *
-     * PicoDb transaction API (verified libs/picodb/lib/PicoDb/Database.php:292-320):
-     *   $this->db->startTransaction()  → beginTransaction() if not already in one
-     *   $this->db->closeTransaction()  → commit()
-     *   $this->db->cancelTransaction() → rollBack()
+     * TRANSACTION HONESTY (why there are NO outer per-target transactions here):
+     *   PicoDb exposes a FLAT transaction API with no nesting or savepoints — there is only
+     *   one connection-level transaction at a time (verified in
+     *   libs/picodb/lib/PicoDb/Database.php:292-320). Several core methods called inside
+     *   copyFeature() manage their own internal transactions on the same flat connection:
+     *     - ActionModel::create()        → startTransaction / closeTransaction / cancelTransaction
+     *     - ActionModel::duplicate()     → same, per action
+     *     - CategoryModel::remove()      → same
+     *     - SwimlaneModel::remove()      → same
+     *   This means a per-target outer startTransaction() would be committed by the FIRST
+     *   core call, making any subsequent cancelTransaction() a no-op (rollback not possible).
+     *   Wrapping in a fake transaction that cannot actually roll back is actively misleading.
+     *
+     *   CONSEQUENCE: if a feature fails mid-target after some earlier features have already
+     *   written to the DB, those earlier writes CANNOT be rolled back. A target may therefore
+     *   be left partially applied. This is the honest, unavoidable behavior given PicoDb's
+     *   flat transaction model + self-committing core methods. The per-(target, feature)
+     *   error report reflects the ACTUAL outcome.
      *
      * @param  integer   $sourceProjectId   Source project ID.
      * @param  integer[] $targetProjectIds  List of target project IDs.
      * @param  string[]  $features          List of FEATURE_* constants to copy.
      * @param  string    $mode              'add_missing' or 'replace'.
-     * @return array                         [targetId => ['status' => 'ok'|'error',
-     *                                                     'features' => [feature => count|error_msg],
-     *                                                     'error' => msg|null]]
+     * @return array                         [targetId => [
+     *                                           'status'   => 'ok'|'error'|'partial',
+     *                                           'features' => [feature => int|error_string],
+     *                                           'error'    => string|null,
+     *                                       ]]
      */
     public function apply($sourceProjectId, array $targetProjectIds, array $features, $mode)
     {
@@ -844,27 +1056,48 @@ class FeatureSyncModel extends Base
         foreach ($targetProjectIds as $targetId) {
             $targetId = (int) $targetId;
             $featureResults = array();
+            $targetError    = null;
+            $featureErrors  = 0;
 
-            $this->db->startTransaction();
-
+            // Per-TARGET outer guard: catches catastrophic failures that prevent us from
+            // attempting any features at all (e.g. project lookup failure, invalid arg, etc.).
             try {
                 foreach ($features as $feature) {
-                    $count = $this->copyFeature($feature, $sourceProjectId, $targetId, $mode);
-                    $featureResults[$feature] = $count;
+                    // Per-FEATURE guard: a failing feature is recorded and we continue
+                    // to the next feature for this target.
+                    try {
+                        $count = $this->copyFeature($feature, $sourceProjectId, $targetId, $mode);
+                        $featureResults[$feature] = $count;
+                    } catch (\Exception $e) {
+                        $featureResults[$feature] = 'error: ' . $e->getMessage();
+                        $featureErrors++;
+                    }
                 }
+            } catch (\Exception $e) {
+                // A target-level exception aborted the entire target (no features ran or
+                // an unrecoverable error was thrown outside the feature loop).
+                $targetError = $e->getMessage();
+            }
 
-                $this->db->closeTransaction();
+            if ($targetError !== null) {
+                // Target-level failure: no features were attempted (or a catastrophic error).
+                $report[$targetId] = array(
+                    'status'   => 'error',
+                    'features' => $featureResults,
+                    'error'    => $targetError,
+                );
+            } elseif ($featureErrors > 0) {
+                // At least one feature failed but others may have succeeded.
+                $report[$targetId] = array(
+                    'status'   => 'partial',
+                    'features' => $featureResults,
+                    'error'    => null,
+                );
+            } else {
                 $report[$targetId] = array(
                     'status'   => 'ok',
                     'features' => $featureResults,
                     'error'    => null,
-                );
-            } catch (\Exception $e) {
-                $this->db->cancelTransaction();
-                $report[$targetId] = array(
-                    'status'   => 'error',
-                    'features' => $featureResults,
-                    'error'    => $e->getMessage(),
                 );
             }
         }

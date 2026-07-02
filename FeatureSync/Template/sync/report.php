@@ -71,6 +71,8 @@
         <div class="accordion-title">
             <?php if ($isError): ?>
                 <span class="fs-risk-badge">&#10007; <?= t('Failed') ?></span>
+            <?php elseif ($result['status'] === 'partial'): ?>
+                <span class="fs-risk-badge">&#9888; <?= t('Partial') ?></span>
             <?php else: ?>
                 <span class="fs-count fs-count--add" style="margin-right:6px">&#10003;</span>
             <?php endif ?>
@@ -82,7 +84,11 @@
             <?php if ($isError): ?>
                 <div class="alert alert-danger fs-risk-alert">
                     <p><strong><?= t('Error') ?>:</strong> <?= $this->text->e($result['error']) ?></p>
-                    <p><?= t('Changes to this target were rolled back. Other targets were not affected.') ?></p>
+                    <p><?= t('This target failed before any features could be applied. Other targets were not affected.') ?></p>
+                </div>
+            <?php elseif ($result['status'] === 'partial'): ?>
+                <div class="alert alert-warning fs-risk-alert">
+                    <p><?= t('One or more features failed for this target (see table below). Other features that succeeded were written and cannot be automatically undone.') ?></p>
                 </div>
             <?php endif ?>
 
@@ -93,9 +99,9 @@
                             <th><?= t('Feature') ?></th>
                             <th class="fs-col-add">
                                 <?php if ($syncMode === 'replace'): ?>
-                                    <?= t('Items replaced/added') ?>
+                                    <?= t('Items added (after replace clear)') ?>
                                 <?php else: ?>
-                                    <?= t('Items added') ?>
+                                    <?= t('Items added (missing only)') ?>
                                 <?php endif ?>
                             </th>
                         </tr>

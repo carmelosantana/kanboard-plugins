@@ -10,22 +10,28 @@
  *   4. A forced failure on one target leaves the others applied + report is accurate.
  *   5. resolveFormParams() intersects features with known keys (whitelist enforced).
  *   6. Non-admin → AccessForbiddenException (controller-level guard, tested via mock).
+ *   7. replace columns/swimlanes: task-holding items survive (task safety).
+ *   8. diff() counts == apply() counts for columns/swimlanes replace with task-holding items.
+ *   9. add_missing action params resolved to target project IDs (not source IDs).
  *
  * Core methods verified:
- *   ActionModel::remove($action_id)          app/Model/ActionModel.php:124
- *   TagModel::remove($tag_id)                app/Model/TagModel.php:195
- *   ColumnModel::remove($column_id)          app/Model/ColumnModel.php:225
- *   CategoryModel::remove($category_id)      app/Model/CategoryModel.php:185
- *   SwimlaneModel::remove($projectId, $id)   app/Model/SwimlaneModel.php:339
+ *   ActionModel::remove($action_id)                                app/Model/ActionModel.php:124
+ *   TagModel::remove($tag_id)                                      app/Model/TagModel.php:195
+ *   ColumnModel::remove($column_id)                                app/Model/ColumnModel.php:225
+ *   CategoryModel::remove($category_id)                            app/Model/CategoryModel.php:185
+ *   SwimlaneModel::remove($projectId, $id)                         app/Model/SwimlaneModel.php:339
+ *   ActionParameterModel::duplicateParameters($pid, $aid, $params) app/Model/ActionParameterModel.php:111
  *
- * PicoDb tx API:
- *   $this->db->startTransaction()  libs/picodb/lib/PicoDb/Database.php:292
- *   $this->db->closeTransaction()  libs/picodb/lib/PicoDb/Database.php:304
- *   $this->db->cancelTransaction() libs/picodb/lib/PicoDb/Database.php:316
+ * PicoDb NOTE: No outer per-target transactions in apply() — PicoDb has a FLAT tx API
+ * (no nesting/savepoints). Core methods (ActionModel::create, CategoryModel::remove, etc.)
+ * self-commit on the same connection, making outer rollback impossible. apply() uses
+ * per-target + per-feature try/catch for error isolation instead.
+ *   libs/picodb/lib/PicoDb/Database.php:292-320
  */
 
 require_once 'tests/units/Base.php';
 
+use Kanboard\Model\TaskCreationModel;
 use Kanboard\Plugin\FeatureSync\Model\FeatureSyncModel;
 use KanboardTests\units\Base;
 
@@ -505,17 +511,19 @@ class ApplyTest extends Base
     }
 
     /**
-     * PARTIAL FAILURE: apply() with a forced exception on one target must:
-     *   - Roll back that target's changes.
+     * PARTIAL FAILURE: apply() with a forced exception inside copyFeature() on one target must:
+     *   - Record the error for that (target, feature) pair — status = 'partial'.
      *   - Continue applying to subsequent targets (they still succeed).
-     *   - Report 'error' for the failed target, 'ok' for the others.
+     *   - Report 'ok' for the good targets.
      *
-     * We simulate a failure by passing an invalid source project ID (0) for a forced
-     * exception path — instead we use a mock/subclass of FeatureSyncModel that throws
-     * on a specific target.
+     * NOTE: apply() has NO outer per-target DB transaction. PicoDb has a FLAT transaction
+     * API (no nesting/savepoints) and core methods (ActionModel::create, CategoryModel::remove,
+     * etc.) self-commit on the shared connection — an outer rollback would be a no-op anyway.
+     * Error isolation is achieved via try/catch, NOT transaction rollback. Honest behavior:
+     * a target may be left partially applied if a feature fails mid-way.
      *
-     * RED evidence: removing the try/catch + cancelTransaction() in apply() would cause
-     * the exception to propagate and the second target would never be processed.
+     * RED evidence: removing the inner per-feature try/catch in apply() would cause the
+     * exception to propagate and the second target would never be processed.
      */
     public function testApplyPartialFailureDoesNotAbortBatch()
     {
@@ -524,8 +532,9 @@ class ApplyTest extends Base
 
         $this->createTag($srcId, 'batch-tag');
 
-        // Use a subclass that throws on a specific target project ID.
-        $badTargetId = 99999;  // non-existent project
+        // Use a subclass that throws inside copyFeature() for a specific target.
+        // This simulates a per-feature failure (caught by the inner try/catch).
+        $badTargetId = 99999;
 
         $model = new class($this->container, $badTargetId) extends FeatureSyncModel {
             private $failOnTarget;
@@ -548,16 +557,22 @@ class ApplyTest extends Base
             'add_missing'
         );
 
-        // Bad target: status = error.
+        // Bad target: status = 'partial' (feature exception was caught per-feature).
         $this->assertArrayHasKey($badTargetId, $report, "Bad target must appear in report");
-        $this->assertSame('error', $report[$badTargetId]['status'], "Bad target must report 'error'");
-        $this->assertNotNull($report[$badTargetId]['error'], "Bad target must have an error message");
+        $this->assertSame('partial', $report[$badTargetId]['status'],
+            "Bad target must report 'partial' (per-feature exception was caught)");
+        // The feature entry for the bad target must contain the error string.
+        $this->assertArrayHasKey(FeatureSyncModel::FEATURE_TAGS, $report[$badTargetId]['features'],
+            "Bad target must have a feature entry for the failed feature");
+        $featureVal = $report[$badTargetId]['features'][FeatureSyncModel::FEATURE_TAGS];
+        $this->assertIsString($featureVal, "Failed feature entry must be an error string");
+        $this->assertStringContainsString('Simulated failure', $featureVal);
 
         // Good target: status = ok AND tags were applied.
         $this->assertArrayHasKey($goodTarget, $report, "Good target must appear in report");
         $this->assertSame('ok', $report[$goodTarget]['status'], "Good target must report 'ok'");
         $this->assertContains('batch-tag', $this->getTagNames($goodTarget),
-            "Good target must have received the tag despite the prior failure");
+            "Good target must have received the tag despite the prior target failure");
     }
 
     /**
@@ -624,5 +639,313 @@ class ApplyTest extends Base
             "Second run: tags added = 0");
         $this->assertSame(0, $report2[$dstId]['features'][FeatureSyncModel::FEATURE_CATEGORIES],
             "Second run: categories added = 0");
+    }
+
+    // ── replace columns with task-holding columns ─────────────────────────────
+
+    /**
+     * REPLACE COLUMNS — task-holding column survives, task-free columns are removed,
+     * source columns not colliding with survivor are added.
+     *
+     * Fixture:
+     *   Source : Ready, Done
+     *   Target : Default, Blocked (with a task in Blocked)
+     *
+     * After replace:
+     *   - Blocked survives (has task) — its title collides with NO source column, so no skip.
+     *   - Default is removed (no tasks).
+     *   - Ready and Done are added (not in target after Default removed).
+     *   - Result: Blocked, Ready, Done  (3 columns)
+     *   - Reported count = 2 (Ready + Done added).
+     */
+    public function testReplaceColumnsWithTaskHoldingColumnSurvives()
+    {
+        $srcId = $this->createProject('ReplColTaskSrc');
+        $dstId = $this->createProject('ReplColTaskDst');
+
+        // Source: add two columns (projects get default columns too — Backlog, Ready, Done).
+        // Use unique names to avoid collision with defaults.
+        $this->container['columnModel']->create($srcId, 'SrcColA');
+        $this->container['columnModel']->create($srcId, 'SrcColB');
+
+        // Target: add one extra column, then put a task in it.
+        $blockedColId = $this->container['columnModel']->create($dstId, 'Blocked');
+        $this->assertGreaterThan(0, $blockedColId, "Blocked column must be created");
+
+        $taskModel = new TaskCreationModel($this->container);
+        $taskId = $taskModel->create(array(
+            'title'      => 'blocker-task',
+            'project_id' => $dstId,
+            'column_id'  => $blockedColId,
+        ));
+        $this->assertGreaterThan(0, $taskId, "Task must be created in Blocked column");
+
+        // Run replace.
+        $count = $this->featureSyncModel->copyFeature(
+            FeatureSyncModel::FEATURE_COLUMNS, $srcId, $dstId, 'replace'
+        );
+
+        $dstTitles = $this->getColumnTitles($dstId);
+
+        // Blocked must survive (has task).
+        $this->assertContains('Blocked', $dstTitles, "Blocked column (has task) must survive replace");
+
+        // Source columns must be added.
+        $this->assertContains('SrcColA', $dstTitles, "SrcColA must be added to target");
+        $this->assertContains('SrcColB', $dstTitles, "SrcColB must be added to target");
+
+        // The returned count must equal the number of columns actually added.
+        // (Source: default Backlog+Ready+Done + SrcColA + SrcColB = 5 src columns total,
+        //  target after remove: defaults removed, Blocked survives + any defaults with tasks.
+        //  Only SrcColA and SrcColB are new; defaults also get added since they were removed.)
+        $this->assertGreaterThan(0, $count, "Replace must report at least 1 added column");
+    }
+
+    /**
+     * REPLACE SWIMLANES — task-holding swimlane survives, task-free swimlanes are removed,
+     * source swimlanes not colliding with survivor are added.
+     *
+     * Fixture (projects start with "Default swimlane"):
+     *   Source : Default swimlane (auto), Wave1, Wave2  → 3 lanes
+     *   Target : Default swimlane (auto, no tasks), OldLane (no tasks), HotLane (has task)
+     *
+     * After replace:
+     *   - Default swimlane (dst) is removed (no tasks).
+     *   - OldLane is removed (no tasks).
+     *   - HotLane survives (has task).
+     *   - All 3 source lanes (Default swimlane + Wave1 + Wave2) are added.
+     *   - Reported count = 3 (all src lanes added, none collide with HotLane).
+     */
+    public function testReplaceSwimlanesSkipsLanesWithTasks()
+    {
+        $srcId = $this->createProject('ReplSwimTaskSrc');
+        $dstId = $this->createProject('ReplSwimTaskDst');
+
+        $this->createSwimlane($srcId, 'Wave1');
+        $this->createSwimlane($srcId, 'Wave2');
+
+        $this->createSwimlane($dstId, 'OldLane');
+        $hotLaneId = $this->createSwimlane($dstId, 'HotLane');
+
+        // Get the first available column in dst to put the task in.
+        $dstCols = $this->container['columnModel']->getAll($dstId);
+        $this->assertNotEmpty($dstCols, "dst project must have at least one column");
+
+        $taskModel = new TaskCreationModel($this->container);
+        $taskId = $taskModel->create(array(
+            'title'       => 'blocking-task',
+            'project_id'  => $dstId,
+            'swimlane_id' => $hotLaneId,
+            'column_id'   => $dstCols[0]['id'],
+        ));
+        $this->assertGreaterThan(0, $taskId, "Task must be created in HotLane");
+
+        $count = $this->featureSyncModel->copyFeature(
+            FeatureSyncModel::FEATURE_SWIMLANES, $srcId, $dstId, 'replace'
+        );
+
+        $dstNames = $this->getSwimlaneNames($dstId);
+
+        // HotLane must survive (it has a task).
+        $this->assertContains('HotLane', $dstNames, "HotLane (has task) must survive replace");
+
+        // OldLane must be gone (no tasks).
+        $this->assertNotContains('OldLane', $dstNames, "OldLane (no tasks) must be removed");
+
+        // Source swimlanes must be added.
+        $this->assertContains('Wave1', $dstNames, "Wave1 must be added");
+        $this->assertContains('Wave2', $dstNames, "Wave2 must be added");
+        // Default swimlane from source is also added (dst's copy was removed, no tasks).
+        $this->assertContains('Default swimlane', $dstNames, "Default swimlane (from src) must be added");
+
+        // Reported count = 3 lanes actually added (Default swimlane + Wave1 + Wave2).
+        // HotLane's name doesn't collide with any source lane so count = count(src lanes).
+        $srcLaneCount = count($this->container['swimlaneModel']->getAll($srcId));
+        $this->assertSame($srcLaneCount, $count,
+            "Replace must report exactly the source lane count added (none collide with HotLane)");
+    }
+
+    // ── diff() counts == apply() counts for columns/swimlanes with task-holding items ──
+
+    /**
+     * CRITICAL: diff(replace, columns) count_add must equal what copyFeature actually adds
+     * when the target has a task-holding column.
+     *
+     * Shared helper getSurvivingColumnTitles() is used by BOTH paths — this test asserts
+     * they produce the same result for the same DB state.
+     */
+    public function testDiffEqualsApplyCountsForColumnsWithTaskHoldingColumn()
+    {
+        $srcId = $this->createProject('DiffApplyColSrc');
+        $dstId = $this->createProject('DiffApplyColDst');
+
+        // Source: two custom columns.
+        $this->container['columnModel']->create($srcId, 'NewColX');
+        $this->container['columnModel']->create($srcId, 'NewColY');
+
+        // Target: one custom column with a task in it.
+        $taskColId = $this->container['columnModel']->create($dstId, 'OccupiedCol');
+        $this->assertGreaterThan(0, $taskColId, "OccupiedCol must be created");
+
+        $taskModel = new TaskCreationModel($this->container);
+        $taskId = $taskModel->create(array(
+            'title'      => 'occupy',
+            'project_id' => $dstId,
+            'column_id'  => $taskColId,
+        ));
+        $this->assertGreaterThan(0, $taskId, "Task must be placed in OccupiedCol");
+
+        // Compute diff (read-only preview).
+        $diff = $this->featureSyncModel->diffFeature(
+            FeatureSyncModel::FEATURE_COLUMNS, $srcId, $dstId, 'replace'
+        );
+        $diffCountAdd = $diff['count_add'];
+
+        // Apply and get the actual added count.
+        $applyCount = $this->featureSyncModel->copyFeature(
+            FeatureSyncModel::FEATURE_COLUMNS, $srcId, $dstId, 'replace'
+        );
+
+        $this->assertSame($diffCountAdd, $applyCount,
+            "diff() count_add must equal apply() count for replace-columns with a task-holding column");
+    }
+
+    /**
+     * CRITICAL: diff(replace, swimlanes) count_add must equal what copyFeature actually adds
+     * when the target has a task-holding swimlane.
+     */
+    public function testDiffEqualsApplyCountsForSwimlanesWithTaskHoldingLane()
+    {
+        $srcId = $this->createProject('DiffApplySwimSrc');
+        $dstId = $this->createProject('DiffApplySwimDst');
+
+        $this->createSwimlane($srcId, 'SrcLaneA');
+        $this->createSwimlane($srcId, 'SrcLaneB');
+
+        $busyLaneId = $this->createSwimlane($dstId, 'BusyLane');
+
+        $dstCols = $this->container['columnModel']->getAll($dstId);
+        $this->assertNotEmpty($dstCols);
+
+        $taskModel = new TaskCreationModel($this->container);
+        $taskId = $taskModel->create(array(
+            'title'       => 'busy-task',
+            'project_id'  => $dstId,
+            'swimlane_id' => $busyLaneId,
+            'column_id'   => $dstCols[0]['id'],
+        ));
+        $this->assertGreaterThan(0, $taskId);
+
+        // diff() preview count.
+        $diff = $this->featureSyncModel->diffFeature(
+            FeatureSyncModel::FEATURE_SWIMLANES, $srcId, $dstId, 'replace'
+        );
+        $diffCountAdd = $diff['count_add'];
+
+        // apply() actual count.
+        $applyCount = $this->featureSyncModel->copyFeature(
+            FeatureSyncModel::FEATURE_SWIMLANES, $srcId, $dstId, 'replace'
+        );
+
+        $this->assertSame($diffCountAdd, $applyCount,
+            "diff() count_add must equal apply() count for replace-swimlanes with a task-holding lane");
+    }
+
+    // ── add_missing: action params resolved to target project IDs ────────────
+
+    /**
+     * IMPORTANT: add_missing action copy must resolve source column ID in params to the
+     * TARGET project's corresponding column ID (by title).
+     *
+     * Scenario:
+     *   Source project: has column "In Progress" (source_column_id = X).
+     *   Target project: has column "In Progress" (target_column_id = Y, Y ≠ X because
+     *                   each project gets independent column rows).
+     *   Source action: event=task.move.column, action=TaskAssignColorColumn,
+     *                  params = [column_id => X].
+     *
+     * After add_missing:
+     *   Target action's param column_id must equal Y (the target's column id),
+     *   NOT X (the source's column id).
+     *
+     * Core reference:
+     *   ActionParameterModel::duplicateParameters() resolves column_id via
+     *   ColumnModel::getById() → ColumnModel::getColumnIdByTitle($dst_project_id, $title).
+     *   app/Model/ActionParameterModel.php:111 / resolveParameter() lines 154-159.
+     */
+    public function testAddMissingActionParamResolvesToTargetColumnId()
+    {
+        $srcId = $this->createProject('ActParamSrc');
+        $dstId = $this->createProject('ActParamDst');
+
+        // Get (or create) a column named "In Progress" in the source project.
+        // Projects start with default columns (Backlog, Ready, Work in progress, Done).
+        // We'll use "Work in progress" which exists in both projects by default.
+        $srcCols = $this->container['columnModel']->getAll($srcId);
+        $dstCols = $this->container['columnModel']->getAll($dstId);
+
+        // Find "Work in progress" in both projects.
+        $srcColId = null;
+        foreach ($srcCols as $col) {
+            if ($col['title'] === 'Work in progress') {
+                $srcColId = (int)$col['id'];
+                break;
+            }
+        }
+        $dstColId = null;
+        foreach ($dstCols as $col) {
+            if ($col['title'] === 'Work in progress') {
+                $dstColId = (int)$col['id'];
+                break;
+            }
+        }
+
+        $this->assertNotNull($srcColId, "Source project must have 'Work in progress' column");
+        $this->assertNotNull($dstColId, "Target project must have 'Work in progress' column");
+        // Sanity: the two column IDs must differ (different DB rows for different projects).
+        $this->assertNotSame($srcColId, $dstColId,
+            "Source and target column IDs must differ (independent rows per project)");
+
+        // Create an action in source whose param references the source column ID.
+        // We insert it directly into the DB to control the exact param value.
+        $db = $this->container['db'];
+        $srcActionInserted = $db->table('actions')->insert(array(
+            'project_id'  => $srcId,
+            'event_name'  => 'task.move.column',
+            'action_name' => '\\Kanboard\\Action\\TaskAssignColorColumn',
+        ));
+        $this->assertTrue($srcActionInserted, "Source action row must be inserted");
+        $srcActionId = $db->getLastId();
+
+        // Insert param with SOURCE column id (verbatim — this is what old code would copy).
+        $db->table('action_has_params')->insert(array(
+            'action_id' => $srcActionId,
+            'name'      => 'column_id',
+            'value'     => $srcColId,
+        ));
+
+        // Apply add_missing — must resolve source column ID → target column ID.
+        $count = $this->featureSyncModel->copyFeature(
+            FeatureSyncModel::FEATURE_ACTIONS, $srcId, $dstId, 'add_missing'
+        );
+
+        $this->assertSame(1, $count, "Exactly 1 action must be added");
+
+        // Fetch the copied action in the target project.
+        $dstActions = $this->container['actionModel']->getAllByProject($dstId);
+        $this->assertCount(1, $dstActions, "Target must have exactly 1 action after add_missing");
+
+        $copiedAction = $dstActions[0];
+        $this->assertArrayHasKey('params', $copiedAction, "Copied action must have params");
+        $this->assertArrayHasKey('column_id', $copiedAction['params'],
+            "Copied action params must contain 'column_id'");
+
+        $resolvedColId = (int)$copiedAction['params']['column_id'];
+
+        // The resolved param must be the TARGET column id, not the source.
+        $this->assertSame($dstColId, $resolvedColId,
+            "Copied action's column_id param must be resolved to the TARGET project's column id");
+        $this->assertNotSame($srcColId, $resolvedColId,
+            "Copied action's column_id param must NOT be the source project's column id");
     }
 }

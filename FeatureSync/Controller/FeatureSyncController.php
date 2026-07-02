@@ -227,7 +227,10 @@ class FeatureSyncController extends BaseController
         foreach ($applyReport as $result) {
             if ($result['status'] === 'ok') {
                 $successCount++;
+            } elseif ($result['status'] === 'error') {
+                $failureCount++;
             } else {
+                // 'partial': at least one feature failed but others succeeded.
                 $failureCount++;
             }
         }
@@ -239,7 +242,7 @@ class FeatureSyncController extends BaseController
             ));
         } else {
             $this->flash->failure(t(
-                'Feature Sync partial: %d target(s) succeeded, %d failed. See report below.',
+                'Feature Sync partial: %d target(s) succeeded, %d had errors. See report below.',
                 $successCount,
                 $failureCount
             ));
