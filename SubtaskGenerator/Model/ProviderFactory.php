@@ -69,6 +69,58 @@ class ProviderFactory extends Base
     }
 
     /**
+     * Returns true when a provider is configured with a resolvable (non-empty) API key.
+     *
+     * "Configured" means: the selected provider has a non-empty key either from
+     * the stored config (sg_api_key) or the relevant environment variable fallback
+     * (ANTHROPIC_API_KEY / OPENAI_API_KEY / XAI_API_KEY). An unknown provider
+     * string is treated as not configured.
+     *
+     * @param \Kanboard\Model\ConfigModel $configModel
+     */
+    public static function isProviderConfigured($configModel): bool
+    {
+        $provider = $configModel->get('sg_provider', self::DEFAULT_PROVIDER);
+
+        // Unknown provider → not configured.
+        if (! isset(self::PROVIDERS[$provider])) {
+            return false;
+        }
+
+        $resolvedKey = self::resolveApiKey($provider, $configModel->get('sg_api_key', ''));
+
+        return $resolvedKey !== '';
+    }
+
+    /**
+     * Single source of truth: returns true when the runtime is fully ready for
+     * AI-powered subtask generation.
+     *
+     * All three conditions must hold:
+     *  1. PHP >= 8.4.0 (php-agents hard requirement).
+     *  2. The plugin-local vendor/autoload.php is present (composer install done).
+     *  3. A provider is configured — i.e. isProviderConfigured() returns true.
+     *
+     * This method is the ONLY gate that should be consulted for deciding whether
+     * to show the sidebar link AND whether to honour controller requests. Both
+     * Plugin::initialize() and GeneratorController::isAiEnabled() must delegate
+     * to this method to guarantee identical behaviour.
+     *
+     * @param \Kanboard\Model\ConfigModel $configModel
+     * @param int|null $phpVersionId PHP_VERSION_ID override (null = real constant; tests may inject).
+     * @param string|null $autoloadPath vendor/autoload.php path override (null = real path; tests may inject).
+     */
+    public static function isAiReady($configModel, ?int $phpVersionId = null, ?string $autoloadPath = null): bool
+    {
+        $versionId    = $phpVersionId  ?? PHP_VERSION_ID;
+        $autoload     = $autoloadPath  ?? __DIR__ . '/../vendor/autoload.php';
+
+        return $versionId >= 80400
+            && file_exists($autoload)
+            && self::isProviderConfigured($configModel);
+    }
+
+    /**
      * Build a provider instance from a Kanboard configModel.
      *
      * Uses the sg_provider / sg_model / sg_api_key config keys, falling back

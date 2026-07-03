@@ -3,6 +3,7 @@
 namespace Kanboard\Plugin\SubtaskGenerator;
 
 use Kanboard\Core\Plugin\Base;
+use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
 
 class Plugin extends Base
 {
@@ -22,11 +23,14 @@ class Plugin extends Base
             error_log('[SubtaskGenerator] vendor/autoload.php not found — run composer install inside the plugin directory.');
         }
 
-        // PHP 8.4 hard gate.
-        // php-agents requires PHP ^8.4; on older hosts we skip AI wiring gracefully.
-        $this->aiEnabled = $this->isPhpCompatible();
+        // Full AI-ready gate: PHP >= 8.4 AND vendor loaded AND provider configured.
+        // Uses ProviderFactory::isAiReady() — the single source of truth shared by
+        // both this initializer (sidebar link) and GeneratorController::isAiEnabled()
+        // (controller show/generate). The two must agree; never compute the gate here
+        // independently.
+        $this->aiEnabled = ProviderFactory::isAiReady($this->configModel);
 
-        if (! $this->aiEnabled) {
+        if (! $this->isPhpCompatible()) {
             error_log(
                 '[SubtaskGenerator] PHP ' . PHP_VERSION . ' detected — php-agents requires PHP >=8.4. ' .
                 'AI features are disabled. Upgrade the host PHP to enable them.'

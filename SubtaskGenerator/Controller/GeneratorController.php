@@ -5,6 +5,7 @@ namespace Kanboard\Plugin\SubtaskGenerator\Controller;
 use Kanboard\Controller\BaseController;
 use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Core\Controller\PageNotFoundException;
+use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
 
 /**
  * SubtaskGenerator Generator Controller
@@ -110,14 +111,18 @@ class GeneratorController extends BaseController
     }
 
     /**
-     * Returns true when the host meets the PHP 8.4 gate and vendor is loaded.
+     * Returns true when the runtime is fully AI-ready.
      *
-     * Protected so tests can override via anonymous subclass to simulate
-     * the disabled state without spawning a child process.
+     * Delegates to ProviderFactory::isAiReady() — the single source of truth
+     * shared with Plugin::initialize(). This guarantees the sidebar link is
+     * hidden if and only if the controller also rejects the request: the two
+     * gates are identical by construction.
+     *
+     * Protected so tests can override via anonymous subclass to inject any
+     * gate result without spawning a child process.
      */
     protected function isAiEnabled(): bool
     {
-        return PHP_VERSION_ID >= 80400
-            && file_exists(__DIR__ . '/../vendor/autoload.php');
+        return ProviderFactory::isAiReady($this->configModel);
     }
 }

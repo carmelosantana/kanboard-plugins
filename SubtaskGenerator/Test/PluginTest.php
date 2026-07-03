@@ -62,15 +62,56 @@ class PluginTest extends Base
         );
     }
 
-    public function testIsAiEnabledReturnsTrueOnPhp84(): void
+    public function testIsAiEnabledReturnsFalseWithNoProviderConfigured(): void
     {
+        // Unset any provider env vars so the test is deterministic regardless of host config.
+        $originalAnthropicKey = getenv('ANTHROPIC_API_KEY');
+        $originalOpenaiKey    = getenv('OPENAI_API_KEY');
+        $originalXaiKey       = getenv('XAI_API_KEY');
+
+        putenv('ANTHROPIC_API_KEY=');
+        putenv('OPENAI_API_KEY=');
+        putenv('XAI_API_KEY=');
+
+        try {
+            $plugin = new Plugin($this->container);
+            $plugin->initialize();
+
+            // PHP 8.4 + vendor present BUT no provider configured → isAiEnabled() must
+            // return false. The gate now requires all three conditions:
+            // PHP >= 8.4 AND vendor/autoload.php present AND a provider API key resolvable.
+            $this->assertFalse(
+                $plugin->isAiEnabled(),
+                'isAiEnabled() must return false when no provider API key is configured — ' .
+                'even on PHP 8.4 with vendor loaded. Gate-parity with the hidden sidebar link.'
+            );
+        } finally {
+            if ($originalAnthropicKey !== false) {
+                putenv("ANTHROPIC_API_KEY={$originalAnthropicKey}");
+            }
+            if ($originalOpenaiKey !== false) {
+                putenv("OPENAI_API_KEY={$originalOpenaiKey}");
+            }
+            if ($originalXaiKey !== false) {
+                putenv("XAI_API_KEY={$originalXaiKey}");
+            }
+        }
+    }
+
+    public function testIsAiEnabledReturnsTrueWithProviderConfigured(): void
+    {
+        // Configure a provider key so the full gate passes on PHP 8.4.
+        $this->container['configModel']->save([
+            'sg_provider' => 'anthropic',
+            'sg_api_key'  => 'sk-test-fake-key-for-gate-test',
+        ]);
+
         $plugin = new Plugin($this->container);
         $plugin->initialize();
 
-        // On this PHP 8.4 host the gate must pass and isAiEnabled() must return true.
         $this->assertTrue(
             $plugin->isAiEnabled(),
-            'isAiEnabled() must return true on PHP 8.4 after initialize() — gate or vendor load failed'
+            'isAiEnabled() must return true on PHP 8.4 when vendor is loaded and a provider API key is set'
         );
     }
 
