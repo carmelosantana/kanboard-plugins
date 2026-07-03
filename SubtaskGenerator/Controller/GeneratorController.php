@@ -6,12 +6,13 @@ use Kanboard\Controller\BaseController;
 use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Core\Controller\PageNotFoundException;
 use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
+use Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel;
 
 /**
  * SubtaskGenerator Generator Controller
  *
  * show()     — renders the generate-subtasks modal prefilled with the task title + description.
- * generate() — stub placeholder for task-04; receives the POST from the modal form.
+ * generate() — POST endpoint: calls SubtaskGeneratorModel::generate(), returns JSON subtasks.
  *
  * @package Kanboard\Plugin\SubtaskGenerator\Controller
  * @author  Carmelo Santana
@@ -56,39 +57,83 @@ class GeneratorController extends BaseController
     }
 
     /**
-     * Generate subtasks via the configured LLM provider.
+     * Generate subtasks via the configured LLM provider (POST).
      *
-     * STUB: task-04 fills this in. This stub validates access + CSRF so the
-     * form wiring is complete and task-04 can slot in without touching Plugin.php.
+     * Guards (in order):
+     *  1. AI-ready gate (PHP >= 8.4 + vendor + provider configured).
+     *  2. Task must exist (throws PageNotFoundException via getTask()).
+     *  3. User must have edit access to the task's project (403 otherwise).
+     *  4. CSRF form token must be valid.
+     *
+     * On success returns JSON: {"subtasks": ["title 1", "title 2", ...]}.
+     * On provider error / malformed output returns JSON: {"error": "<friendly msg>"}.
+     * Never 500s the page; never leaks the API key in the error message.
      *
      * @throws PageNotFoundException
      * @throws AccessForbiddenException
      */
     public function generate(): void
     {
-        // AI gate.
+        // ── 1. AI gate ────────────────────────────────────────────────────────
         if (! $this->isAiEnabled()) {
             throw new AccessForbiddenException();
         }
 
+        // ── 2. Task must exist ────────────────────────────────────────────────
         $task = $this->getTask();
 
-        // Permission gate (same check as show()).
+        // ── 3. Permission gate ────────────────────────────────────────────────
         if (! $this->helper->user->hasProjectAccess('TaskModificationController', 'edit', $task['project_id'])) {
             throw new AccessForbiddenException();
         }
 
-        // CSRF gate for the POST form.
+        // ── 4. CSRF gate ──────────────────────────────────────────────────────
         $this->checkCSRFForm();
 
-        // task-04 implements the actual generation here.
-        // For now, redirect back to the task so the form submit has a safe landing.
-        $this->flash->success(t('Subtask generation will be implemented in the next task.'));
-        $this->response->redirect($this->helper->url->to(
-            'TaskViewController',
-            'show',
-            ['task_id' => $task['id'], 'project_id' => $task['project_id']]
-        ));
+        // ── 5. Read prompt ────────────────────────────────────────────────────
+        $prompt = trim($this->request->getStringParam('sg_prompt', ''));
+
+        if ($prompt === '') {
+            // Build from the task if the user cleared the textarea.
+            $prompt = $this->buildPrompt($task);
+        }
+
+        if ($prompt === '') {
+            $this->response->json(['error' => t('Prompt is empty. Please enter a description.')]);
+            return;
+        }
+
+        // ── 6. Call the model ─────────────────────────────────────────────────
+        try {
+            /** @var SubtaskGeneratorModel $model */
+            $model    = $this->getGeneratorModel();
+            $subtasks = $model->generate($prompt);
+
+            $this->response->json(['subtasks' => $subtasks]);
+        } catch (\Throwable $e) {
+            // Log the real error (without the API key — the exception message
+            // from the HTTP client never contains the key itself, but guard
+            // against any accidental leak by omitting raw exception details from
+            // the JSON response that reaches the browser).
+            error_log('[SubtaskGenerator] Provider error: ' . $e->getMessage());
+
+            $this->response->json([
+                'error' => t('The AI provider returned an error. Please check your settings and try again.'),
+            ]);
+        }
+    }
+
+    // ── Protected factories (overridable in tests) ────────────────────────────
+
+    /**
+     * Return the SubtaskGeneratorModel instance.
+     *
+     * Protected so tests can override to inject a model with a mock provider
+     * without touching the Pimple container.
+     */
+    protected function getGeneratorModel(): SubtaskGeneratorModel
+    {
+        return new SubtaskGeneratorModel($this->container);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
