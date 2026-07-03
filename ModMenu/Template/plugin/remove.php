@@ -1,7 +1,7 @@
 <div class="page-header"><h2><?= t('Remove plugin') ?></h2></div>
 <div class="confirm">
     <p class="alert alert-info">
-        <?= t('Do you really want to remove "%s"? Its files will be deleted from the server.', $name) ?>
+        <?= t('Do you really want to remove "%s"? Its files will be deleted from the server.', $this->text->e($name)) ?>
     </p>
     <form method="post" action="<?= $this->url->href('ModMenuController', 'uninstall', ['plugin' => 'ModMenu']) ?>" class="modmenu-action">
         <?= $this->form->csrf() ?>

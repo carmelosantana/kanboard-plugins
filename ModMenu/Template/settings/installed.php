@@ -41,7 +41,7 @@
                     <?php endif ?>
 
                     <?= $this->url->link(t('Remove'), 'ModMenuController', 'confirm',
-                        ['plugin' => 'ModMenu', 'name' => $p['name']], false, 'js-modal-confirm btn btn-red') ?>
+                        ['plugin' => 'ModMenu', 'name' => $this->text->e($p['name'])], false, 'js-modal-confirm btn btn-red') ?>
                 </div>
             <?php else: ?>
                 <div class="modmenu-card__status"><em><?= t('This is ModMenu itself and cannot be disabled or removed here.') ?></em></div>

@@ -12,7 +12,7 @@
         <div class="modmenu-card">
             <strong><?= $this->text->e($p['title'] ?? $p['name']) ?></strong>
             <?php if ($p['status'] === 'update'): ?>
-                <span class="modmenu-badge modmenu-badge--update"><?= t('Update to %s', $p['version']) ?></span>
+                <span class="modmenu-badge modmenu-badge--update"><?= t('Update to %s', $this->text->e($p['version'])) ?></span>
             <?php elseif ($p['status'] === 'installed'): ?>
                 <span class="modmenu-badge modmenu-badge--installed"><?= t('Installed') ?></span>
             <?php elseif ($p['status'] === 'disabled'): ?>
