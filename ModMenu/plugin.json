@@ -1,0 +1,10 @@
+{
+    "name": "ModMenu",
+    "version": "1.0.0",
+    "description": "A standalone plugin manager: browse, install, upload, enable/disable, update, and uninstall Kanboard plugins.",
+    "author": "Carmelo Santana",
+    "homepage": "https://github.com/carmelosantana/ModMenu",
+    "license": "MIT",
+    "compatible_version": ">=1.2.47",
+    "php_version": ">=8.4"
+}
