@@ -1,7 +1,7 @@
 {
     "name": "ShadcnTheme",
     "description": "Modern Kanboard theme inspired by shadcn/ui design principles with light/dark mode toggle and system preference detection.",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "author": "Carmelo Santana",
     "license": "MIT",
     "homepage": "https://github.com/carmelosantana/kanbanboard-shadcn-theme",

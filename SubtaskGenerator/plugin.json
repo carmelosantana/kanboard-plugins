@@ -1,7 +1,7 @@
 {
     "name": "SubtaskGenerator",
     "description": "Generate subtasks from a task description using an AI provider (Anthropic, OpenAI, or Grok).",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "author": "Carmelo Santana",
     "homepage": "https://github.com/vctrs-io/kanboard-subtask-generator",
     "license": "MIT",

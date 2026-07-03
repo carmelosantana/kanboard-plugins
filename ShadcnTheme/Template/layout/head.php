@@ -1,13 +1,11 @@
-<script>
-(function () {
-    var theme = localStorage.getItem('shadcn-theme-mode') || 'dark';
-    var cls = 'theme-' + (theme === 'system'
-        ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-        : theme);
-    document.documentElement.className = (document.documentElement.className || '').replace(/\btheme-\S+/g, '').trim();
-    document.documentElement.className += (document.documentElement.className ? ' ' : '') + cls;
-}());
-</script>
+<?php
+/* No-FOUC theme preload. MUST be an external, BLOCKING script in <head> (no
+ * defer/async) so it runs before first paint — Kanboard's CSP blocks inline
+ * <script>, and $this->asset->js() adds `defer` (too late). filemtime busts the
+ * cache when the file changes. */
+$shadcnPreloadFile = dirname(__DIR__, 2) . '/Assets/js/theme-preload.js';
+?>
+<script src="<?= $this->url->dir() ?>plugins/ShadcnTheme/Assets/js/theme-preload.js?<?= @filemtime($shadcnPreloadFile) ?>"></script>
 <?php
 $shadcnFaviconPath = $this->app->config('shadcn_favicon_path');
 if (! empty($shadcnFaviconPath)):

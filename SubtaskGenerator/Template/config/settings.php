@@ -112,73 +112,26 @@
 
 <hr>
 
-<?php /* ── Test Connection ────────────────────────────────────────────── */ ?>
+<?php /* ── Test Connection ────────────────────────────────────────────────
+     Interactivity lives in the external, CSP-safe Assets/js/subtask-generator.js
+     (Kanboard's default-src 'self' CSP blocks inline <script>). The test URL —
+     including a reusable CSRF token generated in the controller — and the i18n
+     strings are passed via data-* attributes. Provider→model auto-fill is wired
+     from the same external script using #sg_provider[data-defaults]. */ ?>
 <h3><?= t('Test Connection') ?></h3>
 <p class="form-help"><?= t('Verify that the saved provider settings and API key work correctly.') ?></p>
 
 <div id="sg-test-result" style="display:none; padding:8px; border-radius:4px; margin-bottom:12px;"></div>
 
-<button type="button" class="btn btn-blue" id="sg-test-btn"><?= t('Test Connection') ?></button>
-
-<script>
-(function () {
-    var btn = document.getElementById('sg-test-btn');
-    var resultBox = document.getElementById('sg-test-result');
-    if (!btn) return;
-
-    btn.addEventListener('click', function () {
-        btn.disabled = true;
-        resultBox.style.display = 'none';
-        resultBox.textContent = '';
-
-        var url = '<?= $this->url->href('SettingsController', 'testConnection', ['plugin' => 'SubtaskGenerator', 'csrf_token' => $this->token->getReusableCSRFToken()]) ?>';
-
-        fetch(url, { credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                resultBox.style.display = 'block';
-                if (data.ok) {
-                    resultBox.style.background = '#d1fae5';
-                    resultBox.style.color = '#065f46';
-                    resultBox.textContent = '<?= t('Connection successful.') ?>';
-                } else {
-                    resultBox.style.background = '#fee2e2';
-                    resultBox.style.color = '#991b1b';
-                    resultBox.textContent = '<?= t('Connection failed:') ?> ' + (data.error || '<?= t('Unknown error') ?>');
-                }
-                btn.disabled = false;
-            })
-            .catch(function (err) {
-                resultBox.style.display = 'block';
-                resultBox.style.background = '#fee2e2';
-                resultBox.style.color = '#991b1b';
-                resultBox.textContent = '<?= t('Request failed:') ?> ' + err.message;
-                btn.disabled = false;
-            });
-    });
-})();
-</script>
-
-<?php /* ── Auto-fill model on provider change ─────────────────────────── */ ?>
-<script>
-(function () {
-    var providerSelect = document.getElementById('sg_provider');
-    var modelInput = document.getElementById('sg_model');
-    if (!providerSelect || !modelInput) return;
-
-    var defaults = {};
-    try {
-        defaults = JSON.parse(providerSelect.getAttribute('data-defaults') || '{}');
-    } catch (e) {}
-
-    providerSelect.addEventListener('change', function () {
-        var def = defaults[this.value];
-        if (def && modelInput.value === modelInput.placeholder) {
-            modelInput.value = def;
-        }
-        modelInput.placeholder = def || '';
-    });
-})();
-</script>
+<button type="button"
+        class="btn btn-blue"
+        id="sg-test-btn"
+        data-test-url="<?= $this->url->href('SettingsController', 'testConnection', ['plugin' => 'SubtaskGenerator', 'csrf_token' => $sg_test_csrf]) ?>"
+        data-msg-ok="<?= $this->text->e(t('Connection successful.')) ?>"
+        data-msg-fail="<?= $this->text->e(t('Connection failed:')) ?>"
+        data-msg-unknown="<?= $this->text->e(t('Unknown error')) ?>"
+        data-msg-request-failed="<?= $this->text->e(t('Request failed:')) ?>">
+    <?= t('Test Connection') ?>
+</button>
 
 <?php endif ?>

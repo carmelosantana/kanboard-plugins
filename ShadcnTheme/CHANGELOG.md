@@ -5,6 +5,30 @@ All notable changes to ShadcnTheme are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-07-03
+
+### Fixed
+
+- **No flash of unstyled (white) content between page navigations** — the theme
+  class was only applied by `theme-switcher.js` at the end of `<body>`, so every
+  full-page navigation painted the default white page before flipping to dark.
+  The no-FOUC logic now lives in an external, **blocking** `<script>` in `<head>`
+  (`Assets/js/theme-preload.js`; Kanboard's CSP blocks inline scripts and
+  `asset->js()` adds `defer`), which stamps the theme class on `<html>` before the
+  first paint. A base rule paints the dark surface for `html.theme-dark`. Verified
+  the first `requestAnimationFrame` already reports the dark background.
+- **Text inputs now line up with selects** — inputs rendered ~42px (content-box +
+  `display:flex`) while selects were ~32px, so the two controls were visibly
+  misaligned (e.g. Email settings). Inputs are now `box-sizing: border-box` with
+  no flex, matching selects at 32px.
+
+### Changed
+
+- **List bullets removed from `.listing` containers** — Kanboard's `.listing`
+  `<ul>` rows are data rows, not prose, so the default disc bullets (which render
+  outside the content in the left margin) are gone. Markdown prose keeps its
+  bullets.
+
 ## [1.0.1] - 2026-07-03
 
 ### Fixed

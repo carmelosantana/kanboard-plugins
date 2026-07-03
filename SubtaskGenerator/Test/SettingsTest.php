@@ -421,23 +421,42 @@ class SettingsTest extends Base
     }
 
     /**
-     * The test-connection URL in the template must include a CSRF token so the
+     * The test-connection URL must include a reusable CSRF token so the
      * controller's checkReusableCSRFParam() gate is satisfied.
+     *
+     * The token MUST be generated in the controller (where `token` is an
+     * injected dependency) and passed into the template as $sg_test_csrf.
+     * `token` is NOT a registered template helper, so calling
+     * $this->token->getReusableCSRFToken() *inside the template* throws and
+     * aborts the render — which silently drops the whole page out of the
+     * themed layout. Guard against reintroducing that here.
      */
     public function testSettingsTemplatePassesCsrfTokenToTestConnection(): void
     {
-        $templateFile = dirname(__DIR__) . '/Template/config/settings.php';
-        $content = file_get_contents($templateFile);
+        $templateFile   = dirname(__DIR__) . '/Template/config/settings.php';
+        $controllerFile = dirname(__DIR__) . '/Controller/SettingsController.php';
+        $template   = file_get_contents($templateFile);
+        $controller = file_get_contents($controllerFile);
 
         $this->assertStringContainsString(
             'csrf_token',
-            $content,
+            $template,
             'The test-connection URL must include a csrf_token parameter'
         );
         $this->assertStringContainsString(
+            '$sg_test_csrf',
+            $template,
+            'The template must use the controller-provided $sg_test_csrf token'
+        );
+        $this->assertStringNotContainsString(
+            '$this->token',
+            $template,
+            '$this->token is not a template helper — calling it in the template throws and breaks the page layout'
+        );
+        $this->assertStringContainsString(
             'getReusableCSRFToken',
-            $content,
-            'The template must embed $this->token->getReusableCSRFToken() in the test-connection URL'
+            $controller,
+            'The controller must generate the reusable CSRF token and pass it to the template'
         );
     }
 

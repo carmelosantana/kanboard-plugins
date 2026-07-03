@@ -42,7 +42,7 @@ class Plugin extends Base
     public function getPluginName()        { return 'FeatureSync'; }
     public function getPluginDescription() { return t('Bulk-copy project features (actions, tags, columns) from a source project to many target projects.'); }
     public function getPluginAuthor()      { return 'Carmelo Santana'; }
-    public function getPluginVersion()     { return '1.0.0'; }
+    public function getPluginVersion()     { return '1.0.1'; }
     public function getPluginHomepage()    { return 'https://github.com/vctrs-io/kanboard-feature-sync'; }
     public function getCompatibleVersion() { return '>=1.2.47'; }
 }

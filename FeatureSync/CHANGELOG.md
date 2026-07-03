@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.1 — 2026-07-03
+
+### Fixed
+
+- **Dark-theme cleanup.** The stylesheet used hard-coded light colours
+  (`#ddd`, `#f9f9f9`, the heavy green/red mode boxes), so the page looked out of
+  place on ShadcnTheme's dark UI. All surfaces now use ShadcnTheme design tokens
+  (`--border`, `--muted`, `--destructive`, `--primary`, `--alert-*-error`, …) with
+  the original light values as fallbacks, so it themes dark AND still reads well
+  stand-alone.
+- **List bullets removed** from the "Choose Features to Copy" list (`ul.listing`).
+
 ## 1.0.0 — 2026-07-02
 
 First stable release. Complete end-to-end workflow for syncing project features across Kanboard projects.

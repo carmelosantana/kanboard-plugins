@@ -2,6 +2,21 @@
 
 All notable changes to SubtaskGenerator will be documented here.
 
+## [1.0.1] — 2026-07-03
+
+### Fixed
+
+- **Settings page rendered unstyled (no theme/layout).** The template called
+  `$this->token->getReusableCSRFToken()`, but `token` is not a registered
+  template helper — the call threw mid-render and Kanboard flushed the partial
+  output buffer, dropping the page out of its layout (no header, no theme CSS).
+  The reusable CSRF token is now generated in the controller and passed in as
+  `$sg_test_csrf`.
+- **Test Connection + provider→model auto-fill now work.** Both were driven by
+  inline `<script>` blocks, which Kanboard's CSP blocks. Moved into the external,
+  CSP-safe `Assets/js/subtask-generator.js`; the test URL and i18n strings are
+  passed via `data-*` attributes.
+
 ## [1.0.0] — 2026-07-02
 
 ### Added

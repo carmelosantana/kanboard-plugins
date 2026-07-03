@@ -185,7 +185,11 @@ input[type="date"],
 input[type="search"],
 select,
 textarea {
-  display: flex;
+  /* border-box so height = min-height (incl. padding+border); without this,
+     text inputs render taller (content-box, ~42px) than selects (~32px) and the
+     two controls no longer line up. No display:flex — that inflates the height
+     of replaced <input> elements. */
+  box-sizing: border-box;
   border: 1px solid var(--border);
   background-color: var(--background);
   color: var(--foreground);
@@ -264,6 +268,20 @@ fieldset legend {
 .task-board:hover {
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+
+/* ================================
+   LIST BULLETS — off in admin/settings UI lists
+   `.listing` is Kanboard's list-container class; its <ul><li> items are rows,
+   not prose, so the default disc bullets (which render in the left margin,
+   outside the content) are noise. Markdown prose keeps its bullets (.markdown).
+   ================================ */
+ul.listing,
+ul.listing ul,
+.listing > ul {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 0;
 }
 
 /* ================================

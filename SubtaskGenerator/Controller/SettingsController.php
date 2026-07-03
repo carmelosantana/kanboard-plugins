@@ -46,6 +46,11 @@ class SettingsController extends BaseController
             'sg_max_subtasks' => $maxSubtasks,
             'providers'    => ProviderFactory::PROVIDERS,
             'default_models' => ProviderFactory::DEFAULT_MODELS,
+            // Reusable CSRF token for the (external) Test-Connection fetch.
+            // MUST be generated here: `token` is NOT a registered template
+            // helper, so calling $this->token->... inside the template throws
+            // and aborts the render, dropping the whole page out of the layout.
+            'sg_test_csrf' => $this->token->getReusableCSRFToken(),
         ]));
     }
 

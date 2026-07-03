@@ -1,4 +1,6 @@
-/* FeatureSync plugin styles */
+/* FeatureSync plugin styles.
+ * Colours use ShadcnTheme design tokens with light-mode fallbacks, so the UI
+ * themes correctly under ShadcnTheme (dark) AND still reads well stand-alone. */
 
 /* ── Step 3: mode selector ──────────────────────────────────────────────────── */
 
@@ -10,31 +12,31 @@
     display: block;
     padding: 0.5rem 0.75rem;
     margin-bottom: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid var(--border, #ddd);
+    border-radius: var(--radius, 4px);
     cursor: pointer;
     line-height: 1.4;
 }
 
 .fs-mode-option:hover {
-    background: #f5f5f5;
+    background: var(--muted, #f5f5f5);
 }
 
 .fs-mode-option--destructive {
-    border-color: #e74c3c;
-    background: #fff8f8;
+    border-color: var(--destructive, #e74c3c);
+    background: var(--alert-background-color-error, #fff8f8);
 }
 
 .fs-mode-option--destructive:hover {
-    background: #fdecea;
+    background: var(--alert-background-color-error, #fdecea);
 }
 
 .fs-destructive-label {
-    color: #c0392b;
+    color: var(--destructive, #c0392b);
 }
 
 .fs-destructive-warning {
-    color: #c0392b;
+    color: var(--destructive, #c0392b);
     font-weight: 600;
 }
 
@@ -42,7 +44,7 @@
 
 .fs-divider {
     border: none;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid var(--border, #e0e0e0);
     margin: 1rem 0;
 }
 
@@ -51,10 +53,10 @@
     align-items: center;
     gap: 1rem;
     padding: 0.5rem 0.75rem;
-    background: #f9f9f9;
-    border: 1px solid #e0e0e0;
+    background: var(--muted, #f9f9f9);
+    border: 1px solid var(--border, #e0e0e0);
     border-bottom: none;
-    border-radius: 4px 4px 0 0;
+    border-radius: var(--radius, 4px) var(--radius, 4px) 0 0;
     margin-bottom: 0;
 }
 
@@ -68,13 +70,13 @@
 }
 
 .fs-count-badge {
-    color: #555;
+    color: var(--muted-foreground, #555);
     font-size: 0.9em;
 }
 
 .fs-target-list {
-    border: 1px solid #e0e0e0;
-    border-radius: 0 0 4px 4px;
+    border: 1px solid var(--border, #e0e0e0);
+    border-radius: 0 0 var(--radius, 4px) var(--radius, 4px);
     max-height: 280px;
     overflow-y: auto;
 }
@@ -84,7 +86,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.45rem 0.75rem;
-    border-bottom: 1px solid #f0f0f0;
+    border-bottom: 1px solid var(--border, #f0f0f0);
     cursor: pointer;
     margin: 0;
     line-height: 1.4;
@@ -95,7 +97,7 @@
 }
 
 .fs-target-row:hover {
-    background: #f5f7fa;
+    background: var(--muted, #f5f7fa);
 }
 
 .fs-target-row input[type="checkbox"] {
@@ -107,9 +109,9 @@
 .fs-preview-summary {
     padding: 0.75rem 1rem;
     margin-bottom: 1.25rem;
-    background: #f9f9f9;
-    border: 1px solid #e0e0e0;
-    border-radius: 4px;
+    background: var(--muted, #f9f9f9);
+    border: 1px solid var(--border, #e0e0e0);
+    border-radius: var(--radius, 4px);
 }
 
 .fs-preview-meta {
@@ -121,7 +123,7 @@
 
 .fs-preview-meta dt {
     font-weight: 600;
-    color: #555;
+    color: var(--muted-foreground, #555);
 }
 
 .fs-preview-meta dd {
@@ -131,9 +133,9 @@
 .fs-badge {
     display: inline-block;
     padding: 0.1em 0.5em;
-    border-radius: 3px;
-    background: #e8f0fe;
-    color: #1a56db;
+    border-radius: var(--radius, 3px);
+    background: color-mix(in oklch, var(--primary, #1a56db) 18%, transparent);
+    color: var(--primary, #1a56db);
     font-size: 0.85em;
     margin-right: 0.3em;
 }
@@ -143,14 +145,14 @@
 }
 
 .fs-preview-target--risky > .accordion-title {
-    border-left: 4px solid #e74c3c;
+    border-left: 4px solid var(--destructive, #e74c3c);
     padding-left: 0.75rem;
-    background: #fff8f8;
+    background: var(--alert-background-color-error, #fff8f8);
 }
 
 .fs-risk-badge {
     display: inline-block;
-    color: #c0392b;
+    color: var(--destructive, #c0392b);
     font-size: 0.85em;
     font-weight: 700;
     margin-right: 0.5em;
@@ -169,12 +171,12 @@
 .fs-preview-table th,
 .fs-preview-table td {
     padding: 0.4rem 0.6rem;
-    border: 1px solid #e0e0e0;
+    border: 1px solid var(--border, #e0e0e0);
     text-align: left;
 }
 
 .fs-preview-table th {
-    background: #f0f4f8;
+    background: var(--muted, #f0f4f8);
     font-weight: 600;
 }
 
@@ -186,16 +188,17 @@
     display: inline-block;
     min-width: 2rem;
     padding: 0.15em 0.5em;
-    border-radius: 3px;
+    border-radius: var(--radius, 3px);
     font-weight: 700;
     text-align: center;
 }
 
-.fs-count--add     { background: #e8f5e9; color: #2e7d32; }
-.fs-count--skip    { background: #f5f5f5; color: #777; }
-.fs-count--replace { background: #fff3e0; color: #e65100; }
-.fs-count--risky   { background: #fde8e8; color: #c0392b; }
-.fs-count--zero    { background: transparent; color: #aaa; }
+/* Semantic count pills — tinted so they read on light AND dark surfaces */
+.fs-count--add     { background: color-mix(in oklch, #2e7d32 22%, transparent); color: var(--foreground, #2e7d32); }
+.fs-count--skip    { background: var(--muted, #f5f5f5); color: var(--muted-foreground, #777); }
+.fs-count--replace { background: color-mix(in oklch, #e65100 24%, transparent); color: var(--foreground, #e65100); }
+.fs-count--risky   { background: color-mix(in oklch, #c0392b 24%, transparent); color: var(--foreground, #c0392b); }
+.fs-count--zero    { background: transparent; color: var(--muted-foreground, #aaa); }
 
 .form-actions .fs-apply-form {
     display: inline;

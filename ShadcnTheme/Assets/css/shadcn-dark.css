@@ -212,6 +212,17 @@
    DARK THEME SPECIFIC ADJUSTMENTS
    ================================ */
 
+/* No-FOUC surface: theme-preload.js stamps `theme-dark` on <html> before the
+   first paint (before <body> exists), so paint the base surface dark straight
+   away — otherwise the browser shows the default white page for one frame on
+   every full-page navigation. Covers the class on <html> and on <body>. */
+html.theme-dark,
+html.theme-dark body,
+.theme-dark body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
 .theme-dark .page-header h2 {
   color: var(--foreground);
   border-bottom-color: var(--border);
