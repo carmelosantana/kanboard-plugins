@@ -216,30 +216,17 @@
         }
         
         /**
-         * Add theme toggle to user dropdown menu
+         * Wire the server-rendered theme toggle in the user dropdown
+         * (Template/header/theme_toggle.php). The template's own inline
+         * <script> is blocked by Kanboard's CSP, so activation lives here.
          */
         addToUserDropdown() {
-            // Look for user dropdown menu
-            const userDropdown = document.querySelector('.dropdown-submenu-open');
-            if (!userDropdown || userDropdown.querySelector('.theme-toggle-dropdown')) {
+            const toggle = document.getElementById('theme-toggle-dropdown');
+            if (!toggle || toggle.dataset.wired) {
                 return;
             }
-            
-            const themeItem = document.createElement('li');
-            themeItem.className = 'theme-toggle-dropdown';
-            themeItem.innerHTML = `
-                <a href="#" class="theme-toggle-link">
-                    <i class="fa fa-adjust"></i>
-                    <span class="theme-dropdown-text">Theme: <span class="current-theme-text"></span></span>
-                </a>
-            `;
-            
-            // Add to dropdown
-            userDropdown.appendChild(themeItem);
-            
-            // Add click handler
-            const link = themeItem.querySelector('.theme-toggle-link');
-            link.addEventListener('click', (e) => {
+            toggle.dataset.wired = 'true';
+            toggle.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.cycleTheme();
             });
@@ -261,27 +248,17 @@
             };
             
             const text = themeLabels[this.currentTheme] || 'System';
-            
+
             themeTexts.forEach(el => el.textContent = text);
             currentThemeTexts.forEach(el => el.textContent = text);
-            
-            // Update icons
-            themeIcons.forEach(iconContainer => {
-                const lightIcon = iconContainer.querySelector('.theme-icon-light');
-                const darkIcon = iconContainer.querySelector('.theme-icon-dark');
-                const systemIcon = iconContainer.querySelector('.theme-icon-system');
-                
-                // Hide all icons first
-                [lightIcon, darkIcon, systemIcon].forEach(icon => {
-                    if (icon) icon.style.display = 'none';
-                });
-                
-                // Show appropriate icon
-                const activeIcon = iconContainer.querySelector(`.theme-icon-${this.currentTheme}`);
-                if (activeIcon) {
-                    activeIcon.style.display = 'block';
-                }
-            });
+
+            // Activate the icon matching the current mode. The individual SVGs
+            // carry .theme-icon plus .theme-icon-{light,dark,system}; visibility
+            // is driven by the .active class (opacity in theme_toggle.php CSS).
+            themeIcons.forEach(icon => icon.classList.remove('active'));
+            document
+                .querySelectorAll(`.theme-icon-${this.currentTheme}`)
+                .forEach(icon => icon.classList.add('active'));
         }
         
         /**

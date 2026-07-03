@@ -5,6 +5,35 @@ All notable changes to ShadcnTheme are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-03
+
+### Fixed
+
+- **Theme-toggle / "System" icon now appears in the user dropdown** — the icon was
+  driven by an inline `<script>` in `header/theme_toggle.php`, which Kanboard's
+  `default-src 'self'` CSP blocks, so no icon ever activated. Activation moved to the
+  external, CSP-safe `theme-switcher.js`; the system icon is the default so an icon
+  always paints. Removed a duplicate dropdown entry the switcher was injecting.
+
+### Changed
+
+- **Minimalist ("Apple-like") pass across the dark theme:**
+  - **Forms** — unified all field/fieldset borders to the single subtle `--border`
+    hairline (`--input` lowered to match); focus is now one soft ring instead of a
+    hard outline + heavy box-shadow.
+  - **Tables** — removed the rounded, muted-filled header "pill" and table
+    shadow/overflow; headers are now flat with hairline row dividers.
+  - **Fieldsets** — flattened: no boxed border with a legend perched on it; the
+    legend renders as a plain section label separated by whitespace.
+  - **Projects list** — flat, transparent list header with hairline dividers
+    (fewer borders).
+  - **Typography** — condensed heading scale so more content fits on screen.
+  - **Comments** — rounded, padded card backgrounds.
+  - **Dropdown links** — neutral white text; the violet accent is reserved for the
+    hover background.
+  - **Colored task cards** — stronger colour tint (12% → 20%) and a 4px left rail so
+    they stand out; card titles/links forced to legible light foreground.
+
 ## [1.0.0] - 2026-07-02
 
 ### Added

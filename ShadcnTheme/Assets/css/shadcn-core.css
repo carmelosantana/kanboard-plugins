@@ -57,43 +57,45 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Improved heading hierarchy */
+/* Improved heading hierarchy — condensed, Apple-like restraint.
+   Kanboard page titles are h2; keep them close to body size so more content
+   fits on screen without shouting. */
 h1 {
-  font-size: 2.25rem; /* 36px */
-  line-height: 1.2;
-  font-weight: 700;
-  letter-spacing: -0.025em;
+  font-size: 1.5rem; /* 24px */
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 h2 {
-  font-size: 1.875rem; /* 30px */
+  font-size: 1.25rem; /* 20px */
   line-height: 1.3;
   font-weight: 600;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.015em;
 }
 
 h3 {
-  font-size: 1.5rem; /* 24px */
+  font-size: 1.0625rem; /* 17px */
   line-height: 1.4;
   font-weight: 600;
 }
 
 h4 {
-  font-size: 1.25rem; /* 20px */
-  line-height: 1.5;
+  font-size: 0.9375rem; /* 15px */
+  line-height: 1.45;
   font-weight: 600;
 }
 
 h5 {
-  font-size: 1.125rem; /* 18px */
-  line-height: 1.5;
-  font-weight: 500;
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.45;
+  font-weight: 600;
 }
 
 h6 {
-  font-size: 1rem; /* 16px */
-  line-height: 1.5;
-  font-weight: 500;
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.45;
+  font-weight: 600;
 }
 
 /* ================================
@@ -114,14 +116,14 @@ h6 {
   white-space: nowrap;
   text-decoration: none;
   user-select: none;
-  padding: var(--space-2) var(--space-4);
-  min-height: 2.5rem;
+  padding: var(--space-1) var(--space-3);
+  min-height: 2rem;
   gap: var(--space-2);
 }
 
 .btn:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 30%, transparent);
 }
 
 .btn:disabled {
@@ -190,8 +192,8 @@ textarea {
   border-radius: var(--radius);
   font-size: 0.875rem;
   transition: all var(--transition-fast);
-  min-height: 2.5rem;
-  padding: var(--space-2) var(--space-3);
+  min-height: 2rem;
+  padding: var(--space-1) var(--space-3);
   font-family: inherit;
 }
 
@@ -203,9 +205,9 @@ input[type="date"]:focus,
 input[type="search"]:focus,
 select:focus,
 textarea:focus {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: none;
   border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 25%, transparent);
 }
 
 input[type="text"]:not(.input-addon-field)::placeholder,
@@ -225,6 +227,26 @@ textarea {
   line-height: 1.5;
 }
 
+/* Flatten fieldsets — no boxed border with a legend perched on it. The legend
+   becomes a plain section label; sections are separated by whitespace instead. */
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0 0 var(--space-6);
+  min-width: 0;
+}
+
+fieldset legend {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin-bottom: var(--space-2);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--foreground);
+  width: auto;
+}
+
 /* ================================
    ENHANCED CARDS & CONTAINERS
    ================================ */
@@ -236,46 +258,42 @@ textarea {
   color: var(--card-foreground);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
   transition: all var(--transition-fast);
 }
 
 .task-board:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
 }
 
 /* ================================
-   ENHANCED TABLES
+   ENHANCED TABLES — flat, hairline dividers (no rounded muted header pill)
    ================================ */
 
 table {
   border-collapse: collapse;
   border-spacing: 0;
   width: 100%;
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
 }
 
 table th {
-  background-color: var(--muted);
+  background-color: transparent;
   color: var(--muted-foreground);
   font-weight: 600;
   text-align: left;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 table td {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  background-color: var(--background);
+  background-color: transparent;
 }
 
 table tr:hover td {
-  background-color: var(--muted);
+  background-color: color-mix(in oklch, var(--muted) 45%, transparent);
 }
 
 /* ================================
@@ -296,11 +314,18 @@ table tr:hover td {
 .dropdown-submenu-open li,
 .select-dropdown-menu-item {
   border-radius: calc(var(--radius) - 2px);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   font-size: 0.875rem;
   cursor: pointer;
   transition: all var(--transition-fast);
   border: none !important;
+}
+
+/* Dropdown menu links read as neutral text, not accent-colored links —
+   the violet accent is reserved for the hover background. */
+.dropdown-submenu-open li a,
+.select-dropdown-menu-item a {
+  color: var(--popover-foreground);
 }
 
 .dropdown-submenu-open li:hover,

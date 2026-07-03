@@ -15,7 +15,7 @@
             <svg class="theme-icon theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
             </svg>
-            <svg class="theme-icon theme-icon-system" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="theme-icon theme-icon-system active" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
@@ -77,60 +77,6 @@
     color: var(--primary, #0066cc);
 }
 </style>
-
-<script>
-(function() {
-    'use strict';
-    
-    const themeToggle = document.getElementById('theme-toggle-dropdown');
-    if (!themeToggle) return;
-    
-    function updateThemeDisplay() {
-        if (typeof window.shadcnThemeSwitcher !== 'undefined') {
-            const themeInfo = window.shadcnThemeSwitcher.getThemeInfo();
-            const currentThemeText = themeToggle.querySelector('.current-theme-text');
-            const icons = themeToggle.querySelectorAll('.theme-icon');
-            
-            const themeLabels = {
-                light: 'Light',
-                dark: 'Dark',
-                system: 'System'
-            };
-            
-            if (currentThemeText) {
-                currentThemeText.textContent = themeLabels[themeInfo.current] || 'System';
-            }
-            
-            icons.forEach(icon => icon.classList.remove('active'));
-            
-            const activeIcon = themeToggle.querySelector(`.theme-icon-${themeInfo.current}`);
-            if (activeIcon) {
-                activeIcon.classList.add('active');
-            }
-        }
-    }
-    
-    themeToggle.addEventListener('click', function(e) {
-        e.preventDefault();
-        if (typeof window.shadcnThemeSwitcher !== 'undefined') {
-            window.shadcnThemeSwitcher.cycleTheme();
-        }
-    });
-    
-    window.addEventListener('themeChanged', updateThemeDisplay);
-    updateThemeDisplay();
-    
-    if (typeof window.shadcnThemeSwitcher === 'undefined') {
-        let retries = 0;
-        const checkInterval = setInterval(() => {
-            if (typeof window.shadcnThemeSwitcher !== 'undefined' || retries >= 10) {
-                clearInterval(checkInterval);
-                if (typeof window.shadcnThemeSwitcher !== 'undefined') {
-                    updateThemeDisplay();
-                }
-            }
-            retries++;
-        }, 100);
-    }
-})();
-</script>
+<?php /* Icon activation + click handling live in Assets/js/theme-switcher.js
+         (external, CSP-safe). Inline <script> is blocked by Kanboard's
+         default-src 'self' CSP, so it must not be used here. */ ?>
