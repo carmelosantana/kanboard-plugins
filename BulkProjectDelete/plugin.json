@@ -1,8 +1,9 @@
 {
     "name": "BulkProjectDelete",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "description": "Bulk-delete multiple projects in one action.",
     "author": "Carmelo Santana",
+    "license": "MIT",
     "homepage": "https://github.com/vctrs-io/kanboard-bulk-project-delete",
     "kanboard_version": ">=1.2.47",
     "php_version": ">=8.4"
