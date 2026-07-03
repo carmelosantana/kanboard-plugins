@@ -78,6 +78,9 @@ class PluginManager extends Base
 
     public function enable(string $name): void
     {
+        // guardSelf() is intentionally omitted: ModMenu is always active and can
+        // never be in the disabled dir, so re-enabling it is impossible in practice
+        // and harmless in theory — no protection is needed here.
         $this->move($name, $this->disabledDir(), $this->activeDir());
     }
 
@@ -107,8 +110,8 @@ class PluginManager extends Base
 
     public function installFromUrl(string $url): string
     {
-        if (! preg_match('#^https?://#i', $url) || filter_var($url, FILTER_VALIDATE_URL) === false) {
-            throw new ModMenuException(t('The download URL is invalid.'));
+        if (! preg_match('#^https://#i', $url) || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            throw new ModMenuException(t('The download URL must be a valid https:// URL.'));
         }
 
         $body = $this->httpClient->get($url);

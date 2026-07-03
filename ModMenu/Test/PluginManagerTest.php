@@ -156,6 +156,14 @@ class PluginManagerTest extends Base
         $this->assertFalse(PluginManager::hasUpdate('2.0.1', '2.0.0'));
     }
 
+    public function testInstallFromUrlRejectsPlainHttp()
+    {
+        // Security: plain http:// must be rejected before any network call is made.
+        // The regex '#^https://#i' catches this immediately so no HTTP/zip fixture needed.
+        $this->expectException(ModMenuException::class);
+        $this->manager->installFromUrl('http://example.com/plugin.zip');
+    }
+
     public function testInstalledMapShape()
     {
         $this->seedPlugin($this->active, 'Alpha', '1.0.0');

@@ -132,7 +132,11 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $url = urldecode($this->request->getStringParam('archive_url'));
+        // PHP already returns the form value decoded; urldecode() here would
+        // double-decode and corrupt any literal '%' in the URL (e.g. '%20' in
+        // GitHub release-asset filenames). Read the param directly, as with
+        // 'name' and 'url' elsewhere in this controller.
+        $url = $this->request->getStringParam('archive_url');
         $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin installed.'));
         $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
     }
@@ -141,7 +145,11 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $url = urldecode($this->request->getStringParam('archive_url'));
+        // PHP already returns the form value decoded; urldecode() here would
+        // double-decode and corrupt any literal '%' in the URL (e.g. '%20' in
+        // GitHub release-asset filenames). Read the param directly, as with
+        // 'name' and 'url' elsewhere in this controller.
+        $url = $this->request->getStringParam('archive_url');
         $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin updated.'));
         $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
     }
