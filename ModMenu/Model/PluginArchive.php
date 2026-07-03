@@ -20,6 +20,20 @@ class PluginArchive extends Base
     const MAX_ENTRIES = 5000;
 
     /**
+     * True when a zip entry name is safe to extract: non-empty, no parent-dir
+     * traversal ("..") anywhere, no absolute path (leading "/"), no backslash
+     * (Windows-style separators / traversal). This is the security gate for
+     * every archive entry.
+     */
+    public static function isEntryNameSafe(string $name): bool
+    {
+        if ($name === '' || $name[0] === '/' || strpos($name, '\\') !== false || strpos($name, '..') !== false) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Validate the archive and return the single top-level directory name.
      *
      * @throws ModMenuException
@@ -49,8 +63,7 @@ class PluginArchive extends Base
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 $entry = $zip->statIndex($i)['name'];
 
-                if ($entry === '' || $entry[0] === '/' || strpos($entry, '\\') !== false
-                    || strpos($entry, '..') !== false) {
+                if (! self::isEntryNameSafe($entry)) {
                     throw new ModMenuException(t('The plugin archive contains an unsafe path: %s', $entry));
                 }
 
@@ -127,7 +140,7 @@ class PluginArchive extends Base
     }
 
     /** Recursively copy a directory tree; returns true on success. */
-    private function copyTree(string $src, string $dst): bool
+    protected function copyTree(string $src, string $dst): bool
     {
         if (! @mkdir($dst, 0755, true)) { return false; }
         $entries = @scandir($src);

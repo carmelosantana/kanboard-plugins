@@ -157,4 +157,74 @@ class PluginArchiveTest extends Base
         $this->assertFileExists($dest . '/CopyPlugin/Plugin.php');
         $this->assertFileExists($dest . '/CopyPlugin/Helper.php');
     }
+
+    /**
+     * Pin each guard clause in isEntryNameSafe() individually.
+     *
+     * TRUE cases — safe entries that must be accepted.
+     * FALSE cases — each one maps to exactly one guard clause:
+     *   - '' (empty)           => guard: $name === ''
+     *   - '/etc/passwd'        => guard: $name[0] === '/'
+     *   - 'Evil\\x.php'        => guard: strpos($name, '\\') !== false
+     *   - '../escape.php'      => guard: strpos($name, '..') !== false
+     *   - 'Good/../../etc'     => guard: strpos($name, '..') !== false (traversal mid-path)
+     * Removing any single guard from isEntryNameSafe() causes exactly its mapped assertion to fail.
+     */
+    public function testIsEntryNameSafe()
+    {
+        // TRUE: safe entry names
+        $this->assertTrue(PluginArchive::isEntryNameSafe('Good/Plugin.php'),    'relative file path should be safe');
+        $this->assertTrue(PluginArchive::isEntryNameSafe('Good/sub/file.php'),  'nested path should be safe');
+        $this->assertTrue(PluginArchive::isEntryNameSafe('Good/README.md'),     'doc file should be safe');
+
+        // FALSE: empty string — guard: $name === ''
+        $this->assertFalse(PluginArchive::isEntryNameSafe(''),               'empty name must be rejected');
+
+        // FALSE: leading slash — guard: $name[0] === '/'
+        $this->assertFalse(PluginArchive::isEntryNameSafe('/etc/passwd'),     'absolute path must be rejected');
+
+        // FALSE: backslash — guard: strpos($name, '\\') !== false
+        $this->assertFalse(PluginArchive::isEntryNameSafe('Evil\\x.php'),    'backslash must be rejected');
+
+        // FALSE: leading traversal — guard: strpos($name, '..') !== false
+        $this->assertFalse(PluginArchive::isEntryNameSafe('../escape.php'),   'leading .. must be rejected');
+
+        // FALSE: mid-path traversal — guard: strpos($name, '..') !== false
+        $this->assertFalse(PluginArchive::isEntryNameSafe('Good/../../etc'), 'mid-path .. must be rejected');
+    }
+
+    /**
+     * Exercise copyTree() directly to confirm the cross-filesystem fallback logic works.
+     *
+     * We expose the protected method via a small anonymous subclass so that
+     * removal or breakage of copyTree() causes this test (not just extractTo()) to fail.
+     */
+    private $copyTreeWork;
+
+    public function testCopyTreeCopiesNestedTree()
+    {
+        // Build a source tree: A/Plugin.php and A/sub/x.txt
+        $src = $this->work . '/copy-src/A';
+        mkdir($src . '/sub', 0777, true);
+        file_put_contents($src . '/Plugin.php', "<?php\n");
+        file_put_contents($src . '/sub/x.txt', 'hello');
+
+        $dst = $this->work . '/copy-dst/A';
+
+        // Use a subclass to expose the protected method.
+        $archive = new class($this->container) extends PluginArchive {
+            public function publicCopyTree(string $src, string $dst): bool
+            {
+                return $this->copyTree($src, $dst);
+            }
+        };
+
+        $result = $archive->publicCopyTree($src, $dst);
+
+        $this->assertTrue($result, 'copyTree should return true on success');
+        $this->assertFileExists($dst . '/Plugin.php');
+        $this->assertFileExists($dst . '/sub/x.txt');
+        $this->assertSame("<?php\n", file_get_contents($dst . '/Plugin.php'));
+        $this->assertSame('hello',   file_get_contents($dst . '/sub/x.txt'));
+    }
 }
