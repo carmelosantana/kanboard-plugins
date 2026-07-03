@@ -38,6 +38,11 @@ class Plugin extends Base
             // Settings page still loads (shows a disabled notice) — fall through to route wiring.
         }
 
+        // ── External JS (CSP-safe, event-delegated modal interaction) ────────
+        $this->hook->on('template:layout:js', [
+            'template' => 'plugins/SubtaskGenerator/Assets/js/subtask-generator.js',
+        ]);
+
         // ── Sidebar link in Settings nav ─────────────────────────────────────
         $this->hook->on('template:config:sidebar', [
             'template' => 'SubtaskGenerator:config/sidebar',
