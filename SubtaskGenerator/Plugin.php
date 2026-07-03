@@ -39,6 +39,33 @@ class Plugin extends Base
             'template' => 'SubtaskGenerator:config/sidebar',
         ]);
 
+        // ── Task sidebar: "Generate subtasks" link ────────────────────────────
+        // Hooked into template:task:sidebar:after-basic-actions
+        // (app/Template/task/sidebar.php:45) — renders just after
+        // "Add a sub-task", which is the natural home for AI-assisted subtask
+        // generation. A callable is used so ai_enabled is evaluated lazily
+        // (avoids the check on every page load that doesn't render the sidebar).
+        $aiEnabled = $this->aiEnabled;
+        $this->helper->hook->attachCallable(
+            'template:task:sidebar:after-basic-actions',
+            'SubtaskGenerator:generator/sidebar_link',
+            function (array $task) use ($aiEnabled): array {
+                return ['ai_enabled' => $aiEnabled];
+            }
+        );
+
+        // ── Generator routes ──────────────────────────────────────────────────
+        $this->route->addRoute(
+            'subtask-generator/show',
+            'SubtaskGenerator:GeneratorController',
+            'show'
+        );
+        $this->route->addRoute(
+            'subtask-generator/generate',
+            'SubtaskGenerator:GeneratorController',
+            'generate'
+        );
+
         // ── Admin settings routes ─────────────────────────────────────────────
         $this->route->addRoute(
             'subtask-generator/settings',
