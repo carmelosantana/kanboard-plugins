@@ -54,6 +54,13 @@ class SourceRepository extends Base
     private function save(array $sources): void
     {
         $this->configModel->save([self::CONFIG_KEY => json_encode(array_values($sources))]);
+        // Kanboard's ConfigModel::get() reads through a proxy memory-cache that is NOT
+        // invalidated by configModel->save(). Without a flush, getSources() would return
+        // stale data within the same request. A targeted invalidation would require
+        // hard-coding the proxy-cache key for ConfigModel::getAll(), which is an
+        // implementation detail and not a stable public API. A full flush() is therefore
+        // the deliberate, version-robust choice. The cost is at most one extra DB read
+        // per request, which is acceptable for these admin-only, low-frequency operations.
         $this->memoryCache->flush();
     }
 }

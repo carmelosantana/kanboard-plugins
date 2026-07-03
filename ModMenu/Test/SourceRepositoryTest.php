@@ -59,4 +59,19 @@ class SourceRepositoryTest extends Base
         $this->repo->removeSource(SourceRepository::DEFAULT_SOURCE);
         $this->assertSame([], $this->repo->getSources());
     }
+
+    public function testAddSourceRejectsWhitespace()
+    {
+        $this->expectException(ModMenuException::class);
+        $this->repo->addSource('   ');
+    }
+
+    public function testRemoveDefaultAmongOthers()
+    {
+        $this->repo->addSource('https://example.com/other.json');
+        $this->repo->removeSource(SourceRepository::DEFAULT_SOURCE);
+        $sources = $this->repo->getSources();
+        $this->assertNotContains(SourceRepository::DEFAULT_SOURCE, $sources);
+        $this->assertContains('https://example.com/other.json', $sources);
+    }
 }
