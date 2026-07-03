@@ -57,6 +57,90 @@ class GeneratorController extends BaseController
     }
 
     /**
+     * Create the selected/edited subtask candidates as real subtasks (POST).
+     *
+     * Guards (in order):
+     *  1. AI-ready gate (PHP >= 8.4 + vendor + provider configured).
+     *  2. Task must exist (throws PageNotFoundException via getTask()).
+     *  3. User must have edit access to the task's project (403 otherwise).
+     *  4. CSRF form token must be valid.
+     *
+     * Reads `titles[]` from the POST body (the JS pre-filters unchecked rows, so
+     * everything that arrives should be created; blanks are skipped defensively).
+     * Partial failures are tolerated — a failed create does NOT abort the rest.
+     *
+     * On success: redirects to the task view with a flash notice.
+     * On zero created: flash failure, redirect back.
+     *
+     * @throws PageNotFoundException
+     * @throws AccessForbiddenException
+     */
+    public function create(): void
+    {
+        // ── 1. AI gate ────────────────────────────────────────────────────────
+        if (! $this->isAiEnabled()) {
+            throw new AccessForbiddenException();
+        }
+
+        // ── 2. Task must exist ────────────────────────────────────────────────
+        $task = $this->getTask();
+
+        // ── 3. Permission gate ────────────────────────────────────────────────
+        if (! $this->helper->user->hasProjectAccess('TaskModificationController', 'edit', $task['project_id'])) {
+            throw new AccessForbiddenException();
+        }
+
+        // ── 4. CSRF gate ──────────────────────────────────────────────────────
+        $this->checkCSRFForm();
+
+        // ── 5. Read selected titles ───────────────────────────────────────────
+        $values = $this->request->getValues();
+        $raw    = isset($values['titles']) && is_array($values['titles'])
+            ? $values['titles']
+            : [];
+
+        $taskId  = (int) $task['id'];
+        $created = 0;
+        $failed  = 0;
+
+        foreach ($raw as $title) {
+            if (! is_string($title)) {
+                continue;
+            }
+            $title = trim($title);
+            if ($title === '') {
+                continue; // skip blanks
+            }
+
+            $id = $this->subtaskModel->create([
+                'task_id' => $taskId,
+                'title'   => $title,
+            ]);
+
+            if ($id !== false && $id > 0) {
+                $created++;
+            } else {
+                $failed++;
+            }
+        }
+
+        // ── 6. Redirect with flash ────────────────────────────────────────────
+        $redirectUrl = $this->helper->url->to('TaskViewController', 'show', ['task_id' => $taskId, 'project_id' => $task['project_id']]);
+
+        if ($created > 0) {
+            $msg = t('%d subtask(s) created successfully.', $created);
+            if ($failed > 0) {
+                $msg .= ' ' . t('%d could not be saved.', $failed);
+            }
+            $this->flash->success($msg);
+        } else {
+            $this->flash->failure(t('No subtasks were created. Please try again.'));
+        }
+
+        $this->response->redirect($redirectUrl);
+    }
+
+    /**
      * Generate subtasks via the configured LLM provider (POST).
      *
      * Guards (in order):

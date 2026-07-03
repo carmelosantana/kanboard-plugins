@@ -69,6 +69,11 @@ class Plugin extends Base
             'SubtaskGenerator:GeneratorController',
             'generate'
         );
+        $this->route->addRoute(
+            'subtask-generator/create',
+            'SubtaskGenerator:GeneratorController',
+            'create'
+        );
 
         // ── Admin settings routes ─────────────────────────────────────────────
         $this->route->addRoute(
