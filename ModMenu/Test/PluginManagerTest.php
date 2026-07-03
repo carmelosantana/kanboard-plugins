@@ -109,6 +109,40 @@ class PluginManagerTest extends Base
         $this->manager->disable('../evil');
     }
 
+    public function testEnableRefusesTraversal()
+    {
+        $this->expectException(ModMenuException::class);
+        $this->manager->enable('../evil');
+    }
+
+    public function testUninstallRemovesDisabledPlugin()
+    {
+        $this->seedPlugin($this->disabled, 'Gamma', '3.0.0');
+        $this->manager->uninstall('Gamma');
+        $this->assertDirectoryDoesNotExist("{$this->disabled}/Gamma");
+    }
+
+    public function testFolderNameIsIdentityNotJsonName()
+    {
+        // Folder: WidgetBox, plugin.json "name": "Widget Box Deluxe", "title": "Widget Box"
+        $dir = "{$this->active}/WidgetBox";
+        mkdir($dir, 0777, true);
+        file_put_contents("$dir/Plugin.php", "<?php\n");
+        file_put_contents("$dir/plugin.json", json_encode([
+            'name'    => 'Widget Box Deluxe',
+            'title'   => 'Widget Box',
+            'version' => '1.2.3',
+        ]));
+
+        $list = $this->manager->listInstalled();
+        $byName = [];
+        foreach ($list as $p) { $byName[$p['name']] = $p; }
+
+        $this->assertArrayHasKey('WidgetBox', $byName, 'name key must be the folder name');
+        $this->assertSame('WidgetBox', $byName['WidgetBox']['name'], 'name must equal folder name');
+        $this->assertSame('Widget Box', $byName['WidgetBox']['title'], 'title must come from plugin.json title field');
+    }
+
     public function testDisableRefusesWhenNotInstalled()
     {
         $this->expectException(ModMenuException::class);

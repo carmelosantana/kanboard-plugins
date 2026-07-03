@@ -219,8 +219,11 @@ class PluginManager extends Base
         if (is_file($jsonFile)) {
             $json = json_decode((string) file_get_contents($jsonFile), true);
             if (is_array($json)) {
-                $meta['name'] = $json['name'] ?? $folderName;
-                $meta['title'] = $json['title'] ?? $meta['name'];
+                // 'name' is ALWAYS the folder name — it is the operation key used
+                // by enable/disable/uninstall. Using plugin.json "name" here would
+                // break those operations if the json name differs from the folder.
+                $meta['name'] = $folderName;
+                $meta['title'] = $json['title'] ?? $json['name'] ?? $folderName;
                 $meta['version'] = $json['version'] ?? 'unknown';
                 $meta['description'] = $json['description'] ?? '';
                 $meta['author'] = $json['author'] ?? '';
