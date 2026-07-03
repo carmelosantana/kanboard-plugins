@@ -1,6 +1,6 @@
 {
     "name": "BulkProjectDelete",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Bulk-delete multiple projects in one action.",
     "author": "Carmelo Santana",
     "license": "MIT",

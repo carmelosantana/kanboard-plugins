@@ -259,7 +259,9 @@
   border: 1px solid var(--border);
   border-left: 4px solid var(--border);
   color: var(--card-foreground);
-  box-shadow: none;
+  /* Soft elevation so cards lift off the (now borderless) column — improves
+     visibility per feedback #3. */
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.45);
   border-radius: var(--radius);
   transition: box-shadow 150ms cubic-bezier(0.4,0,0.2,1),
               transform 150ms cubic-bezier(0.4,0,0.2,1);
@@ -274,6 +276,13 @@
   color: var(--card-foreground);
 }
 
+/* Task title: brighter + a touch bolder for readability at a glance. */
+.theme-dark .task-board-title a,
+.theme-dark .task-board-title {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
 .theme-dark .task-board:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
@@ -283,152 +292,160 @@
 /* green — OKLCH hue 150 */
 .theme-dark .task-board.color-green {
   border-left-color: oklch(0.75 0.16 150);
-  background-color: color-mix(in oklch, oklch(0.75 0.16 150) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.75 0.16 150) 28%, var(--card));
 }
 /* yellow — OKLCH hue 95 */
 .theme-dark .task-board.color-yellow {
   border-left-color: oklch(0.86 0.15 95);
-  background-color: color-mix(in oklch, oklch(0.86 0.15 95) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.86 0.15 95) 28%, var(--card));
 }
 /* blue — OKLCH hue 250 */
 .theme-dark .task-board.color-blue {
   border-left-color: oklch(0.68 0.15 250);
-  background-color: color-mix(in oklch, oklch(0.68 0.15 250) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.68 0.15 250) 28%, var(--card));
 }
 /* purple — OKLCH hue 300 */
 .theme-dark .task-board.color-purple {
   border-left-color: oklch(0.65 0.18 300);
-  background-color: color-mix(in oklch, oklch(0.65 0.18 300) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.65 0.18 300) 28%, var(--card));
 }
 /* red — OKLCH hue 25 */
 .theme-dark .task-board.color-red {
   border-left-color: oklch(0.70 0.19 25);
-  background-color: color-mix(in oklch, oklch(0.70 0.19 25) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.70 0.19 25) 28%, var(--card));
 }
 /* orange — OKLCH hue 55 */
 .theme-dark .task-board.color-orange {
   border-left-color: oklch(0.78 0.17 55);
-  background-color: color-mix(in oklch, oklch(0.78 0.17 55) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.78 0.17 55) 28%, var(--card));
 }
 /* grey — OKLCH low chroma hue 250 */
 .theme-dark .task-board.color-grey {
   border-left-color: oklch(0.65 0.02 250);
-  background-color: color-mix(in oklch, oklch(0.65 0.02 250) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.65 0.02 250) 28%, var(--card));
 }
 /* brown — OKLCH hue 50 */
 .theme-dark .task-board.color-brown {
   border-left-color: oklch(0.58 0.12 50);
-  background-color: color-mix(in oklch, oklch(0.58 0.12 50) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.58 0.12 50) 28%, var(--card));
 }
 /* deep_orange — OKLCH hue 40 */
 .theme-dark .task-board.color-deep_orange {
   border-left-color: oklch(0.72 0.20 40);
-  background-color: color-mix(in oklch, oklch(0.72 0.20 40) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.72 0.20 40) 28%, var(--card));
 }
 /* dark_grey — OKLCH low chroma hue 250 (darker than grey) */
 .theme-dark .task-board.color-dark_grey {
   border-left-color: oklch(0.48 0.02 250);
-  background-color: color-mix(in oklch, oklch(0.48 0.02 250) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.48 0.02 250) 28%, var(--card));
 }
 /* pink — OKLCH hue 350 */
 .theme-dark .task-board.color-pink {
   border-left-color: oklch(0.72 0.19 350);
-  background-color: color-mix(in oklch, oklch(0.72 0.19 350) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.72 0.19 350) 28%, var(--card));
 }
 /* teal — OKLCH hue 190 */
 .theme-dark .task-board.color-teal {
   border-left-color: oklch(0.70 0.14 190);
-  background-color: color-mix(in oklch, oklch(0.70 0.14 190) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.70 0.14 190) 28%, var(--card));
 }
 /* cyan — OKLCH hue 210 */
 .theme-dark .task-board.color-cyan {
   border-left-color: oklch(0.73 0.14 210);
-  background-color: color-mix(in oklch, oklch(0.73 0.14 210) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.73 0.14 210) 28%, var(--card));
 }
 /* lime — OKLCH hue 125 */
 .theme-dark .task-board.color-lime {
   border-left-color: oklch(0.82 0.17 125);
-  background-color: color-mix(in oklch, oklch(0.82 0.17 125) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.82 0.17 125) 28%, var(--card));
 }
 /* light_green — OKLCH hue 140 */
 .theme-dark .task-board.color-light_green {
   border-left-color: oklch(0.79 0.17 140);
-  background-color: color-mix(in oklch, oklch(0.79 0.17 140) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.79 0.17 140) 28%, var(--card));
 }
 /* amber — OKLCH hue 85 */
 .theme-dark .task-board.color-amber {
   border-left-color: oklch(0.83 0.16 85);
-  background-color: color-mix(in oklch, oklch(0.83 0.16 85) 20%, var(--card));
+  background-color: color-mix(in oklch, oklch(0.83 0.16 85) 28%, var(--card));
 }
 
 /* --- Task summary container (task detail page, B3) --- */
-.theme-dark .task-summary-container.color-green     { border-left: 3px solid oklch(0.75 0.16 150); background-color: color-mix(in oklch, oklch(0.75 0.16 150) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-yellow    { border-left: 3px solid oklch(0.86 0.15 95);  background-color: color-mix(in oklch, oklch(0.86 0.15 95) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-blue      { border-left: 3px solid oklch(0.68 0.15 250); background-color: color-mix(in oklch, oklch(0.68 0.15 250) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-purple    { border-left: 3px solid oklch(0.65 0.18 300); background-color: color-mix(in oklch, oklch(0.65 0.18 300) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-red       { border-left: 3px solid oklch(0.70 0.19 25);  background-color: color-mix(in oklch, oklch(0.70 0.19 25) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-orange    { border-left: 3px solid oklch(0.78 0.17 55);  background-color: color-mix(in oklch, oklch(0.78 0.17 55) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-grey      { border-left: 3px solid oklch(0.65 0.02 250); background-color: color-mix(in oklch, oklch(0.65 0.02 250) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-brown     { border-left: 3px solid oklch(0.58 0.12 50);  background-color: color-mix(in oklch, oklch(0.58 0.12 50) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-deep_orange { border-left: 3px solid oklch(0.72 0.20 40); background-color: color-mix(in oklch, oklch(0.72 0.20 40) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-dark_grey { border-left: 3px solid oklch(0.48 0.02 250); background-color: color-mix(in oklch, oklch(0.48 0.02 250) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-pink      { border-left: 3px solid oklch(0.72 0.19 350); background-color: color-mix(in oklch, oklch(0.72 0.19 350) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-teal      { border-left: 3px solid oklch(0.70 0.14 190); background-color: color-mix(in oklch, oklch(0.70 0.14 190) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-cyan      { border-left: 3px solid oklch(0.73 0.14 210); background-color: color-mix(in oklch, oklch(0.73 0.14 210) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-lime      { border-left: 3px solid oklch(0.82 0.17 125); background-color: color-mix(in oklch, oklch(0.82 0.17 125) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-light_green { border-left: 3px solid oklch(0.79 0.17 140); background-color: color-mix(in oklch, oklch(0.79 0.17 140) 20%, var(--card)); }
-.theme-dark .task-summary-container.color-amber     { border-left: 3px solid oklch(0.83 0.16 85);  background-color: color-mix(in oklch, oklch(0.83 0.16 85) 20%, var(--card)); }
+.theme-dark .task-summary-container.color-green     { border-left: 3px solid oklch(0.75 0.16 150); background-color: color-mix(in oklch, oklch(0.75 0.16 150) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-yellow    { border-left: 3px solid oklch(0.86 0.15 95);  background-color: color-mix(in oklch, oklch(0.86 0.15 95) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-blue      { border-left: 3px solid oklch(0.68 0.15 250); background-color: color-mix(in oklch, oklch(0.68 0.15 250) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-purple    { border-left: 3px solid oklch(0.65 0.18 300); background-color: color-mix(in oklch, oklch(0.65 0.18 300) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-red       { border-left: 3px solid oklch(0.70 0.19 25);  background-color: color-mix(in oklch, oklch(0.70 0.19 25) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-orange    { border-left: 3px solid oklch(0.78 0.17 55);  background-color: color-mix(in oklch, oklch(0.78 0.17 55) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-grey      { border-left: 3px solid oklch(0.65 0.02 250); background-color: color-mix(in oklch, oklch(0.65 0.02 250) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-brown     { border-left: 3px solid oklch(0.58 0.12 50);  background-color: color-mix(in oklch, oklch(0.58 0.12 50) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-deep_orange { border-left: 3px solid oklch(0.72 0.20 40); background-color: color-mix(in oklch, oklch(0.72 0.20 40) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-dark_grey { border-left: 3px solid oklch(0.48 0.02 250); background-color: color-mix(in oklch, oklch(0.48 0.02 250) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-pink      { border-left: 3px solid oklch(0.72 0.19 350); background-color: color-mix(in oklch, oklch(0.72 0.19 350) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-teal      { border-left: 3px solid oklch(0.70 0.14 190); background-color: color-mix(in oklch, oklch(0.70 0.14 190) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-cyan      { border-left: 3px solid oklch(0.73 0.14 210); background-color: color-mix(in oklch, oklch(0.73 0.14 210) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-lime      { border-left: 3px solid oklch(0.82 0.17 125); background-color: color-mix(in oklch, oklch(0.82 0.17 125) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-light_green { border-left: 3px solid oklch(0.79 0.17 140); background-color: color-mix(in oklch, oklch(0.79 0.17 140) 28%, var(--card)); }
+.theme-dark .task-summary-container.color-amber     { border-left: 3px solid oklch(0.83 0.16 85);  background-color: color-mix(in oklch, oklch(0.83 0.16 85) 28%, var(--card)); }
 
 /* --- Task tags (board footer + task detail, B3) --- */
-.theme-dark .task-tag.color-green      { background-color: color-mix(in oklch, oklch(0.75 0.16 150) 20%, var(--card)); border-color: oklch(0.75 0.16 150); color: var(--card-foreground); }
-.theme-dark .task-tag.color-yellow     { background-color: color-mix(in oklch, oklch(0.86 0.15 95) 20%, var(--card));  border-color: oklch(0.86 0.15 95);  color: var(--card-foreground); }
-.theme-dark .task-tag.color-blue       { background-color: color-mix(in oklch, oklch(0.68 0.15 250) 20%, var(--card)); border-color: oklch(0.68 0.15 250); color: var(--card-foreground); }
-.theme-dark .task-tag.color-purple     { background-color: color-mix(in oklch, oklch(0.65 0.18 300) 20%, var(--card)); border-color: oklch(0.65 0.18 300); color: var(--card-foreground); }
-.theme-dark .task-tag.color-red        { background-color: color-mix(in oklch, oklch(0.70 0.19 25) 20%, var(--card));  border-color: oklch(0.70 0.19 25);  color: var(--card-foreground); }
-.theme-dark .task-tag.color-orange     { background-color: color-mix(in oklch, oklch(0.78 0.17 55) 20%, var(--card));  border-color: oklch(0.78 0.17 55);  color: var(--card-foreground); }
-.theme-dark .task-tag.color-grey       { background-color: color-mix(in oklch, oklch(0.65 0.02 250) 20%, var(--card)); border-color: oklch(0.65 0.02 250); color: var(--card-foreground); }
-.theme-dark .task-tag.color-brown      { background-color: color-mix(in oklch, oklch(0.58 0.12 50) 20%, var(--card));  border-color: oklch(0.58 0.12 50);  color: var(--card-foreground); }
-.theme-dark .task-tag.color-deep_orange { background-color: color-mix(in oklch, oklch(0.72 0.20 40) 20%, var(--card)); border-color: oklch(0.72 0.20 40); color: var(--card-foreground); }
-.theme-dark .task-tag.color-dark_grey  { background-color: color-mix(in oklch, oklch(0.48 0.02 250) 20%, var(--card)); border-color: oklch(0.48 0.02 250); color: var(--card-foreground); }
-.theme-dark .task-tag.color-pink       { background-color: color-mix(in oklch, oklch(0.72 0.19 350) 20%, var(--card)); border-color: oklch(0.72 0.19 350); color: var(--card-foreground); }
-.theme-dark .task-tag.color-teal       { background-color: color-mix(in oklch, oklch(0.70 0.14 190) 20%, var(--card)); border-color: oklch(0.70 0.14 190); color: var(--card-foreground); }
-.theme-dark .task-tag.color-cyan       { background-color: color-mix(in oklch, oklch(0.73 0.14 210) 20%, var(--card)); border-color: oklch(0.73 0.14 210); color: var(--card-foreground); }
-.theme-dark .task-tag.color-lime       { background-color: color-mix(in oklch, oklch(0.82 0.17 125) 20%, var(--card)); border-color: oklch(0.82 0.17 125); color: var(--card-foreground); }
-.theme-dark .task-tag.color-light_green { background-color: color-mix(in oklch, oklch(0.79 0.17 140) 20%, var(--card)); border-color: oklch(0.79 0.17 140); color: var(--card-foreground); }
-.theme-dark .task-tag.color-amber      { background-color: color-mix(in oklch, oklch(0.83 0.16 85) 20%, var(--card));  border-color: oklch(0.83 0.16 85);  color: var(--card-foreground); }
+.theme-dark .task-tag.color-green      { background-color: color-mix(in oklch, oklch(0.75 0.16 150) 28%, var(--card)); border-color: oklch(0.75 0.16 150); color: var(--card-foreground); }
+.theme-dark .task-tag.color-yellow     { background-color: color-mix(in oklch, oklch(0.86 0.15 95) 28%, var(--card));  border-color: oklch(0.86 0.15 95);  color: var(--card-foreground); }
+.theme-dark .task-tag.color-blue       { background-color: color-mix(in oklch, oklch(0.68 0.15 250) 28%, var(--card)); border-color: oklch(0.68 0.15 250); color: var(--card-foreground); }
+.theme-dark .task-tag.color-purple     { background-color: color-mix(in oklch, oklch(0.65 0.18 300) 28%, var(--card)); border-color: oklch(0.65 0.18 300); color: var(--card-foreground); }
+.theme-dark .task-tag.color-red        { background-color: color-mix(in oklch, oklch(0.70 0.19 25) 28%, var(--card));  border-color: oklch(0.70 0.19 25);  color: var(--card-foreground); }
+.theme-dark .task-tag.color-orange     { background-color: color-mix(in oklch, oklch(0.78 0.17 55) 28%, var(--card));  border-color: oklch(0.78 0.17 55);  color: var(--card-foreground); }
+.theme-dark .task-tag.color-grey       { background-color: color-mix(in oklch, oklch(0.65 0.02 250) 28%, var(--card)); border-color: oklch(0.65 0.02 250); color: var(--card-foreground); }
+.theme-dark .task-tag.color-brown      { background-color: color-mix(in oklch, oklch(0.58 0.12 50) 28%, var(--card));  border-color: oklch(0.58 0.12 50);  color: var(--card-foreground); }
+.theme-dark .task-tag.color-deep_orange { background-color: color-mix(in oklch, oklch(0.72 0.20 40) 28%, var(--card)); border-color: oklch(0.72 0.20 40); color: var(--card-foreground); }
+.theme-dark .task-tag.color-dark_grey  { background-color: color-mix(in oklch, oklch(0.48 0.02 250) 28%, var(--card)); border-color: oklch(0.48 0.02 250); color: var(--card-foreground); }
+.theme-dark .task-tag.color-pink       { background-color: color-mix(in oklch, oklch(0.72 0.19 350) 28%, var(--card)); border-color: oklch(0.72 0.19 350); color: var(--card-foreground); }
+.theme-dark .task-tag.color-teal       { background-color: color-mix(in oklch, oklch(0.70 0.14 190) 28%, var(--card)); border-color: oklch(0.70 0.14 190); color: var(--card-foreground); }
+.theme-dark .task-tag.color-cyan       { background-color: color-mix(in oklch, oklch(0.73 0.14 210) 28%, var(--card)); border-color: oklch(0.73 0.14 210); color: var(--card-foreground); }
+.theme-dark .task-tag.color-lime       { background-color: color-mix(in oklch, oklch(0.82 0.17 125) 28%, var(--card)); border-color: oklch(0.82 0.17 125); color: var(--card-foreground); }
+.theme-dark .task-tag.color-light_green { background-color: color-mix(in oklch, oklch(0.79 0.17 140) 28%, var(--card)); border-color: oklch(0.79 0.17 140); color: var(--card-foreground); }
+.theme-dark .task-tag.color-amber      { background-color: color-mix(in oklch, oklch(0.83 0.16 85) 28%, var(--card));  border-color: oklch(0.83 0.16 85);  color: var(--card-foreground); }
 
 /* --- Task board category labels (board footer, B3) --- */
-.theme-dark .task-board-category.color-green      { background-color: color-mix(in oklch, oklch(0.75 0.16 150) 20%, var(--card)); border-color: oklch(0.75 0.16 150); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-yellow     { background-color: color-mix(in oklch, oklch(0.86 0.15 95) 20%, var(--card));  border-color: oklch(0.86 0.15 95);  color: var(--card-foreground); }
-.theme-dark .task-board-category.color-blue       { background-color: color-mix(in oklch, oklch(0.68 0.15 250) 20%, var(--card)); border-color: oklch(0.68 0.15 250); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-purple     { background-color: color-mix(in oklch, oklch(0.65 0.18 300) 20%, var(--card)); border-color: oklch(0.65 0.18 300); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-red        { background-color: color-mix(in oklch, oklch(0.70 0.19 25) 20%, var(--card));  border-color: oklch(0.70 0.19 25);  color: var(--card-foreground); }
-.theme-dark .task-board-category.color-orange     { background-color: color-mix(in oklch, oklch(0.78 0.17 55) 20%, var(--card));  border-color: oklch(0.78 0.17 55);  color: var(--card-foreground); }
-.theme-dark .task-board-category.color-grey       { background-color: color-mix(in oklch, oklch(0.65 0.02 250) 20%, var(--card)); border-color: oklch(0.65 0.02 250); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-brown      { background-color: color-mix(in oklch, oklch(0.58 0.12 50) 20%, var(--card));  border-color: oklch(0.58 0.12 50);  color: var(--card-foreground); }
-.theme-dark .task-board-category.color-deep_orange { background-color: color-mix(in oklch, oklch(0.72 0.20 40) 20%, var(--card)); border-color: oklch(0.72 0.20 40); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-dark_grey  { background-color: color-mix(in oklch, oklch(0.48 0.02 250) 20%, var(--card)); border-color: oklch(0.48 0.02 250); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-pink       { background-color: color-mix(in oklch, oklch(0.72 0.19 350) 20%, var(--card)); border-color: oklch(0.72 0.19 350); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-teal       { background-color: color-mix(in oklch, oklch(0.70 0.14 190) 20%, var(--card)); border-color: oklch(0.70 0.14 190); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-cyan       { background-color: color-mix(in oklch, oklch(0.73 0.14 210) 20%, var(--card)); border-color: oklch(0.73 0.14 210); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-lime       { background-color: color-mix(in oklch, oklch(0.82 0.17 125) 20%, var(--card)); border-color: oklch(0.82 0.17 125); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-light_green { background-color: color-mix(in oklch, oklch(0.79 0.17 140) 20%, var(--card)); border-color: oklch(0.79 0.17 140); color: var(--card-foreground); }
-.theme-dark .task-board-category.color-amber      { background-color: color-mix(in oklch, oklch(0.83 0.16 85) 20%, var(--card));  border-color: oklch(0.83 0.16 85);  color: var(--card-foreground); }
+.theme-dark .task-board-category.color-green      { background-color: color-mix(in oklch, oklch(0.75 0.16 150) 28%, var(--card)); border-color: oklch(0.75 0.16 150); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-yellow     { background-color: color-mix(in oklch, oklch(0.86 0.15 95) 28%, var(--card));  border-color: oklch(0.86 0.15 95);  color: var(--card-foreground); }
+.theme-dark .task-board-category.color-blue       { background-color: color-mix(in oklch, oklch(0.68 0.15 250) 28%, var(--card)); border-color: oklch(0.68 0.15 250); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-purple     { background-color: color-mix(in oklch, oklch(0.65 0.18 300) 28%, var(--card)); border-color: oklch(0.65 0.18 300); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-red        { background-color: color-mix(in oklch, oklch(0.70 0.19 25) 28%, var(--card));  border-color: oklch(0.70 0.19 25);  color: var(--card-foreground); }
+.theme-dark .task-board-category.color-orange     { background-color: color-mix(in oklch, oklch(0.78 0.17 55) 28%, var(--card));  border-color: oklch(0.78 0.17 55);  color: var(--card-foreground); }
+.theme-dark .task-board-category.color-grey       { background-color: color-mix(in oklch, oklch(0.65 0.02 250) 28%, var(--card)); border-color: oklch(0.65 0.02 250); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-brown      { background-color: color-mix(in oklch, oklch(0.58 0.12 50) 28%, var(--card));  border-color: oklch(0.58 0.12 50);  color: var(--card-foreground); }
+.theme-dark .task-board-category.color-deep_orange { background-color: color-mix(in oklch, oklch(0.72 0.20 40) 28%, var(--card)); border-color: oklch(0.72 0.20 40); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-dark_grey  { background-color: color-mix(in oklch, oklch(0.48 0.02 250) 28%, var(--card)); border-color: oklch(0.48 0.02 250); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-pink       { background-color: color-mix(in oklch, oklch(0.72 0.19 350) 28%, var(--card)); border-color: oklch(0.72 0.19 350); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-teal       { background-color: color-mix(in oklch, oklch(0.70 0.14 190) 28%, var(--card)); border-color: oklch(0.70 0.14 190); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-cyan       { background-color: color-mix(in oklch, oklch(0.73 0.14 210) 28%, var(--card)); border-color: oklch(0.73 0.14 210); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-lime       { background-color: color-mix(in oklch, oklch(0.82 0.17 125) 28%, var(--card)); border-color: oklch(0.82 0.17 125); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-light_green { background-color: color-mix(in oklch, oklch(0.79 0.17 140) 28%, var(--card)); border-color: oklch(0.79 0.17 140); color: var(--card-foreground); }
+.theme-dark .task-board-category.color-amber      { background-color: color-mix(in oklch, oklch(0.83 0.16 85) 28%, var(--card));  border-color: oklch(0.83 0.16 85);  color: var(--card-foreground); }
 
-/* Dark theme board styling — merged base (task-02) + polish (task-04) */
+/* Dark theme board styling — borderless columns (feedback #2): no boxed outline
+   around each column; columns read via spacing + the quiet header label only. */
 .theme-dark .board-column-header {
-  background-color: var(--card);
-  border-color: var(--border);
+  background-color: transparent;
+  border: none;
   color: var(--card-foreground);
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border);
 }
 
 .theme-dark .board-task-list {
-  background-color: oklch(0.165 0.004 49.25); /* slightly darker than --background */
-  border-color: var(--border);
-  padding: 0.5rem;
+  background-color: transparent;
+  border: none;
+  padding: 0.5rem 0.25rem;
   gap: 0;
+}
+
+/* The board is a <table>; suppress the global td/th hairlines between columns
+   so the borderless look is clean. */
+.theme-dark .board th,
+.theme-dark .board td {
+  border: none;
+  background-color: transparent;
 }
 
 /* Dark theme form styling */
@@ -622,14 +639,14 @@
 
 /* Overdue date chip: accent destructive tint */
 .theme-dark .task-board-icons-row .task-date-overdue {
-  background-color: color-mix(in oklch, var(--destructive) 20%, var(--card));
+  background-color: color-mix(in oklch, var(--destructive) 28%, var(--card));
   border-color: var(--destructive);
   color: oklch(0.85 0.1 22);
 }
 
 /* Today date chip: accent violet tint */
 .theme-dark .task-board-icons-row .task-date-today {
-  background-color: color-mix(in oklch, var(--primary) 20%, var(--card));
+  background-color: color-mix(in oklch, var(--primary) 28%, var(--card));
   border-color: var(--primary);
   color: oklch(0.82 0.1 293);
 }

@@ -225,18 +225,26 @@
          * Modal enhancements
          */
         setupModalEnhancements() {
-            // Enhanced modal backdrop and animations
+            // Backdrop-click to dismiss. Kanboard opens medium/large/small modals
+            // with overlayClickDestroy=false (only js-modal-confirm closes on
+            // backdrop), so read-only modals like "My activity stream" otherwise
+            // trap the user — they must find the × or press Escape. Close them on
+            // backdrop click here, but NEVER dismiss a modal that contains a
+            // <form> (edit task, add comment, …) so in-progress input is not lost
+            // — matching Kanboard's own isFormDirty guard.
             document.addEventListener('click', (e) => {
-                if (e.target.id === 'modal-overlay') {
-                    const modal = document.querySelector('#modal-box');
-                    if (modal) {
-                        modal.style.animation = 'modalSlideOut 0.3s ease-out forwards';
-                        setTimeout(() => {
-                            if (modal.parentNode) {
-                                modal.parentNode.click();
-                            }
-                        }, 300);
-                    }
+                if (e.target.id !== 'modal-overlay') {
+                    return;
+                }
+                const box = document.getElementById('modal-box');
+                if (!box || box.querySelector('form')) {
+                    return; // no box, or a form modal — leave core behavior (× / Escape)
+                }
+                if (window.KB && KB.modal && typeof KB.modal.close === 'function') {
+                    KB.modal.close();
+                } else {
+                    const overlay = document.getElementById('modal-overlay');
+                    if (overlay) { overlay.remove(); }
                 }
             });
             

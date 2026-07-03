@@ -5,6 +5,19 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.0.1] — 2026-07-03
+
+### Fixed
+
+- **Dark-theme surfaces** — the confirm modal (and toolbar chrome) rendered on a
+  hard-coded white background, jarringly light on ShadcnTheme's dark UI. All
+  surface/text/border/danger colours now use ShadcnTheme design tokens
+  (`--card`, `--card-foreground`, `--border`, `--destructive`,
+  `--alert-*-error`, …) with the original light values kept as fallbacks, so the
+  plugin themes correctly under ShadcnTheme **and** still looks right stand-alone.
+
+---
+
 ## [1.0.0] — 2026-07-02
 
 ### Added

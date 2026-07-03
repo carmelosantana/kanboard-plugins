@@ -140,20 +140,24 @@
          */
         saveThemeToServer(theme) {
             // Check if we have the necessary functions available
-            if (typeof KB === 'undefined' || typeof KB.http === 'undefined') {
+            if (typeof KB === 'undefined' || typeof KB.http === 'undefined' || typeof KB.http.postJson !== 'function') {
                 return;
             }
-            
-            // Save to server via AJAX
-            KB.http.postJson('theme/set/' + theme, {})
-                .then(function(response) {
-                    if (!response.success) {
-                        console.warn('Failed to save theme preference:', response.error);
-                    }
-                })
-                .catch(function(error) {
-                    console.warn('Error saving theme preference:', error);
-                });
+
+            // Kanboard's KB.http.postJson() returns a request object (already
+            // executed) exposing .success()/.error() — NOT a Promise. Using
+            // .then() here throws "then is not a function" and surfaces as an
+            // uncaught error every time the theme is toggled.
+            try {
+                var request = KB.http.postJson('theme/set/' + theme, {});
+                if (request && typeof request.error === 'function') {
+                    request.error(function () {
+                        console.warn('Failed to save theme preference to server');
+                    });
+                }
+            } catch (e) {
+                console.warn('Error saving theme preference:', e);
+            }
         }
         
         /**
@@ -219,16 +223,24 @@
          * Wire the server-rendered theme toggle in the user dropdown
          * (Template/header/theme_toggle.php). The template's own inline
          * <script> is blocked by Kanboard's CSP, so activation lives here.
+         *
+         * Kanboard CLONES the dropdown <ul> when it opens, producing a second
+         * (visible) copy of #theme-toggle-dropdown that carries no event
+         * listeners — so binding directly to the element is dead on the copy
+         * the user actually clicks. Use a single document-level delegated
+         * listener instead, which catches clicks on any copy.
          */
         addToUserDropdown() {
-            const toggle = document.getElementById('theme-toggle-dropdown');
-            if (!toggle || toggle.dataset.wired) {
+            if (this._toggleDelegated) {
                 return;
             }
-            toggle.dataset.wired = 'true';
-            toggle.addEventListener('click', (e) => {
-                e.preventDefault();
-                this.cycleTheme();
+            this._toggleDelegated = true;
+            document.addEventListener('click', (e) => {
+                const trigger = e.target.closest('#theme-toggle-dropdown, .theme-toggle-link');
+                if (trigger) {
+                    e.preventDefault();
+                    this.cycleTheme();
+                }
             });
         }
         
@@ -249,7 +261,16 @@
             
             const text = themeLabels[this.currentTheme] || 'System';
 
-            themeTexts.forEach(el => el.textContent = text);
+            // The dropdown entry wraps the mode in "Theme: <span.current-theme-text>",
+            // so only replace the whole .theme-text when it has NO inner
+            // .current-theme-text (the standalone toggle button) — otherwise we
+            // would wipe the "Theme:" prefix and the item reads like a "System"
+            // nav link rather than a theme control.
+            themeTexts.forEach(el => {
+                if (!el.querySelector('.current-theme-text')) {
+                    el.textContent = text;
+                }
+            });
             currentThemeTexts.forEach(el => el.textContent = text);
 
             // Activate the icon matching the current mode. The individual SVGs

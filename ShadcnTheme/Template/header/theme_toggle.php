@@ -31,34 +31,33 @@
 .theme-toggle-link {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.375rem;
-    transition: all 150ms;
+    gap: 0.25em;
+    /* No extra padding — the icon must line up with the fa-fw icons of the
+       sibling dropdown items, which start at the <li> padding edge. */
+    padding: 0;
+    transition: color 150ms;
     text-decoration: none;
     color: inherit;
 }
 
 .theme-toggle-link:hover {
-    background-color: rgba(0, 0, 0, 0.05);
     text-decoration: none;
-}
-
-.theme-dark .theme-toggle-link:hover {
-    background-color: rgba(255, 255, 255, 0.1);
 }
 
 .theme-icon-container {
     position: relative;
-    width: 16px;
-    height: 16px;
+    /* Match Font Awesome fa-fw fixed width so the icon column aligns with the
+       other dropdown entries' icons. */
+    width: 1.28571em;
+    height: 1.28571em;
     flex-shrink: 0;
 }
 
 .theme-icon {
     position: absolute;
-    top: 0;
-    left: 0;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
     opacity: 0;
     transition: opacity 150ms;
 }

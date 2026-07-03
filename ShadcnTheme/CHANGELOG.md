@@ -14,6 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `default-src 'self'` CSP blocks, so no icon ever activated. Activation moved to the
   external, CSP-safe `theme-switcher.js`; the system icon is the default so an icon
   always paints. Removed a duplicate dropdown entry the switcher was injecting.
+- **Theme toggle is now clickable** — Kanboard clones the dropdown `<ul>` when it
+  opens, so the visible copy carried no click listener (direct binding was dead on
+  the clone). Switched to a document-level delegated handler that catches clicks on
+  any copy. The toggle label also keeps its "Theme:" prefix so it reads as a theme
+  control, not a "System" nav link, and its icon is aligned (fa-fw width) with the
+  sibling dropdown items.
+- **`saveThemeToServer` no longer throws** — it called `.then()` on
+  `KB.http.postJson()`, which returns a request object (`.success()/.error()`), not a
+  Promise; every theme toggle raised an uncaught "then is not a function". Now uses
+  the correct request API inside a try/catch.
+- **Backdrop click dismisses read-only modals** — the theme's modal handler hid the
+  modal box on backdrop click but never removed the overlay (it re-clicked an overlay
+  that has no core listener, since Kanboard opens medium/large/small modals with
+  `overlayClickDestroy=false`), leaving a stuck dimmed screen (e.g. "My activity
+  stream"). It now closes the modal properly — but never a modal containing a
+  `<form>`, matching Kanboard's data-loss guard.
+
+### Changed (design pass round 2)
+
+- **Board columns are borderless** — removed the boxed outline around each column
+  (and the global table hairlines on the board) for a cleaner surface.
+- **Task cards stand out more** — colour tint raised (20% → 28%), a soft elevation
+  shadow added, and task titles are brighter + semibold for readability.
 
 ### Changed
 
