@@ -62,6 +62,18 @@ class PluginTest extends Base
         );
     }
 
+    public function testIsAiEnabledReturnsTrueOnPhp84(): void
+    {
+        $plugin = new Plugin($this->container);
+        $plugin->initialize();
+
+        // On this PHP 8.4 host the gate must pass and isAiEnabled() must return true.
+        $this->assertTrue(
+            $plugin->isAiEnabled(),
+            'isAiEnabled() must return true on PHP 8.4 after initialize() — gate or vendor load failed'
+        );
+    }
+
     public function testProviderClassesResolve(): void
     {
         // Ensure vendor/autoload.php is loaded (plugin initialize() does this at runtime;

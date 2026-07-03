@@ -26,11 +26,6 @@
             }
         }
     ],
-    "autoload": {
-        "psr-4": {
-            "Kanboard\\Plugin\\SubtaskGenerator\\": "src/"
-        }
-    },
     "config": {
         "optimize-autoloader": true,
         "vendor-dir": "vendor"

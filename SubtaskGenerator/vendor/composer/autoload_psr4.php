@@ -9,6 +9,5 @@ return array(
     'Symfony\\Contracts\\Service\\' => array($vendorDir . '/symfony/service-contracts'),
     'Symfony\\Contracts\\HttpClient\\' => array($vendorDir . '/symfony/http-client-contracts'),
     'Symfony\\Component\\HttpClient\\' => array($vendorDir . '/symfony/http-client'),
-    'Kanboard\\Plugin\\SubtaskGenerator\\' => array($baseDir . '/src'),
     'CarmeloSantana\\PHPAgents\\' => array($vendorDir . '/carmelosantana/php-agents/src'),
 );

@@ -17,10 +17,6 @@ class ComposerStaticInitbcd7cad4c56ac5e41102a1c1bd9602de
             'Symfony\\Contracts\\HttpClient\\' => 29,
             'Symfony\\Component\\HttpClient\\' => 29,
         ),
-        'K' =>
-        array (
-            'Kanboard\\Plugin\\SubtaskGenerator\\' => 33,
-        ),
         'C' =>
         array (
             'CarmeloSantana\\PHPAgents\\' => 25,
@@ -39,10 +35,6 @@ class ComposerStaticInitbcd7cad4c56ac5e41102a1c1bd9602de
         'Symfony\\Component\\HttpClient\\' =>
         array (
             0 => __DIR__ . '/..' . '/symfony/http-client',
-        ),
-        'Kanboard\\Plugin\\SubtaskGenerator\\' =>
-        array (
-            0 => __DIR__ . '/../..' . '/src',
         ),
         'CarmeloSantana\\PHPAgents\\' =>
         array (
