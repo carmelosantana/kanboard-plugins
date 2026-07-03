@@ -173,4 +173,27 @@ class PluginManagerTest extends Base
         $this->assertSame('active', $map['Alpha']['status']);
         $this->assertSame('disabled', $map['Beta']['status']);
     }
+
+    /**
+     * Regression: enable/disable move() falls back to a recursive copy when
+     * rename() fails across filesystems (EXDEV — the norm in Docker, where
+     * plugins/ and data/ are separate mounts). Exercise copyTree() directly;
+     * it is the fallback that made cross-filesystem disable/enable work live.
+     */
+    public function testCopyTreeCopiesNestedTree()
+    {
+        $src = $this->root . '/ct-src';
+        $dst = $this->root . '/ct-dst';
+        mkdir($src . '/sub', 0777, true);
+        file_put_contents($src . '/Plugin.php', "<?php // top\n");
+        file_put_contents($src . '/sub/quote.php', 'hello harmozi');
+
+        $method = new \ReflectionMethod(PluginManager::class, 'copyTree');
+        $method->setAccessible(true);
+        $ok = $method->invoke($this->manager, $src, $dst);
+
+        $this->assertTrue($ok, 'copyTree should return true on success');
+        $this->assertFileExists($dst . '/Plugin.php');
+        $this->assertSame('hello harmozi', file_get_contents($dst . '/sub/quote.php'));
+    }
 }

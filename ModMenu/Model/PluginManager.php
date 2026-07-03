@@ -185,9 +185,45 @@ class PluginManager extends Base
         if (file_exists($dst)) {
             throw new ModMenuException(t('A copy of "%s" already exists at the destination.', $name));
         }
-        if (! @rename($src, $dst)) {
-            throw new ModMenuException(t('Could not move "%s". Its folder may be a bind mount or read-only.', $name));
+        if (@rename($src, $dst)) {
+            return;
         }
+
+        // rename() fails with EXDEV when $src and $dst are on different
+        // filesystems — the norm in Docker, where plugins/ (image layer) and
+        // data/ (a volume) are separate mounts. Fall back to a recursive copy
+        // followed by removing the source, so enable/disable works across the
+        // plugins/data filesystem boundary.
+        if ($this->copyTree($src, $dst)) {
+            if ($this->removeTree($src)) {
+                return;
+            }
+            throw new ModMenuException(t('Moved "%s" but could not remove the original. Its folder may be a bind mount or read-only.', $name));
+        }
+
+        $this->removeTree($dst); // clean up any partial copy
+        throw new ModMenuException(t('Could not move "%s". Its folder may be a bind mount or read-only.', $name));
+    }
+
+    private function copyTree(string $src, string $dst): bool
+    {
+        if (! is_dir($src)) { return false; }
+        if (! is_dir($dst) && ! @mkdir($dst, 0755, true)) { return false; }
+
+        $entries = scandir($src);
+        if ($entries === false) { return false; }
+
+        foreach ($entries as $f) {
+            if ($f === '.' || $f === '..') { continue; }
+            $s = $src . '/' . $f;
+            $d = $dst . '/' . $f;
+            if (is_dir($s)) {
+                if (! $this->copyTree($s, $d)) { return false; }
+            } elseif (! @copy($s, $d)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private function scanDir(string $dir, string $status): array

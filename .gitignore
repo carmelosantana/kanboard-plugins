@@ -7,3 +7,5 @@ testing/.env
 testing/kanboard-src/
 # Hello Harmozi demo plugin — has its own git repo, pushed separately (never mounted in dev suite)
 /HelloHarmozi/
+# local-only: symlink to npx playwright cache for E2E scripts
+/node_modules

@@ -77,7 +77,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $url = $this->request->getStringParam('url');
+        $url = $this->postValue('url');
         try {
             (new SourceRepository($this->container))->addSource($url);
             $this->flash->success(t('Source added.'));
@@ -91,7 +91,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        (new SourceRepository($this->container))->removeSource($this->request->getStringParam('url'));
+        (new SourceRepository($this->container))->removeSource($this->postValue('url'));
         $this->flash->success(t('Source removed.'));
         $this->response->redirect($this->helper->url->to('ModMenuController', 'sources', ['plugin' => 'ModMenu']));
     }
@@ -108,7 +108,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $this->runAndFlash(fn (PluginManager $m) => $m->enable($this->request->getStringParam('name')), t('Plugin enabled.'));
+        $this->runAndFlash(fn (PluginManager $m) => $m->enable($this->postValue('name')), t('Plugin enabled.'));
         $this->backToInstalled();
     }
 
@@ -116,7 +116,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $this->runAndFlash(fn (PluginManager $m) => $m->disable($this->request->getStringParam('name')), t('Plugin disabled.'));
+        $this->runAndFlash(fn (PluginManager $m) => $m->disable($this->postValue('name')), t('Plugin disabled.'));
         $this->backToInstalled();
     }
 
@@ -124,7 +124,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $this->runAndFlash(fn (PluginManager $m) => $m->uninstall($this->request->getStringParam('name')), t('Plugin removed.'));
+        $this->runAndFlash(fn (PluginManager $m) => $m->uninstall($this->postValue('name')), t('Plugin removed.'));
         $this->backToInstalled();
     }
 
@@ -132,11 +132,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        // PHP already returns the form value decoded; urldecode() here would
-        // double-decode and corrupt any literal '%' in the URL (e.g. '%20' in
-        // GitHub release-asset filenames). Read the param directly, as with
-        // 'name' and 'url' elsewhere in this controller.
-        $url = $this->request->getStringParam('archive_url');
+        $url = $this->postValue('archive_url');
         $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin installed.'));
         $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
     }
@@ -145,13 +141,28 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        // PHP already returns the form value decoded; urldecode() here would
-        // double-decode and corrupt any literal '%' in the URL (e.g. '%20' in
-        // GitHub release-asset filenames). Read the param directly, as with
-        // 'name' and 'url' elsewhere in this controller.
-        $url = $this->request->getStringParam('archive_url');
+        $url = $this->postValue('archive_url');
         $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin updated.'));
         $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
+    }
+
+    /**
+     * Read a value from the CSRF-validated POST body.
+     *
+     * ModMenu's mutating actions submit their values as POST form fields, so
+     * they must be read via getValues() — NOT getStringParam(), which reads
+     * ONLY the GET query string and returns '' for a posted field. (Kanboard's
+     * core PluginController uses GET install links, which is why it can use
+     * getStringParam; ModMenu uses POST forms for its mutations.) checkCSRFForm()
+     * has already run and leaves the token in place, so getValues() returns the
+     * filtered POST array. The value is already URL-decoded by PHP — applying
+     * urldecode() would double-decode a literal '%' (e.g. '%20' in a
+     * release-asset filename).
+     */
+    private function postValue(string $key): string
+    {
+        $values = $this->request->getValues();
+        return isset($values[$key]) ? (string) $values[$key] : '';
     }
 
     private function runAndFlash(callable $op, string $successMessage): void
