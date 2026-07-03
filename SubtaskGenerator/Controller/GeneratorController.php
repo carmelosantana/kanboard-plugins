@@ -195,11 +195,12 @@ class GeneratorController extends BaseController
 
             $this->response->json(['subtasks' => $subtasks]);
         } catch (\Throwable $e) {
-            // Log the real error (without the API key — the exception message
-            // from the HTTP client never contains the key itself, but guard
-            // against any accidental leak by omitting raw exception details from
-            // the JSON response that reaches the browser).
-            error_log('[SubtaskGenerator] Provider error: ' . $e->getMessage());
+            // Log the exception class and code only — never the message, which
+            // could contain a request URL, provider error body, or other details
+            // that may inadvertently surface sensitive context. The API key is
+            // never in the exception message itself, but this is defense-in-depth:
+            // no raw exception text ever reaches the log.
+            error_log('[SubtaskGenerator] Provider error: ' . get_class($e) . ' code ' . $e->getCode());
 
             $this->response->json([
                 'error' => t('The AI provider returned an error. Please check your settings and try again.'),

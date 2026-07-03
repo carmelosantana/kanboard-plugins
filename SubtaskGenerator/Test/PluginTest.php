@@ -18,7 +18,7 @@ class PluginTest extends Base
         $plugin = new Plugin($this->container);
 
         $this->assertSame('SubtaskGenerator', $plugin->getPluginName());
-        $this->assertSame('0.1.0', $plugin->getPluginVersion());
+        $this->assertSame('1.0.0', $plugin->getPluginVersion());
         $this->assertNotEmpty($plugin->getPluginDescription());
         $this->assertNotEmpty($plugin->getPluginAuthor());
         $this->assertNotEmpty($plugin->getPluginHomepage());

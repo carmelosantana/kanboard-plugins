@@ -168,6 +168,9 @@
         })
         .catch(function (err) {
             hide(loadingDiv);
+            // Also hide stale results from a prior successful generate so the
+            // user does not see outdated candidates after a network error.
+            hide(resultsDiv);
             errorDiv.textContent = <?= json_encode(t('Network error. Please try again.')) ?>;
             show(errorDiv);
         });

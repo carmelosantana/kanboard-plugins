@@ -154,7 +154,10 @@ class GeneratorTest extends Base
 
     // ── Plugin.php wiring checks ──────────────────────────────────────────────
 
-    /** Plugin.php must register the sidebar hook. */
+    /**
+     * STRUCTURE-CHECK: verifies Plugin.php contains the sidebar hook registration.
+     * Plugin.php must register the sidebar hook.
+     */
     public function testPluginWiresSidebarHook(): void
     {
         $file    = dirname(__DIR__) . '/Plugin.php';
@@ -167,7 +170,10 @@ class GeneratorTest extends Base
         );
     }
 
-    /** Plugin.php must register the show and generate routes. */
+    /**
+     * STRUCTURE-CHECK: verifies Plugin.php contains the show and generate route registrations.
+     * Plugin.php must register the show and generate routes.
+     */
     public function testPluginWiresGeneratorRoutes(): void
     {
         $file    = dirname(__DIR__) . '/Plugin.php';

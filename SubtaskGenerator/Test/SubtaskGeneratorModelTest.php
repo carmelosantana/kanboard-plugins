@@ -382,11 +382,12 @@ class SubtaskGeneratorModelTest extends Base
     }
 
     /**
-     * The controller test for non-admin rejection is covered by:
-     *  - testGenerateStubThrowsWhenAiDisabled in GeneratorTest (AI disabled → 403).
-     *  - hasProjectAccess check in the controller source.
-     *
-     * We verify the source file guards on both conditions.
+     * STRUCTURE-CHECK (not a behavior test): verifies that the required guard expressions
+     * are present in the controller source. The corresponding behavioral tests are:
+     *   - testGenerateStubThrowsWhenAiDisabled (GeneratorTest) → isAiEnabled() gate
+     *   - testGenerateControllerThrowsWhenAiDisabled             → AI-disabled gate
+     * hasProjectAccess behavior is tested via the real permission check path in
+     * testCreateThrowsForNonEditor (CreateSubtaskTest).
      */
     public function testControllerSourceGuardsOnPermissions(): void
     {
@@ -412,11 +413,13 @@ class SubtaskGeneratorModelTest extends Base
     // ── (e) Provider throwing → clean JSON error, not 500 ────────────────────
 
     /**
+     * STRUCTURE-CHECK (not a behavior test): verifies the catch block is present and
+     * returns a JSON error. The corresponding behavioral test is
+     * testModelGeneratePropagatesProviderException which confirms the model lets the
+     * exception propagate so the controller's catch block is reached.
+     *
      * When the provider throws, the controller must return a clean JSON error
      * without leaking the exception details to the client.
-     *
-     * We test this by verifying the controller source: the catch block calls
-     * $this->response->json(['error' => ...]) and does NOT re-throw.
      */
     public function testControllerSourceCatchesProviderExceptionAndReturnsJsonError(): void
     {
@@ -456,7 +459,8 @@ class SubtaskGeneratorModelTest extends Base
     }
 
     /**
-     * Normalisation does not swallow exceptions from generate() — the exception
+     * STRUCTURE-CHECK: verifies that the controller has a try/catch wrapping the model call.
+     * Normalization does not swallow exceptions from generate() — the exception
      * reaches the caller (controller) which turns it into a clean JSON error.
      * This confirms the separation of concerns: model throws, controller catches.
      */
@@ -482,10 +486,16 @@ class SubtaskGeneratorModelTest extends Base
      */
     public function testAnthropicProviderStructuredReturnsArrayOrResponse(): void
     {
+        // STRUCTURE-CHECK: reads the vendored AnthropicProvider source to verify the
+        // return-type contract. Guard with markTestSkipped() so a fresh checkout
+        // (before `composer install`) does not produce a fatal file_get_contents error.
+        $vendorFile = dirname(__DIR__) . '/vendor/carmelosantana/php-agents/src/Provider/AnthropicProvider.php';
+        if (! file_exists($vendorFile)) {
+            $this->markTestSkipped('vendor/carmelosantana/php-agents not present — run composer install inside SubtaskGenerator/');
+        }
+
         // Read the AnthropicProvider source from the vendored copy.
-        $src = file_get_contents(
-            dirname(__DIR__) . '/vendor/carmelosantana/php-agents/src/Provider/AnthropicProvider.php'
-        );
+        $src = file_get_contents($vendorFile);
 
         // The method must return $block['input'] ?? [] (PHP array) in the happy path.
         $this->assertStringContainsString(

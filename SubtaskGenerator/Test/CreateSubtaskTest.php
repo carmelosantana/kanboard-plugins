@@ -290,6 +290,44 @@ class CreateSubtaskTest extends Base
         $ctrl->create();
     }
 
+    /**
+     * create() must throw AccessForbiddenException when the user does NOT have
+     * edit access to the task's project (non-editor permission path).
+     *
+     * This is a BEHAVIORAL test (not a source-grep). We seed a real project and task,
+     * configure a non-admin userSession (isAdmin=false, isLogged=false), and let the
+     * real hasProjectAccess() check evaluate to false, causing the 403 guard to fire.
+     *
+     * RED evidence: removing the `hasProjectAccess` guard from create() causes this
+     * test to go RED — the controller proceeds past the gate, no exception is thrown,
+     * and PHPUnit reports "Failed asserting that exception is thrown."
+     */
+    public function testCreateThrowsForNonEditor(): void
+    {
+        // Stub a non-admin/non-logged-in user so hasProjectAccess returns false.
+        $this->stubNonAdmin();
+        [$projectId, $taskId] = $this->seedProjectAndTask();
+        $this->stubRequest($taskId, ['task_id' => $taskId, 'titles' => ['A title']]);
+
+        // Build the controller via anonymous class (AI=true, CSRF=ok) so the permission
+        // gate is the only thing that can throw.
+        $container = $this->container;
+        $ctrl = new class($container) extends GeneratorController {
+            protected function isAiEnabled(): bool { return true; }
+            protected function checkCSRFForm(): void { /* no-op: CSRF is not what we test */ }
+        };
+
+        // Replace response to avoid header() calls.
+        $this->container['response'] = $this
+            ->getMockBuilder(\Kanboard\Core\Http\Response::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['redirect', 'json', 'html'])
+            ->getMock();
+
+        $this->expectException(AccessForbiddenException::class);
+        $ctrl->create();
+    }
+
     // ── (d) Bad CSRF → 403 ───────────────────────────────────────────────────
 
     /**
@@ -307,29 +345,99 @@ class CreateSubtaskTest extends Base
         $ctrl->create();
     }
 
-    // ── (e) Partial-failure handling — source-level assertion ─────────────────
+    // ── (e) Partial-failure — behavioral test ────────────────────────────────
 
     /**
-     * The create() source must loop over all titles and NOT break/return early on
-     * a single failed create. A failed create increments $failed but does not abort
-     * the rest of the loop.
+     * Partial-failure: when subtaskModel->create() returns false on the FIRST call,
+     * the remaining subtasks MUST still be created. Failure is tolerated, not fatal.
+     *
+     * This is a BEHAVIORAL test (not a source-grep). We inject a mock subtaskModel
+     * whose create() returns false once then a valid id for the rest, invoke create(),
+     * and assert the DB contains the surviving subtasks and the flash success message
+     * references both the created and failed counts.
+     *
+     * RED evidence: removing the `$failed++` accumulator (replacing with `return;`)
+     * from create() causes this test to go RED — only the first subtask attempt is
+     * made and the assertion `assertCount(2, ...)` fails.
      */
-    public function testCreateSourceHandlesPartialFailures(): void
+    public function testCreatePartialFailureDoesNotAbortRemainingSubtasks(): void
     {
-        $src = file_get_contents(dirname(__DIR__) . '/Controller/GeneratorController.php');
+        $this->stubAdmin();
+        [$projectId, $taskId] = $this->seedProjectAndTask();
 
-        // Must have a loop over the titles.
-        $this->assertStringContainsString('foreach ($raw', $src,
-            'create() must iterate over all selected titles');
+        $titles = ['Failing title', 'Second title', 'Third title'];
+        $this->stubRequest($taskId, ['task_id' => $taskId, 'titles' => $titles]);
 
-        // Failed creates increment $failed, not break/return.
-        $this->assertStringContainsString('$failed++', $src,
-            'create() must count failures without aborting the loop');
+        // Mock subtaskModel so the first create() call returns false (simulating DB error),
+        // subsequent calls return auto-incrementing IDs.
+        $mockSubtaskModel = $this
+            ->getMockBuilder(\Kanboard\Model\SubtaskModel::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['create'])
+            ->getMock();
 
-        // Must NOT have a bare `return` inside the loop body (after any failed create).
-        // We verify this by checking that $failed++ is used instead of an early return.
-        $this->assertStringNotContainsString('return; // abort on first failure', $src,
-            'create() must not abort on first failure');
+        $callCount = 0;
+        $mockSubtaskModel
+            ->method('create')
+            ->willReturnCallback(function (array $data) use (&$callCount) {
+                $callCount++;
+                if ($callCount === 1) {
+                    return false; // first call fails
+                }
+                // Remaining calls write to the real DB so we can verify via SubtaskModel::getAll().
+                $realModel = new \Kanboard\Model\SubtaskModel($this->container);
+                return $realModel->create($data);
+            });
+
+        $this->container['subtaskModel'] = $mockSubtaskModel;
+
+        // Response mock (avoid header() calls in CLI).
+        $this->container['response'] = $this
+            ->getMockBuilder(\Kanboard\Core\Http\Response::class)
+            ->disableOriginalConstructor()
+            ->onlyMethods(['redirect', 'json', 'html'])
+            ->getMock();
+
+        // Flash mock to capture the success message.
+        // NOTE: must be set AFTER makeController() equivalent so it is not overwritten.
+        // We build the controller inline (no makeController()) to control the full
+        // container state.
+        $flashCalled = false;
+        $flashMsg    = '';
+        $flashMock = $this
+            ->getMockBuilder(\Kanboard\Core\Session\FlashMessage::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['success', 'failure'])
+            ->getMock();
+        $flashMock
+            ->method('success')
+            ->willReturnCallback(function (string $msg) use (&$flashCalled, &$flashMsg) {
+                $flashCalled = true;
+                $flashMsg    = $msg;
+            });
+        $this->container['flash'] = $flashMock;
+
+        // Build controller inline (AI=true, CSRF=ok) without makeController() so the
+        // container mocks above are not overwritten.
+        $container = $this->container;
+        $ctrl = new class($container) extends GeneratorController {
+            protected function isAiEnabled(): bool { return true; }
+            protected function checkCSRFForm(): void { /* no-op */ }
+        };
+
+        $ctrl->create();
+
+        // 2 of 3 must have been created (first failed, second + third succeeded).
+        $realSubtaskModel = new \Kanboard\Model\SubtaskModel($this->container);
+        $subtasks         = $realSubtaskModel->getAll($taskId);
+
+        $this->assertCount(2, $subtasks,
+            'create() must persist the remaining 2 subtasks after 1 failure');
+
+        // Flash must have been called with a success (created=2, failed=1).
+        $this->assertTrue($flashCalled, 'flash->success() must be called when at least one subtask is created');
+        $this->assertStringContainsString('2', $flashMsg, 'Flash message must mention the 2 created subtasks');
+        $this->assertStringContainsString('1', $flashMsg, 'Flash message must mention the 1 failed subtask');
     }
 
     // ── (f) Route registered ──────────────────────────────────────────────────
@@ -399,10 +507,18 @@ class CreateSubtaskTest extends Base
             'Modal must contain a results container');
     }
 
-    // ── Controller source guards ──────────────────────────────────────────────
+    // ── Controller source guards (STRUCTURE-CHECK, not behavior tests) ───────
+    // NOTE: These tests verify that the required guard expressions are PRESENT in
+    // the controller source. They are NOT behavioral tests — they do not exercise
+    // the runtime path. The corresponding behavioral tests are:
+    //   - testCreateThrowsWhenAiDisabled   → isAiEnabled() gate
+    //   - testCreateThrowsForNonEditor     → hasProjectAccess gate
+    //   - testCreateThrowsOnBadCsrf        → checkCSRFForm gate
+    //   - testCreatePartialFailureDoesNotAbortRemainingSubtasks → subtaskModel->create()
 
     /**
      * create() source must guard on isAiEnabled(), hasProjectAccess, and checkCSRFForm.
+     * STRUCTURE-CHECK: verifies guard expressions exist in source; see behavioral tests above.
      */
     public function testCreateSourceGuardsOnPermissions(): void
     {
