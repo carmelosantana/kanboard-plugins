@@ -59,25 +59,32 @@ class BulkDeleteController extends BaseController
                 ->eq('project_id', $id)
                 ->count();
 
-            // Count subtasks through tasks.
-            $subtaskCount = $this->db->table('subtasks')
-                ->in('task_id', $this->db->table('tasks')
-                    ->eq('project_id', $id)
-                    ->findAllByColumn('id'))
-                ->count();
-
-            // Count comments through tasks.
-            $commentCount = $this->db->table('comments')
-                ->in('task_id', $this->db->table('tasks')
-                    ->eq('project_id', $id)
-                    ->findAllByColumn('id'))
-                ->count();
-
-            // Count task files and sum their sizes.
+            // Resolve this project's task ids ONCE. Every task-scoped count below
+            // must guard on this being non-empty: PicoDb's ->in('col', []) drops
+            // the condition entirely (counting the whole table) rather than matching
+            // nothing, so a project with zero tasks would otherwise report the global
+            // subtask/comment/file totals instead of 0.
             $taskIds = $this->db->table('tasks')
                 ->eq('project_id', $id)
                 ->findAllByColumn('id');
 
+            // Count subtasks through tasks.
+            $subtaskCount = 0;
+            if (! empty($taskIds)) {
+                $subtaskCount = $this->db->table('subtasks')
+                    ->in('task_id', $taskIds)
+                    ->count();
+            }
+
+            // Count comments through tasks.
+            $commentCount = 0;
+            if (! empty($taskIds)) {
+                $commentCount = $this->db->table('comments')
+                    ->in('task_id', $taskIds)
+                    ->count();
+            }
+
+            // Count task files and sum their sizes.
             $taskFileCount = 0;
             $taskFileBytes = 0;
             if (! empty($taskIds)) {

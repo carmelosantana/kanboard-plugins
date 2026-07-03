@@ -55,7 +55,16 @@ KB.component('bpd-bulk-select', function (containerElement, options) {
         var anchors = row.querySelectorAll('a[href]');
         for (var i = 0; i < anchors.length; i++) {
             var href = anchors[i].getAttribute('href');
+            // Query-param form (no URL rewriting): ...?project_id=42
             var match = href.match(/[?&]project_id=(\d+)/);
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+            // Clean-URL form (URL rewriting enabled): /board/42, /list/42,
+            // /project/42, /project/42/activity, /analytics/tasks/42, etc.
+            // The project id is the numeric segment following one of the
+            // project-scoped route prefixes.
+            match = href.match(/\/(?:board|list|calendar|gantt|project|projects|analytics\/tasks)\/(\d+)(?:[\/?#]|$)/);
             if (match) {
                 return parseInt(match[1], 10);
             }
