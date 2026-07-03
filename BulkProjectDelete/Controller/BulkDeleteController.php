@@ -49,89 +49,18 @@ class BulkDeleteController extends BaseController
         ];
 
         foreach ($projectIds as $id) {
-            $project = $this->projectModel->getById($id);
-            if (! $project) {
+            $impact = $this->computeProjectImpact($id);
+            if ($impact === null) {
                 continue; // skip ids that no longer exist
             }
 
-            // Count tasks in this project.
-            $taskCount = $this->db->table('tasks')
-                ->eq('project_id', $id)
-                ->count();
+            $rows[] = $impact;
 
-            // Resolve this project's task ids ONCE. Every task-scoped count below
-            // must guard on this being non-empty: PicoDb's ->in('col', []) drops
-            // the condition entirely (counting the whole table) rather than matching
-            // nothing, so a project with zero tasks would otherwise report the global
-            // subtask/comment/file totals instead of 0.
-            $taskIds = $this->db->table('tasks')
-                ->eq('project_id', $id)
-                ->findAllByColumn('id');
-
-            // Count subtasks through tasks.
-            $subtaskCount = 0;
-            if (! empty($taskIds)) {
-                $subtaskCount = $this->db->table('subtasks')
-                    ->in('task_id', $taskIds)
-                    ->count();
-            }
-
-            // Count comments through tasks.
-            $commentCount = 0;
-            if (! empty($taskIds)) {
-                $commentCount = $this->db->table('comments')
-                    ->in('task_id', $taskIds)
-                    ->count();
-            }
-
-            // Count task files and sum their sizes.
-            $taskFileCount = 0;
-            $taskFileBytes = 0;
-            if (! empty($taskIds)) {
-                $taskFileCount = $this->db->table('task_has_files')
-                    ->in('task_id', $taskIds)
-                    ->count();
-
-                $taskFileSizeRow = $this->db->table('task_has_files')
-                    ->in('task_id', $taskIds)
-                    ->columns('SUM(size) AS total_bytes')
-                    ->findOne();
-                $taskFileBytes = isset($taskFileSizeRow['total_bytes'])
-                    ? (int) $taskFileSizeRow['total_bytes']
-                    : 0;
-            }
-
-            // Count project-level files and sum their sizes.
-            $projFileCount = $this->db->table('project_has_files')
-                ->eq('project_id', $id)
-                ->count();
-
-            $projFileSizeRow = $this->db->table('project_has_files')
-                ->eq('project_id', $id)
-                ->columns('SUM(size) AS total_bytes')
-                ->findOne();
-            $projFileBytes = isset($projFileSizeRow['total_bytes'])
-                ? (int) $projFileSizeRow['total_bytes']
-                : 0;
-
-            $fileCount = $taskFileCount + $projFileCount;
-            $fileBytes = $taskFileBytes + $projFileBytes;
-
-            $rows[] = [
-                'id'       => $id,
-                'name'     => $project['name'],
-                'tasks'    => $taskCount,
-                'subtasks' => $subtaskCount,
-                'comments' => $commentCount,
-                'files'    => $fileCount,
-                'bytes'    => $fileBytes,
-            ];
-
-            $totals['tasks']    += $taskCount;
-            $totals['subtasks'] += $subtaskCount;
-            $totals['comments'] += $commentCount;
-            $totals['files']    += $fileCount;
-            $totals['bytes']    += $fileBytes;
+            $totals['tasks']    += $impact['tasks'];
+            $totals['subtasks'] += $impact['subtasks'];
+            $totals['comments'] += $impact['comments'];
+            $totals['files']    += $impact['files'];
+            $totals['bytes']    += $impact['bytes'];
         }
 
         $this->response->html(
@@ -140,6 +69,105 @@ class BulkDeleteController extends BaseController
                 'totals'  => $totals,
             ])
         );
+    }
+
+    /**
+     * Compute the deletion impact for a single project.
+     *
+     * Returns an array with keys: id, name, tasks, subtasks, comments, files, bytes.
+     * Returns null when the project does not exist.
+     *
+     * Extracted so that unit tests can drive this logic directly without needing to
+     * stub the HTTP response layer. confirm() calls this for each selected project id.
+     *
+     * IMPORTANT — the empty-$taskIds guard:
+     * PicoDb's ->in('col', []) drops the WHERE condition entirely rather than
+     * matching nothing, so a project with zero tasks would otherwise count the
+     * global subtask/comment/file totals.  Every task-scoped query below is
+     * explicitly skipped when $taskIds is empty.
+     *
+     * @param int $id Project id.
+     * @return array|null Impact row, or null if the project does not exist.
+     */
+    public function computeProjectImpact(int $id): ?array
+    {
+        $project = $this->projectModel->getById($id);
+        if (! $project) {
+            return null;
+        }
+
+        // Count tasks in this project.
+        $taskCount = $this->db->table('tasks')
+            ->eq('project_id', $id)
+            ->count();
+
+        // Resolve this project's task ids ONCE. Every task-scoped count below
+        // must guard on this being non-empty: PicoDb's ->in('col', []) drops
+        // the condition entirely (counting the whole table) rather than matching
+        // nothing, so a project with zero tasks would otherwise report the global
+        // subtask/comment/file totals instead of 0.
+        $taskIds = $this->db->table('tasks')
+            ->eq('project_id', $id)
+            ->findAllByColumn('id');
+
+        // Count subtasks through tasks.
+        $subtaskCount = 0;
+        if (! empty($taskIds)) {
+            $subtaskCount = $this->db->table('subtasks')
+                ->in('task_id', $taskIds)
+                ->count();
+        }
+
+        // Count comments through tasks.
+        $commentCount = 0;
+        if (! empty($taskIds)) {
+            $commentCount = $this->db->table('comments')
+                ->in('task_id', $taskIds)
+                ->count();
+        }
+
+        // Count task files and sum their sizes.
+        $taskFileCount = 0;
+        $taskFileBytes = 0;
+        if (! empty($taskIds)) {
+            $taskFileCount = $this->db->table('task_has_files')
+                ->in('task_id', $taskIds)
+                ->count();
+
+            $taskFileSizeRow = $this->db->table('task_has_files')
+                ->in('task_id', $taskIds)
+                ->columns('SUM(size) AS total_bytes')
+                ->findOne();
+            $taskFileBytes = isset($taskFileSizeRow['total_bytes'])
+                ? (int) $taskFileSizeRow['total_bytes']
+                : 0;
+        }
+
+        // Count project-level files and sum their sizes.
+        $projFileCount = $this->db->table('project_has_files')
+            ->eq('project_id', $id)
+            ->count();
+
+        $projFileSizeRow = $this->db->table('project_has_files')
+            ->eq('project_id', $id)
+            ->columns('SUM(size) AS total_bytes')
+            ->findOne();
+        $projFileBytes = isset($projFileSizeRow['total_bytes'])
+            ? (int) $projFileSizeRow['total_bytes']
+            : 0;
+
+        $fileCount = $taskFileCount + $projFileCount;
+        $fileBytes = $taskFileBytes + $projFileBytes;
+
+        return [
+            'id'       => $id,
+            'name'     => $project['name'],
+            'tasks'    => $taskCount,
+            'subtasks' => $subtaskCount,
+            'comments' => $commentCount,
+            'files'    => $fileCount,
+            'bytes'    => $fileBytes,
+        ];
     }
 
     /**

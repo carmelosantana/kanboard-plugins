@@ -218,6 +218,92 @@ class ConfirmImpactTest extends Base
     }
 
     /**
+     * REGRESSION — empty-project impact must be zero even when sibling projects
+     * have populated data in the database.
+     *
+     * This test drives BulkDeleteController::computeProjectImpact() — the real
+     * controller method that confirm() delegates to — not the private helper
+     * reimplementations in this test class.  The critical scenario is:
+     *
+     *   1. A POPULATED project exists (tasks + subtasks + comments + a task file).
+     *      This ensures the DB tables have non-zero global totals.
+     *   2. A SECOND, EMPTY project has no tasks.
+     *
+     * Before the fix (commit d93a9ce), PicoDb's ->in('col', []) on an empty array
+     * dropped the WHERE clause entirely, so subtask/comment/file counts for the
+     * empty project would equal the global table totals rather than 0.
+     *
+     * RED evidence: remove the `if (! empty($taskIds))` guard for subtasks (or
+     * comments, or files) in computeProjectImpact() and this test fails.
+     */
+    public function testEmptyProjectImpactIsZeroEvenWhenOtherProjectsHaveData()
+    {
+        // ── Seed a POPULATED project ──────────────────────────────────────────
+        $populatedPid = $this->seedProject('Populated project');
+
+        $t1 = $this->seedTask($populatedPid, 'Task one');
+        $t2 = $this->seedTask($populatedPid, 'Task two');
+
+        $subtaskModel = new SubtaskModel($this->container);
+        $subtaskModel->create(['task_id' => $t1, 'title' => 'Sub 1a']);
+        $subtaskModel->create(['task_id' => $t1, 'title' => 'Sub 1b']);
+        $subtaskModel->create(['task_id' => $t2, 'title' => 'Sub 2a']);
+
+        $commentModel = new CommentModel($this->container);
+        $commentModel->create(['task_id' => $t1, 'user_id' => 1, 'comment' => 'Hello']);
+
+        // Task file inserted directly — TaskFileModel.create needs a real upload.
+        $this->container['db']->table('task_has_files')->insert([
+            'task_id'  => $t1,
+            'name'     => 'report.pdf',
+            'path'     => 'files/test/report.pdf',
+            'is_image' => 0,
+            'size'     => 4096,
+        ]);
+
+        // Verify the populated project actually has data (sanity check).
+        $this->assertGreaterThan(0, $this->container['db']->table('subtasks')->count(),
+            'subtasks table must be non-empty before exercising the empty-project path');
+        $this->assertGreaterThan(0, $this->container['db']->table('comments')->count(),
+            'comments table must be non-empty before exercising the empty-project path');
+        $this->assertGreaterThan(0, $this->container['db']->table('task_has_files')->count(),
+            'task_has_files table must be non-empty before exercising the empty-project path');
+
+        // ── Seed an EMPTY project (no tasks) ──────────────────────────────────
+        $emptyPid = $this->seedProject('Empty project');
+
+        // ── Stub userSession as admin so the controller does not throw ─────────
+        // Pimple freezes a service once it has been accessed; offsetUnset() thaws it
+        // so we can replace it with a stub without triggering FrozenServiceException.
+        unset($this->container['userSession']);
+        $this->container['userSession'] = $this
+            ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['isAdmin'])
+            ->getMock();
+
+        $this->container['userSession']
+            ->method('isAdmin')
+            ->willReturn(true);
+
+        // ── Invoke the REAL controller method ─────────────────────────────────
+        $controller = new \Kanboard\Plugin\BulkProjectDelete\Controller\BulkDeleteController(
+            $this->container
+        );
+
+        $impact = $controller->computeProjectImpact($emptyPid);
+
+        // ── Assert all counts are zero for the empty project ──────────────────
+        $this->assertNotNull($impact, 'computeProjectImpact() must return an array for an existing project');
+        $this->assertSame($emptyPid, $impact['id'],       'id mismatch');
+        $this->assertSame(0,         $impact['tasks'],    'tasks must be 0 for empty project');
+        $this->assertSame(0,         $impact['subtasks'], 'subtasks must be 0 for empty project (not global count)');
+        $this->assertSame(0,         $impact['comments'], 'comments must be 0 for empty project (not global count)');
+        $this->assertSame(0,         $impact['files'],    'files must be 0 for empty project (not global count)');
+        $this->assertSame(0,         $impact['bytes'],    'bytes must be 0 for empty project');
+    }
+
+    /**
      * confirm() throws AccessForbiddenException when the caller is not an admin.
      *
      * Stubs $this->container['userSession'] so that isAdmin() returns false,
@@ -228,6 +314,9 @@ class ConfirmImpactTest extends Base
     public function testConfirmThrowsForNonAdmin()
     {
         // Replace the real userSession with a stub whose isAdmin() returns false.
+        // offsetUnset() removes the frozen-service barrier so the assignment succeeds
+        // even if userSession was already resolved elsewhere in this test's setUp.
+        unset($this->container['userSession']);
         $this->container['userSession'] = $this
             ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
             ->setConstructorArgs([$this->container])
