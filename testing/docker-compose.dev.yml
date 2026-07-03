@@ -15,6 +15,7 @@ services:
       - ../ShadcnTheme:/var/www/app/plugins/ShadcnTheme
       - ../FeatureSync:/var/www/app/plugins/FeatureSync
       - ../SubtaskGenerator:/var/www/app/plugins/SubtaskGenerator
+      - ../ModMenu:/var/www/app/plugins/ModMenu
 
 volumes:
   kb-suite-data:
