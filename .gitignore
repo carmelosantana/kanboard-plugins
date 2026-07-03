@@ -5,3 +5,5 @@ testing/*.snapshot
 testing/.env
 # Kanboard source tree for host-side PHPUnit (large, not our code)
 testing/kanboard-src/
+# Hello Harmozi demo plugin — has its own git repo, pushed separately (never mounted in dev suite)
+/HelloHarmozi/
