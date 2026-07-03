@@ -138,7 +138,7 @@
 
 <?php /* ── Navigation ──────────────────────────────────────────────────────── */ ?>
 <div class="form-actions">
-    <a href="<?= $this->url->href('FeatureSyncController', 'index', array(), 'FeatureSync') ?>"
+    <a href="<?= $this->url->href('FeatureSyncController', 'index', ['plugin' => 'FeatureSync']) ?>"
        class="btn btn-blue">
         &larr; <?= t('Back to Feature Sync') ?>
     </a>

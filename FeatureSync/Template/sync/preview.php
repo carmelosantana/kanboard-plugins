@@ -22,8 +22,8 @@
 </div>
 
 <p class="form-help">
-    <?= t('This is a <strong>read-only preview</strong>. Nothing has been written to the database.', null, true) ?>
-    <?= t('Review the changes below, then click <strong>Confirm &amp; Apply</strong> to proceed (or <strong>Back</strong> to adjust your selection).', null, true) ?>
+    <?= t('This is a read-only preview. Nothing has been written to the database.') ?>
+    <?= t('Review the changes below, then click "Confirm & Apply" to proceed (or "Back" to adjust your selection).') ?>
 </p>
 
 <?php /* ── Summary banner ───────────────────────────────────────────── */ ?>
@@ -158,7 +158,7 @@
 
     <?php /* "Confirm & Apply" — POST to apply (task-05). Passes through all params. */ ?>
     <form method="post"
-          action="<?= $this->url->href('FeatureSyncController', 'apply', array(), 'FeatureSync') ?>"
+          action="<?= $this->url->href('FeatureSyncController', 'apply', ['plugin' => 'FeatureSync']) ?>"
           class="fs-apply-form"
           id="fs-apply-form">
         <?= $this->form->csrf() ?>
@@ -179,7 +179,7 @@
         </button>
     </form>
 
-    <a href="<?= $this->url->href('FeatureSyncController', 'index', array(), 'FeatureSync') ?>"
+    <a href="<?= $this->url->href('FeatureSyncController', 'index', ['plugin' => 'FeatureSync']) ?>"
        class="btn btn-grey fs-btn-back">
         &larr; <?= t('Back') ?>
     </a>

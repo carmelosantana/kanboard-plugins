@@ -6,7 +6,7 @@
     <?= t('Bulk-copy project features — automated actions, tags, and columns — from a source project to many target projects in one operation.') ?>
 </p>
 
-<form method="post" action="<?= $this->url->href('FeatureSyncController', 'preview', [], 'FeatureSync') ?>">
+<form method="post" action="<?= $this->url->href('FeatureSyncController', 'preview', ['plugin' => 'FeatureSync']) ?>">
     <?= $this->form->csrf() ?>
 
     <div class="listing">
