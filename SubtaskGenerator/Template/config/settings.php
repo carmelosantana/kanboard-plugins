@@ -131,7 +131,7 @@
         resultBox.style.display = 'none';
         resultBox.textContent = '';
 
-        var url = '<?= $this->url->href('SettingsController', 'testConnection', ['plugin' => 'SubtaskGenerator']) ?>';
+        var url = '<?= $this->url->href('SettingsController', 'testConnection', ['plugin' => 'SubtaskGenerator', 'csrf_token' => $this->token->getReusableCSRFToken()]) ?>';
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (r) { return r.json(); })

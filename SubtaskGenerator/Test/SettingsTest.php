@@ -6,6 +6,7 @@ use CarmeloSantana\PHPAgents\Provider\AnthropicProvider;
 use CarmeloSantana\PHPAgents\Provider\OpenAICompatibleProvider;
 use CarmeloSantana\PHPAgents\Provider\XAIProvider;
 use Kanboard\Core\Controller\AccessForbiddenException;
+use Kanboard\Plugin\SubtaskGenerator\Controller\SettingsController;
 use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
 use KanboardTests\units\Base;
 
@@ -15,13 +16,18 @@ use KanboardTests\units\Base;
  * Covers:
  *  - ProviderFactory::build() returns the correct class per provider.
  *  - API key resolution: config value > env fallback > empty string.
- *  - Blank key on save keeps the existing stored key.
+ *  - Blank key on save() keeps the existing stored key (real controller drive).
  *  - Default provider is Anthropic.
- *  - Non-admin access raises AccessForbiddenException.
- *  - save() with bad CSRF raises an exception.
+ *  - Non-admin access to show()/save() raises AccessForbiddenException.
  *
  * Network calls are never made — tests instantiate providers locally and check
  * class types only.
+ *
+ * IMPORTANT: SettingModel::save() calls $this->userSession->getId(), which
+ * resolves and FREEZES the Pimple 'userSession' service. Any test that needs
+ * to stub userSession must do so BEFORE calling configModel->save(). Tests that
+ * only need config data and don't stub userSession use seedSetting() which
+ * writes directly to the DB, bypassing SettingModel::save().
  */
 class SettingsTest extends Base
 {
@@ -35,6 +41,104 @@ class SettingsTest extends Base
         if (file_exists($autoload)) {
             require_once $autoload;
         }
+    }
+
+    // ── Stubs ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Stub userSession so isAdmin() returns false.
+     *
+     * Must be called BEFORE any configModel->save() / SettingModel::save()
+     * call in the same test, or the service will already be frozen.
+     */
+    private function stubNonAdmin(): void
+    {
+        $this->container['userSession'] = $this
+            ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['isAdmin'])
+            ->getMock();
+
+        $this->container['userSession']
+            ->method('isAdmin')
+            ->willReturn(false);
+    }
+
+    /**
+     * Stub userSession so isAdmin() returns true, AND stub token + request so
+     * CSRF validation always passes and getValues() returns $formValues.
+     *
+     * Must be called BEFORE any configModel->save() / SettingModel::save()
+     * call in the same test, or the service will already be frozen.
+     *
+     * @param array $formValues  The POST values save() should see (no csrf_token needed).
+     */
+    private function stubAdminWithForm(array $formValues): void
+    {
+        // Admin gate.
+        $this->container['userSession'] = $this
+            ->getMockBuilder(\Kanboard\Core\User\UserSession::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['isAdmin', 'getId'])
+            ->getMock();
+
+        $this->container['userSession']
+            ->method('isAdmin')
+            ->willReturn(true);
+
+        // getId() is called by SettingModel::save() to record who changed the
+        // setting — return a valid integer so it does not break DB constraints.
+        $this->container['userSession']
+            ->method('getId')
+            ->willReturn(1);
+
+        // CSRF: validateCSRFToken always returns true.
+        $this->container['token'] = $this
+            ->getMockBuilder(\Kanboard\Core\Security\Token::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['validateCSRFToken'])
+            ->getMock();
+
+        $this->container['token']
+            ->method('validateCSRFToken')
+            ->willReturn(true);
+
+        // Request: getValues() returns the desired form payload;
+        // getRawValue('csrf_token') returns a dummy string (checkCSRFForm uses it
+        // before passing to validateCSRFToken, which we already stubbed).
+        $this->container['request'] = $this
+            ->getMockBuilder(\Kanboard\Core\Http\Request::class)
+            ->setConstructorArgs([$this->container])
+            ->onlyMethods(['getValues', 'getRawValue'])
+            ->getMock();
+
+        $this->container['request']
+            ->method('getValues')
+            ->willReturn($formValues);
+
+        $this->container['request']
+            ->method('getRawValue')
+            ->willReturn('dummy-csrf-token');
+    }
+
+    /**
+     * Write a setting directly to the DB, bypassing SettingModel::save().
+     *
+     * Use this instead of configModel->save() when userSession is already
+     * stubbed (or when the test does not stub userSession at all), since
+     * SettingModel::save() calls userSession->getId() which would freeze the
+     * service before our mock is registered.
+     */
+    private function seedSetting(string $option, string $value): void
+    {
+        $db = $this->container['db'];
+        if ($db->table('settings')->eq('option', $option)->count() > 0) {
+            $db->table('settings')->eq('option', $option)->update(['value' => $value]);
+        } else {
+            $db->table('settings')->insert(['option' => $option, 'value' => $value]);
+        }
+        // Bust the in-memory config cache so configModel->get() re-reads from DB.
+        $this->container['memoryCache']->flush();
     }
 
     // ── ProviderFactory: correct class per provider ───────────────────────────
@@ -124,15 +228,13 @@ class SettingsTest extends Base
 
     public function testBuildFromConfigUsesConfigKeyWhenSet(): void
     {
-        // Use the in-memory configModel (accessed via the test container).
-        $configModel = $this->container['configModel'];
-        $configModel->save([
-            'sg_provider' => 'anthropic',
-            'sg_model'    => 'claude-sonnet-4-20250514',
-            'sg_api_key'  => 'config-stored-key',
-        ]);
+        // Seed via DB to avoid userSession freeze (configModel->save() would
+        // call userSession->getId() and freeze the service).
+        $this->seedSetting('sg_provider', 'anthropic');
+        $this->seedSetting('sg_model', 'claude-sonnet-4-20250514');
+        $this->seedSetting('sg_api_key', 'config-stored-key');
 
-        $provider = ProviderFactory::buildFromConfig($configModel);
+        $provider = ProviderFactory::buildFromConfig($this->container['configModel']);
         $this->assertInstanceOf(AnthropicProvider::class, $provider);
     }
 
@@ -140,113 +242,170 @@ class SettingsTest extends Base
     {
         putenv('OPENAI_API_KEY=env-openai-key');
 
-        $configModel = $this->container['configModel'];
-        $configModel->save([
-            'sg_provider' => 'openai',
-            'sg_model'    => 'gpt-4o',
-            'sg_api_key'  => '',
-        ]);
+        $this->seedSetting('sg_provider', 'openai');
+        $this->seedSetting('sg_model', 'gpt-4o');
+        $this->seedSetting('sg_api_key', '');
 
-        $provider = ProviderFactory::buildFromConfig($configModel);
+        $provider = ProviderFactory::buildFromConfig($this->container['configModel']);
         $this->assertInstanceOf(OpenAICompatibleProvider::class, $provider);
 
         putenv('OPENAI_API_KEY');
     }
 
-    // ── Blank key on save keeps the existing stored key ───────────────────────
+    // ── Blank key on save() keeps the existing stored key (real controller) ───
 
-    public function testBlankKeySubmissionPreservesStoredKey(): void
+    /**
+     * Drive SettingsController::save() with a blank sg_api_key.
+     *
+     * Stub order matters: stubAdminWithForm() must be called FIRST (before any
+     * configModel->save() that would freeze the userSession service).
+     *
+     * RED evidence: removing the `$isPlaceholder` guard from save() causes this
+     * test to fail because save() then overwrites the stored key with ''.
+     */
+    public function testSaveWithBlankKeyPreservesStoredKey(): void
     {
-        $configModel = $this->container['configModel'];
+        // STUB FIRST — before any SettingModel::save() resolves userSession.
+        $this->stubAdminWithForm([
+            'sg_provider'     => 'anthropic',
+            'sg_model'        => 'claude-sonnet-4-20250514',
+            'sg_api_key'      => '',
+            'sg_max_subtasks' => '8',
+        ]);
 
-        // Simulate: a key was previously stored.
-        $configModel->save(['sg_api_key' => 'previously-stored-key']);
+        // Seed via DB (bypasses SettingModel::save() / userSession freeze).
+        $this->seedSetting('sg_api_key', 'previously-stored-key');
 
-        // Simulate the save() logic: a blank submission must NOT overwrite the key.
-        $submittedKey = '';
-        $isPlaceholder = ($submittedKey === '' || $submittedKey === ProviderFactory::KEY_PLACEHOLDER);
+        $controller = new SettingsController($this->container);
 
-        if (! $isPlaceholder) {
-            $configModel->save(['sg_api_key' => $submittedKey]);
+        try {
+            $controller->save();
+        } catch (\Throwable $e) {
+            // save() calls $this->response->redirect(), which exits / throws in
+            // the test context — that is expected and does not indicate failure.
         }
 
-        $this->assertSame('previously-stored-key', $configModel->get('sg_api_key', ''));
+        // The stored key must remain unchanged.
+        $this->assertSame(
+            'previously-stored-key',
+            $this->container['configModel']->get('sg_api_key', ''),
+            'save() with blank key must NOT overwrite the existing stored key'
+        );
     }
 
-    public function testPlaceholderKeySubmissionPreservesStoredKey(): void
+    /**
+     * Drive SettingsController::save() with the placeholder sentinel.
+     *
+     * RED evidence: same as testSaveWithBlankKeyPreservesStoredKey — removing
+     * the guard causes this test to fail (placeholder would be persisted).
+     */
+    public function testSaveWithPlaceholderKeyPreservesStoredKey(): void
     {
-        $configModel = $this->container['configModel'];
-        $configModel->save(['sg_api_key' => 'another-stored-key']);
+        $this->stubAdminWithForm([
+            'sg_provider'     => 'anthropic',
+            'sg_model'        => 'claude-sonnet-4-20250514',
+            'sg_api_key'      => ProviderFactory::KEY_PLACEHOLDER,
+            'sg_max_subtasks' => '8',
+        ]);
 
-        $submittedKey = ProviderFactory::KEY_PLACEHOLDER;
-        $isPlaceholder = ($submittedKey === '' || $submittedKey === ProviderFactory::KEY_PLACEHOLDER);
+        $this->seedSetting('sg_api_key', 'another-stored-key');
 
-        if (! $isPlaceholder) {
-            $configModel->save(['sg_api_key' => $submittedKey]);
+        $controller = new SettingsController($this->container);
+
+        try {
+            $controller->save();
+        } catch (\Throwable $e) {
+            // Redirect is expected.
         }
 
-        $this->assertSame('another-stored-key', $configModel->get('sg_api_key', ''));
+        $this->assertSame(
+            'another-stored-key',
+            $this->container['configModel']->get('sg_api_key', ''),
+            'save() with placeholder key must NOT overwrite the existing stored key'
+        );
     }
 
-    public function testRealKeySubmissionUpdatesStoredKey(): void
+    /**
+     * Drive SettingsController::save() with a real new key.
+     *
+     * Verifies that a genuine key IS persisted (the guard should NOT block it).
+     */
+    public function testSaveWithRealKeyUpdatesStoredKey(): void
     {
-        $configModel = $this->container['configModel'];
-        $configModel->save(['sg_api_key' => 'old-key']);
+        $this->stubAdminWithForm([
+            'sg_provider'     => 'anthropic',
+            'sg_model'        => 'claude-sonnet-4-20250514',
+            'sg_api_key'      => 'brand-new-key',
+            'sg_max_subtasks' => '8',
+        ]);
 
-        $submittedKey = 'brand-new-key';
-        $isPlaceholder = ($submittedKey === '' || $submittedKey === ProviderFactory::KEY_PLACEHOLDER);
+        $this->seedSetting('sg_api_key', 'old-key');
 
-        if (! $isPlaceholder) {
-            $configModel->save(['sg_api_key' => $submittedKey]);
+        $controller = new SettingsController($this->container);
+
+        try {
+            $controller->save();
+        } catch (\Throwable $e) {
+            // Redirect is expected.
         }
 
-        $this->assertSame('brand-new-key', $configModel->get('sg_api_key', ''));
+        $this->assertSame(
+            'brand-new-key',
+            $this->container['configModel']->get('sg_api_key', ''),
+            'save() with a real key must update the stored key'
+        );
+    }
+
+    // ── Admin-only access gate (real non-admin tests) ─────────────────────────
+
+    /**
+     * show() must throw AccessForbiddenException for non-admin users.
+     *
+     * RED evidence: removing the `!$this->userSession->isAdmin()` guard from
+     * show() causes this test to go RED (no exception is thrown and PHPUnit
+     * reports "Failed asserting that exception … is thrown").
+     */
+    public function testShowThrowsForNonAdmin(): void
+    {
+        $this->stubNonAdmin();
+
+        $controller = new SettingsController($this->container);
+
+        $this->expectException(AccessForbiddenException::class);
+        $controller->show();
+    }
+
+    /**
+     * save() must throw AccessForbiddenException for non-admin users
+     * (admin gate runs before CSRF check).
+     *
+     * RED evidence: removing the admin gate from save() causes this test to go
+     * RED — the controller proceeds past the gate and either throws for CSRF or
+     * returns normally, but NOT AccessForbiddenException.
+     */
+    public function testSaveThrowsForNonAdmin(): void
+    {
+        $this->stubNonAdmin();
+
+        $controller = new SettingsController($this->container);
+
+        $this->expectException(AccessForbiddenException::class);
+        $controller->save();
     }
 
     // ── Config persists across reloads ────────────────────────────────────────
 
     public function testConfigPersistsProviderModelMaxSubtasks(): void
     {
-        $configModel = $this->container['configModel'];
-        $configModel->save([
-            'sg_provider'     => 'grok',
-            'sg_model'        => 'grok-3',
-            'sg_max_subtasks' => '5',
-        ]);
+        // Use seedSetting (DB direct) so we don't trigger the userSession freeze.
+        $this->seedSetting('sg_provider', 'grok');
+        $this->seedSetting('sg_model', 'grok-3');
+        $this->seedSetting('sg_max_subtasks', '5');
 
+        $configModel = $this->container['configModel'];
         $this->assertSame('grok', $configModel->get('sg_provider', ProviderFactory::DEFAULT_PROVIDER));
         $this->assertSame('grok-3', $configModel->get('sg_model', ''));
         $this->assertSame('5', $configModel->get('sg_max_subtasks', (string) ProviderFactory::DEFAULT_MAX_SUBTASKS));
-    }
-
-    // ── Admin-only access gate ────────────────────────────────────────────────
-
-    /**
-     * Verify that the AccessForbiddenException class exists and behaves as expected
-     * (we cannot instantiate the full HTTP controller stack in unit tests, but we
-     * can verify that the gate constant is what the controller will throw).
-     */
-    public function testAccessForbiddenExceptionExists(): void
-    {
-        $this->assertTrue(
-            class_exists(AccessForbiddenException::class),
-            'AccessForbiddenException must be resolvable for the admin gate to work'
-        );
-    }
-
-    /**
-     * Sanity: the controller file exists and declares the expected class.
-     */
-    public function testSettingsControllerClassExists(): void
-    {
-        $controllerFile = dirname(__DIR__) . '/Controller/SettingsController.php';
-        $this->assertFileExists($controllerFile);
-        require_once $controllerFile;
-
-        $this->assertTrue(
-            class_exists(\Kanboard\Plugin\SubtaskGenerator\Controller\SettingsController::class),
-            'SettingsController class must be declared'
-        );
     }
 
     // ── CSRF: verify the form helper call exists in the template ─────────────
@@ -259,6 +418,27 @@ class SettingsTest extends Base
         $content = file_get_contents($templateFile);
         $this->assertStringContainsString('$this->form->csrf()', $content,
             'Settings template must include $this->form->csrf() to protect the form');
+    }
+
+    /**
+     * The test-connection URL in the template must include a CSRF token so the
+     * controller's checkReusableCSRFParam() gate is satisfied.
+     */
+    public function testSettingsTemplatePassesCsrfTokenToTestConnection(): void
+    {
+        $templateFile = dirname(__DIR__) . '/Template/config/settings.php';
+        $content = file_get_contents($templateFile);
+
+        $this->assertStringContainsString(
+            'csrf_token',
+            $content,
+            'The test-connection URL must include a csrf_token parameter'
+        );
+        $this->assertStringContainsString(
+            'getReusableCSRFToken',
+            $content,
+            'The template must embed $this->token->getReusableCSRFToken() in the test-connection URL'
+        );
     }
 
     // ── API key is NOT echoed in the template ─────────────────────────────────
@@ -282,6 +462,29 @@ class SettingsTest extends Base
             '/name="sg_api_key"[^>]*value=""/',
             $content,
             'The sg_api_key input must render with value="" (never the stored key)'
+        );
+    }
+
+    /**
+     * Confirm testConnection returns ok/error only — not the raw LLM $result.
+     *
+     * We read the controller source to verify the JSON payload does not include
+     * a 'result' key (which would expose raw LLM output).
+     */
+    public function testConnectionResponseDoesNotIncludeRawResult(): void
+    {
+        $controllerFile = dirname(__DIR__) . '/Controller/SettingsController.php';
+        $content = file_get_contents($controllerFile);
+
+        $this->assertStringNotContainsString(
+            "'result' => \$result",
+            $content,
+            'testConnection() must not include the raw LLM $result in the JSON response'
+        );
+        $this->assertStringNotContainsString(
+            '"result" => $result',
+            $content,
+            'testConnection() must not include the raw LLM $result in the JSON response'
         );
     }
 

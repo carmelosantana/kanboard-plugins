@@ -103,14 +103,22 @@ class SettingsController extends BaseController
      * Test connection: instantiates the configured provider and makes a minimal
      * structured() call to verify the API key and connectivity.
      *
-     * Returns a JSON response — never leaks the key in the response.
+     * Requires an admin session AND a valid reusable CSRF token passed as the
+     * `csrf_token` query-string parameter (see Template/config/settings.php).
+     *
+     * Returns a JSON response — never leaks the key or the raw LLM output.
      */
     public function testConnection(): void
     {
+        // Admin gate FIRST.
         if (! $this->userSession->isAdmin()) {
             $this->response->json(['ok' => false, 'error' => t('Access denied.')]);
             return;
         }
+
+        // CSRF gate: rejects any request that does not carry a valid token,
+        // preventing an attacker from luring an admin into burning API quota.
+        $this->checkReusableCSRFParam();
 
         if (! $this->isAiEnabled()) {
             $this->response->json(['ok' => false, 'error' => t('AI features require PHP >= 8.4.')]);
@@ -137,8 +145,9 @@ class SettingsController extends BaseController
                 new \CarmeloSantana\PHPAgents\Message\UserMessage('Reply with ok=true to confirm the connection works.'),
             ];
 
-            $result = $provider->structured($messages, $schema);
-            $this->response->json(['ok' => true, 'result' => $result]);
+            $provider->structured($messages, $schema);
+            // Return ok/error only — never echo the raw LLM output or the key.
+            $this->response->json(['ok' => true]);
         } catch (\Throwable $e) {
             // Never log or return the key; only the exception message (which does not contain it).
             $this->response->json(['ok' => false, 'error' => $e->getMessage()]);

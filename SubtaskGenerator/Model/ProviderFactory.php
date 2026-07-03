@@ -82,20 +82,43 @@ class ProviderFactory extends Base
     {
         $provider = $configModel->get('sg_provider', self::DEFAULT_PROVIDER);
         $model    = $configModel->get('sg_model', self::defaultModelFor($provider));
+        // Resolve once here (config value → env fallback → '').
+        // Pass the resolved key directly to build() so it is not resolved again.
         $apiKey   = self::resolveApiKey($provider, $configModel->get('sg_api_key', ''));
 
-        return self::build($provider, $model, $apiKey);
+        return match ($provider) {
+            self::PROVIDER_ANTHROPIC => new AnthropicProvider(
+                model: $model,
+                apiKey: $apiKey,
+            ),
+            self::PROVIDER_OPENAI => new OpenAICompatibleProvider(
+                model: $model,
+                baseUrl: 'https://api.openai.com/v1',
+                apiKey: $apiKey,
+            ),
+            self::PROVIDER_GROK => new XAIProvider(
+                model: $model,
+                apiKey: $apiKey,
+            ),
+            default => throw new \RuntimeException(
+                sprintf('[SubtaskGenerator] Unknown provider "%s". Supported: %s', $provider, implode(', ', array_keys(self::PROVIDERS)))
+            ),
+        };
     }
 
     /**
      * Build a provider instance directly from explicit values.
      *
-     * Falls back to the environment variable for the key when $apiKey is empty.
+     * If $apiKey is empty, falls back to the environment variable for the
+     * provider. Call buildFromConfig() when you need config-then-env resolution;
+     * call build() directly when you already have a resolved key (or want env
+     * fallback only — i.e. no config model involved).
      *
      * @throws \RuntimeException when an unknown provider is requested.
      */
     public static function build(string $provider, string $model, string $apiKey = ''): AnthropicProvider|OpenAICompatibleProvider|XAIProvider
     {
+        // Resolve env fallback only here (single resolution path).
         $apiKey = self::resolveApiKey($provider, $apiKey);
 
         return match ($provider) {
