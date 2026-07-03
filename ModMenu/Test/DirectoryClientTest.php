@@ -62,6 +62,14 @@ class DirectoryClientTest extends Base
         $this->assertSame('disabled', $out[0]['status']);
     }
 
+    public function testAnnotateDisabledWinsOverUpdate()
+    {
+        $plugins = [['name' => 'Foo', 'version' => '2.0.0']]; // newer in the listing
+        $map = ['Foo' => ['version' => '1.0.0', 'status' => 'disabled']];
+        $out = $this->client->annotate($plugins, 'https://x.com/plugins.json', $map);
+        $this->assertSame('disabled', $out[0]['status']); // disabled wins, not 'update'
+    }
+
     public function testAnnotateResolvesScreenshots()
     {
         $plugins = [['name' => 'Foo', 'version' => '1.0.0', 'screenshots' => ['assets/s1.png']]];
