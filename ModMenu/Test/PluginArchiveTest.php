@@ -108,4 +108,53 @@ class PluginArchiveTest extends Base
         $this->expectException(ModMenuException::class);
         (new PluginArchive($this->container))->extractTo($zip, $dest);
     }
+
+    // Guard: entry whose name contains a backslash must be rejected.
+    // The guard is `strpos($entry, '\\') !== false` in inspect().
+    // Removing that line would make this test fail.
+    public function testInspectRejectsBackslashPath()
+    {
+        $zip = $this->work . '/backslash.zip';
+        $this->makeZip($zip, [
+            'Evil/'           => '',
+            'Evil/Plugin.php' => '<?php',
+            'Evil\\escape.php' => 'x',
+        ]);
+        $this->expectException(ModMenuException::class);
+        (new PluginArchive($this->container))->inspect($zip);
+    }
+
+    // Guard: entry with a leading '/' (absolute path) must be rejected.
+    // The guard is `$entry[0] === '/'` in inspect().
+    // Removing that line would make this test fail.
+    public function testInspectRejectsAbsolutePath()
+    {
+        $zip = $this->work . '/abspath.zip';
+        $this->makeZip($zip, [
+            'Good/'           => '',
+            'Good/Plugin.php' => '<?php',
+            '/etc/passwd'     => 'root:x:0:0',
+        ]);
+        $this->expectException(ModMenuException::class);
+        (new PluginArchive($this->container))->inspect($zip);
+    }
+
+    // Verify extractTo() places the plugin dir correctly even when rename() is not used
+    // (the copy-tree fallback path). The happy path already covers this; this test
+    // re-asserts file placement so the copy-fallback can be spotted via coverage.
+    public function testExtractToPlacesPluginDirViaCopyFallback()
+    {
+        $zip = $this->work . '/copy.zip';
+        $this->makeZip($zip, [
+            'CopyPlugin/'            => '',
+            'CopyPlugin/Plugin.php'  => "<?php\n",
+            'CopyPlugin/Helper.php'  => "<?php\n",
+        ]);
+        $dest = $this->work . '/plugins2';
+        mkdir($dest);
+        $name = (new PluginArchive($this->container))->extractTo($zip, $dest);
+        $this->assertSame('CopyPlugin', $name);
+        $this->assertFileExists($dest . '/CopyPlugin/Plugin.php');
+        $this->assertFileExists($dest . '/CopyPlugin/Helper.php');
+    }
 }

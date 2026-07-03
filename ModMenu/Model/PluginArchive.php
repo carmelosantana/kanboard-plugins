@@ -108,8 +108,17 @@ class PluginArchive extends Base
             throw new ModMenuException(t('Unable to extract plugin archive.'));
         }
 
-        if (! @rename($temp . '/' . $name, $finalPath)) {
+        $extracted = $temp . '/' . $name;
+        if (@rename($extracted, $finalPath)) {
             $this->removeTree($temp);
+            return $name;
+        }
+
+        // Cross-filesystem fallback: rename() fails with EXDEV when temp dir and
+        // destination are on different filesystems (e.g. /tmp on tmpfs vs plugins on a volume).
+        if (! $this->copyTree($extracted, $finalPath)) {
+            $this->removeTree($temp);
+            if (is_dir($finalPath)) { $this->removeTree($finalPath); }
             throw new ModMenuException(t('Unable to move the extracted plugin into place.'));
         }
 
@@ -117,10 +126,31 @@ class PluginArchive extends Base
         return $name;
     }
 
+    /** Recursively copy a directory tree; returns true on success. */
+    private function copyTree(string $src, string $dst): bool
+    {
+        if (! @mkdir($dst, 0755, true)) { return false; }
+        $entries = @scandir($src);
+        if ($entries === false) { return false; }
+        foreach ($entries as $f) {
+            if ($f === '.' || $f === '..') { continue; }
+            $s = $src . '/' . $f;
+            $d = $dst . '/' . $f;
+            if (is_dir($s)) {
+                if (! $this->copyTree($s, $d)) { return false; }
+            } else {
+                if (! @copy($s, $d)) { return false; }
+            }
+        }
+        return true;
+    }
+
     private function removeTree(string $dir): void
     {
         if (! is_dir($dir)) { return; }
-        foreach (scandir($dir) as $f) {
+        $entries = scandir($dir);
+        if ($entries === false) { @rmdir($dir); return; }
+        foreach ($entries as $f) {
             if ($f === '.' || $f === '..') { continue; }
             $p = $dir . '/' . $f;
             is_dir($p) ? $this->removeTree($p) : @unlink($p);
