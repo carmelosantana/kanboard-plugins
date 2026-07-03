@@ -31,12 +31,30 @@ class Plugin extends Base
                 '[SubtaskGenerator] PHP ' . PHP_VERSION . ' detected — php-agents requires PHP >=8.4. ' .
                 'AI features are disabled. Upgrade the host PHP to enable them.'
             );
-            // Future tasks will show a banner on the settings page using this flag.
-            // We do NOT throw / fatal here — the plugin loads cleanly.
-            return;
+            // Settings page still loads (shows a disabled notice) — fall through to route wiring.
         }
 
-        // AI features are enabled; later tasks wire routes, hooks, actions here.
+        // ── Sidebar link in Settings nav ─────────────────────────────────────
+        $this->hook->on('template:config:sidebar', [
+            'template' => 'SubtaskGenerator:config/sidebar',
+        ]);
+
+        // ── Admin settings routes ─────────────────────────────────────────────
+        $this->route->addRoute(
+            'subtask-generator/settings',
+            'SubtaskGenerator:SettingsController',
+            'show'
+        );
+        $this->route->addRoute(
+            'subtask-generator/save',
+            'SubtaskGenerator:SettingsController',
+            'save'
+        );
+        $this->route->addRoute(
+            'subtask-generator/test',
+            'SubtaskGenerator:SettingsController',
+            'testConnection'
+        );
     }
 
     /**
