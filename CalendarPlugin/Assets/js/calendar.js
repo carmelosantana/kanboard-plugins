@@ -83,6 +83,33 @@
             });
     }
 
+    function initials(name) {
+        var parts = String(name).trim().split(/\s+/);
+        var s = (parts[0] ? parts[0][0] : '') + (parts.length > 1 ? parts[parts.length - 1][0] : '');
+        return s.toUpperCase();
+    }
+    function closePopover() { var ex = document.getElementById('cal-popover'); if (ex) { ex.parentNode.removeChild(ex); } }
+    function showPopover(info) {
+        closePopover();
+        var ep = info.event.extendedProps;
+        var pop = document.createElement('div');
+        pop.id = 'cal-popover';
+        pop.className = 'cal-popover';
+        function row(label, value) { if (!value) { return; } var d = document.createElement('div'); d.className = 'cal-pop-row'; var b = document.createElement('strong'); b.textContent = label + ': '; d.appendChild(b); d.appendChild(document.createTextNode(value)); pop.appendChild(d); }
+        var h = document.createElement('div'); h.className = 'cal-pop-title'; h.textContent = info.event.title; pop.appendChild(h);
+        row('Project', ep.project); row('Column', ep.column); row('Assignee', ep.assignee);
+        var a = document.createElement('a'); a.href = info.event.url; a.className = 'cal-pop-link'; a.textContent = 'Open task'; pop.appendChild(a);
+        document.body.appendChild(pop);
+        var r = info.el.getBoundingClientRect();
+        pop.style.top = (window.scrollY + r.bottom + 4) + 'px';
+        pop.style.left = (window.scrollX + r.left) + 'px';
+    }
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest) { return; }
+        if (!e.target.closest('#cal-popover') && !e.target.closest('.fc-event')) { closePopover(); }
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closePopover(); } });
+
     function init() {
         var root = document.getElementById('cal-root');
         var host = document.getElementById('calendar');
@@ -98,6 +125,37 @@
             headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
             editable: true,
             droppable: true,
+            eventClassNames: function (arg) { return arg.event.extendedProps.overdue ? ['cal-ev-overdue'] : []; },
+            eventContent: function (arg) {
+                var ep = arg.event.extendedProps;
+                var wrap = document.createElement('div');
+                wrap.className = 'cal-ev';
+                if (ep.assignee) {
+                    var av = document.createElement('span');
+                    av.className = 'cal-ev-avatar';
+                    av.textContent = initials(ep.assignee);
+                    av.title = ep.assignee;
+                    wrap.appendChild(av);
+                }
+                var title = document.createElement('span');
+                title.className = 'cal-ev-title';
+                title.textContent = arg.event.title;
+                wrap.appendChild(title);
+                if (ep.project) {
+                    var proj = document.createElement('span');
+                    proj.className = 'cal-ev-badge cal-ev-proj';
+                    proj.textContent = ep.project;
+                    wrap.appendChild(proj);
+                }
+                if (ep.estimate > 0) {
+                    var est = document.createElement('span');
+                    est.className = 'cal-ev-badge';
+                    est.textContent = '~' + ep.estimate + 'h';
+                    wrap.appendChild(est);
+                }
+                return { domNodes: [wrap] };
+            },
+            eventClick: function (info) { info.jsEvent.preventDefault(); showPopover(info); },
             eventReceive: function (info) {
                 var el = document.querySelector('.cal-unscheduled-item[data-task-id="' + info.event.id + '"]');
                 postDate(root, info.event.id, info.event.startStr, function (ok) {
