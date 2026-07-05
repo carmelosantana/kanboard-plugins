@@ -15,7 +15,7 @@ class CalendarQueryModel extends Base
         // App administrators can see all active projects (disabled projects excluded).
         if ($this->userModel->isAdmin($userId)) {
             return array_map('intval', $this->db->table(\Kanboard\Model\ProjectModel::TABLE)
-                ->eq(\Kanboard\Model\ProjectModel::TABLE.'.is_active', \Kanboard\Model\ProjectModel::ACTIVE)
+                ->eq('is_active', \Kanboard\Model\ProjectModel::ACTIVE)
                 ->findAllByColumn('id'));
         }
 

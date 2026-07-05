@@ -2,7 +2,23 @@
 
 All notable changes to the CalendarPlugin will be documented in this file.
 
-## [1.0.0] - 2026-07-04
+## [Unreleased]
+
+### Changed
+- Calendar assets (FullCalendar ~282KB + calendar.js/css) now load **only on
+  calendar pages**, no longer on every Kanboard page (M1). Asset-hook
+  registration is gated on the current route in `Plugin::initialize()`.
+
+### Fixed
+- Checkbox filter labels ("Hide completed", "Show unscheduled") now lay out
+  horizontally — the modifier class was out-specified by the base label rule (M11).
+- Removed the duplicate "today" button from the calendar's right toolbar (M13).
+- Unscheduled sidebar now refreshes when the project filter changes (M10).
+
+### Internal
+- `FullCalendar.Draggable` is registered once per sidebar instead of on every
+  refresh (M9); guard against a missing events-feed URL (M5); simplified the
+  admin project-scope query to an unqualified column (M4).
 
 ### Added
 - Global calendar page (`/calendar`) showing tasks across all accessible projects

@@ -27,12 +27,12 @@
     </select>
     <?php endif ?>
 
-    <label for="cal-filter-hide-completed">
+    <label class="cal-filterbar__checkbox" for="cal-filter-hide-completed">
         <input type="checkbox" id="cal-filter-hide-completed" name="hide_completed" data-cal-filter="hide_completed" value="1">
         <?= t('Hide completed') ?>
     </label>
 
-    <label class="cal-filter-check"><input type="checkbox" id="cal-toggle-unscheduled" checked> <?= t('Show unscheduled') ?></label>
+    <label class="cal-filterbar__checkbox"><input type="checkbox" id="cal-toggle-unscheduled" checked> <?= t('Show unscheduled') ?></label>
 </div>
 
 <div id="cal-root"

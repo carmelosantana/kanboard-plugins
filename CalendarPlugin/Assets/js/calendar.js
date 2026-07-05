@@ -72,10 +72,29 @@
           .catch(function () { done(false); });
     }
 
+    // Register the external-event Draggable ONCE per list container. FullCalendar
+    // delegates from the container, so items added on later refreshes drag too;
+    // re-registering on every refresh would stack duplicate instances.
+    function ensureDraggable(list) {
+        if (list.dataset.calDraggable) { return; }
+        list.dataset.calDraggable = '1';
+        new FullCalendar.Draggable(list, {
+            itemSelector: '.cal-unscheduled-item',
+            eventData: function (el) { return { id: el.getAttribute('data-task-id'), title: el.textContent, allDay: true }; }
+        });
+    }
+
+    // buildFilterQuery returns '' or '&a=b&c=d'. Append it to a base URL that
+    // may or may not already carry a query string (clean-URL vs query-string routing).
+    function appendQuery(base, frag) {
+        if (!frag) { return base; }
+        return base + (base.indexOf('?') >= 0 ? frag : '?' + frag.slice(1));
+    }
+
     function loadUnscheduled(root) {
         var list = document.getElementById('cal-unscheduled-list');
         if (!list) { return; }
-        fetch(root.getAttribute('data-unscheduled-url'), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        fetch(appendQuery(root.getAttribute('data-unscheduled-url'), buildFilterQuery(root)), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
             .then(function (r) { return r.json(); })
             .then(function (items) {
                 list.textContent = '';
@@ -87,10 +106,7 @@
                     el.textContent = it.title;
                     list.appendChild(el);
                 });
-                new FullCalendar.Draggable(list, {
-                    itemSelector: '.cal-unscheduled-item',
-                    eventData: function (el) { return { id: el.getAttribute('data-task-id'), title: el.textContent, allDay: true }; }
-                });
+                ensureDraggable(list);
             });
     }
 
@@ -129,11 +145,12 @@
         host.dataset.calReady = '1';
 
         var eventsUrl = root.getAttribute('data-events-url');
+        if (!eventsUrl) { return; } // no feed URL → nothing to render (avoids null.indexOf below)
         var calendar = new FullCalendar.Calendar(host, {
             initialView: 'dayGridMonth',
             height: 'auto',
             firstDay: 1,
-            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth today' },
+            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' },
             editable: true,
             droppable: true,
             eventClassNames: function (arg) { return arg.event.extendedProps.overdue ? ['cal-ev-overdue'] : []; },
@@ -200,6 +217,7 @@
                 if (layout) { layout.classList.toggle('cal-hide-unscheduled', !el.checked); }
             } else if (el && el.closest && el.closest('#cal-filterbar')) {
                 calendar.refetchEvents();
+                loadUnscheduled(root); // keep the sidebar in sync with the project filter
             }
         });
     }
