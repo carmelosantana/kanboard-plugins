@@ -61,6 +61,28 @@
           .catch(function () { done(false); });
     }
 
+    function loadUnscheduled(root) {
+        var list = document.getElementById('cal-unscheduled-list');
+        if (!list) { return; }
+        fetch(root.getAttribute('data-unscheduled-url'), { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) { return r.json(); })
+            .then(function (items) {
+                list.textContent = '';
+                items.forEach(function (it) {
+                    var el = document.createElement('div');
+                    el.className = 'cal-unscheduled-item';
+                    el.setAttribute('data-task-id', it.id);
+                    el.style.borderLeft = '4px solid ' + it.color;
+                    el.textContent = it.title;
+                    list.appendChild(el);
+                });
+                new FullCalendar.Draggable(list, {
+                    itemSelector: '.cal-unscheduled-item',
+                    eventData: function (el) { return { id: el.getAttribute('data-task-id'), title: el.textContent, allDay: true }; }
+                });
+            });
+    }
+
     function init() {
         var root = document.getElementById('cal-root');
         var host = document.getElementById('calendar');
@@ -75,6 +97,14 @@
             firstDay: 1,
             headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
             editable: true,
+            droppable: true,
+            eventReceive: function (info) {
+                var el = document.querySelector('.cal-unscheduled-item[data-task-id="' + info.event.id + '"]');
+                postDate(root, info.event.id, info.event.startStr, function (ok) {
+                    if (ok) { if (el) { el.parentNode.removeChild(el); } }
+                    else { info.event.remove(); }
+                });
+            },
             eventDrop: function (info) {
                 postDate(root, info.event.id, info.event.startStr, function (ok) { if (!ok) { info.revert(); } });
             },
@@ -90,11 +120,16 @@
         });
         window.__calInstance = calendar; // handy for E2E assertions
         calendar.render();
+        loadUnscheduled(root);
 
-        // Delegated change listener: any filter control change triggers a calendar refetch.
+        // Delegated change listener: filter controls refetch events;
+        // unscheduled toggle toggles sidebar visibility.
         document.addEventListener('change', function (e) {
             var el = e.target;
-            if (el && el.closest && el.closest('#cal-filterbar')) {
+            if (el && el.id === 'cal-toggle-unscheduled') {
+                var layout = document.getElementById('cal-layout');
+                if (layout) { layout.classList.toggle('cal-hide-unscheduled', !el.checked); }
+            } else if (el && el.closest && el.closest('#cal-filterbar')) {
                 calendar.refetchEvents();
             }
         });

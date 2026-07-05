@@ -213,6 +213,21 @@ class CalendarQueryModelTest extends Base
         $this->assertNotContains($tClosed, $ids, 'closed task must be excluded when hide_completed is true');
     }
 
+    public function testGetUnscheduledReturnsOnlyNoDueDateAccessibleTasks()
+    {
+        $projectModel = new \Kanboard\Model\ProjectModel($this->container);
+        $taskCreation = new \Kanboard\Model\TaskCreationModel($this->container);
+        $pid = $projectModel->create(array('name' => 'US'));
+        $withDue = $taskCreation->create(array('project_id' => $pid, 'title' => 'has due', 'date_due' => mktime(12,0,0,(int)date('n'),9)));
+        $noDue   = $taskCreation->create(array('project_id' => $pid, 'title' => 'no due'));
+        $model = new CalendarQueryModel($this->container);
+        $ids = array_column($model->getUnscheduled(1, array()), 'id');
+        $this->assertContains($noDue, $ids);
+        $this->assertNotContains($withDue, $ids);
+        // empty-access guard
+        $this->assertCount(0, $model->getUnscheduled(999, array()));
+    }
+
     // R2: Non-admin member sees only their own project's tasks
     public function testNonAdminMemberSeesOnlyMemberProjects()
     {

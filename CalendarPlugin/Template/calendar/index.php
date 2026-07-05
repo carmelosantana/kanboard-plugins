@@ -31,6 +31,8 @@
         <input type="checkbox" id="cal-filter-hide-completed" name="hide_completed" data-cal-filter="hide_completed" value="1">
         <?= t('Hide completed') ?>
     </label>
+
+    <label class="cal-filter-check"><input type="checkbox" id="cal-toggle-unscheduled" checked> <?= t('Show unscheduled') ?></label>
 </div>
 
 <div id="cal-root"
@@ -40,5 +42,11 @@
      data-update-url="<?= $this->text->e($update_url) ?>"
      data-unscheduled-url="<?= $this->text->e($unscheduled_url) ?>"
      data-csrf="<?= $this->text->e($csrf) ?>">
-    <div id="calendar" class="cal-calendar"></div>
+    <div class="cal-layout" id="cal-layout">
+        <aside class="cal-unscheduled" id="cal-unscheduled" aria-label="<?= t('Unscheduled tasks') ?>">
+            <h3><?= t('Unscheduled') ?></h3>
+            <div id="cal-unscheduled-list" class="cal-unscheduled-list"></div>
+        </aside>
+        <div id="calendar" class="cal-calendar"></div>
+    </div>
 </div>

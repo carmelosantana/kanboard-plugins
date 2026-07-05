@@ -87,6 +87,15 @@ class CalendarController extends BaseController
     }
 
     /**
+     * JSON list of open tasks with no due date for the unscheduled sidebar.
+     */
+    public function unscheduled()
+    {
+        $filters = array('project_ids' => $this->intList($this->request->getStringParam('project_ids')));
+        $this->response->json($this->container['calendarQueryModel']->getUnscheduled($this->userSession->getId(), $filters));
+    }
+
+    /**
      * JSON feed of FullCalendar events for the visible range + filters.
      * (calendar.getEvents)
      */

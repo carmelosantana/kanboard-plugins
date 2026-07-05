@@ -66,6 +66,38 @@ class CalendarQueryModel extends Base
         return $events;
     }
 
+    /**
+     * @return array[] [['id','title','color','project'], …] for open tasks with no due date
+     */
+    public function getUnscheduled($userId, array $filters)
+    {
+        $projectIds = $this->accessibleProjectIds($userId);
+        if (! empty($filters['project_ids'])) {
+            $projectIds = array_values(array_intersect($projectIds, array_map('intval', $filters['project_ids'])));
+        }
+        if (empty($projectIds)) { return array(); }
+
+        $rows = $this->taskFinderModel->getExtendedQuery()
+            ->in(TaskModel::TABLE.'.project_id', $projectIds)
+            ->beginOr()
+            ->isNull(TaskModel::TABLE.'.date_due')
+            ->eq(TaskModel::TABLE.'.date_due', 0)
+            ->closeOr()
+            ->eq(TaskModel::TABLE.'.is_active', TaskModel::STATUS_OPEN)
+            ->findAll();
+
+        $out = array();
+        foreach ($rows as $row) {
+            $out[] = array(
+                'id'      => (int) $row['id'],
+                'title'   => $row['title'],
+                'color'   => $this->colorModel->getBackgroundColor($row['color_id']),
+                'project' => isset($row['project_name']) ? $row['project_name'] : '',
+            );
+        }
+        return $out;
+    }
+
     private function mapRowToEvent(array $row)
     {
         $due       = (int) $row['date_due'];
