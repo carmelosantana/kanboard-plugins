@@ -87,9 +87,27 @@ class CalendarQueryModel extends Base
 
         $rows = $query->findAll();
         $events = array();
+        $rowsById = array();
         foreach ($rows as $row) {
-            $events[] = $this->mapRowToEvent($row);
+            $event = $this->mapRowToEvent($row);
+            $events[] = $event;
+            $rowsById[$event['id']] = $row;
         }
+
+        // Generic extension point: other suite plugins (e.g. DependencyPlugin)
+        // may register decorators on the container to push badges onto events.
+        // Read defensively — absent when no other plugin is installed, and
+        // behavior must be IDENTICAL to before this feature in that case.
+        $decorators = isset($this->container['calendarEventDecorators']) ? $this->container['calendarEventDecorators'] : array();
+        foreach ($events as $i => $event) {
+            if (! isset($event['extendedProps']['badges'])) {
+                $events[$i]['extendedProps']['badges'] = array();
+            }
+            foreach ($decorators as $decorator) {
+                $events[$i] = call_user_func($decorator, $events[$i], $rowsById[$event['id']]);
+            }
+        }
+
         return $events;
     }
 

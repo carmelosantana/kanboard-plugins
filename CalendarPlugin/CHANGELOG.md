@@ -2,6 +2,16 @@
 
 All notable changes to the CalendarPlugin will be documented in this file.
 
+## [1.1.0] - 2026-07-05
+
+### Added
+- Generic `calendarEventDecorators` extension point (badges[] passthrough) for
+  suite plugins — other plugins (e.g. DependencyPlugin) can register a
+  container-based list of callables in their own `initialize()` to push
+  badges onto calendar events without CalendarPlugin knowing anything about
+  them. See `README.md` §Cross-plugin for the contract. No-op (byte-identical
+  rendering) when no decorators are registered.
+
 ## [1.0.2] - 2026-07-05
 
 ### Changed

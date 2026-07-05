@@ -254,4 +254,29 @@ class CalendarQueryModelTest extends Base
         $this->assertContains($tMine, $ids, 'member must see their own project task');
         $this->assertNotContains($tForeign, $ids, 'member must NOT see a project they are not on');
     }
+
+    // Task 0: generic calendarEventDecorators extension point — other plugins
+    // (e.g. DependencyPlugin) push badges onto events via a container-registered
+    // list of callables. Must be additive and defensive when absent.
+    public function testEventDecoratorsAddBadges()
+    {
+        $projectModel = new \Kanboard\Model\ProjectModel($this->container);
+        $taskCreation = new \Kanboard\Model\TaskCreationModel($this->container);
+        $pid = $projectModel->create(array('name' => 'DecP'));
+        $tid = $taskCreation->create(array('project_id' => $pid, 'title' => 'Dec', 'date_due' => mktime(12,0,0,(int)date('n'),10)));
+
+        // Register a decorator that flags this task.
+        $this->container['calendarEventDecorators'] = array(
+            function (array $event, array $row) use ($tid) {
+                if ((int) $event['id'] === $tid) { $event['extendedProps']['badges'][] = array('text' => 'X', 'cls' => 'dep-blk'); }
+                return $event;
+            },
+        );
+
+        $model = new \Kanboard\Plugin\CalendarPlugin\Model\CalendarQueryModel($this->container);
+        $events = $model->getEvents(1, array(), mktime(0,0,0,(int)date('n'),1), mktime(0,0,0,(int)date('n')+1,1));
+        $ev = null; foreach ($events as $e) { if ((int) $e['id'] === $tid) { $ev = $e; } }
+        $this->assertNotNull($ev);
+        $this->assertSame('X', $ev['extendedProps']['badges'][0]['text']);
+    }
 }
