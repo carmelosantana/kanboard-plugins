@@ -3,7 +3,6 @@
 namespace Kanboard\Plugin\CalendarPlugin\Controller;
 
 use Kanboard\Controller\BaseController;
-use Kanboard\Core\Security\Role;
 
 class CalendarController extends BaseController
 {
@@ -37,7 +36,7 @@ class CalendarController extends BaseController
             'unscheduled_url'=> $this->helper->url->to('CalendarController', 'unscheduled', array('plugin' => 'CalendarPlugin')),
             'csrf'           => $this->token->getReusableCSRFToken(),
             'projects'       => $projects,
-            'users'          => $this->userModel->getActiveUsersList(),
+            'users'          => $this->assigneeChoices($userId),
             'categories'     => array(),
         )));
     }
@@ -79,23 +78,22 @@ class CalendarController extends BaseController
 
         $taskId = (int) ($this->request->getRawValue('task_id') ?: 0);
         $dueRaw = (string) ($this->request->getRawValue('date_due') ?: '');
-        $projectId = $taskId > 0 ? $this->taskFinderModel->getProjectId($taskId) : 0;
 
-        if ($projectId === 0) {
-            $this->response->status(403);
-            return $this->response->json(array('result' => false, 'error' => 'forbidden'));
+        // Missing / non-numeric task id is a malformed request (400), distinct
+        // from a well-formed request the user isn't allowed to make (403).
+        if ($taskId <= 0) {
+            $this->response->status(400);
+            return $this->response->json(array('result' => false, 'error' => 'task_id'));
         }
 
-        // Permission: admins may reschedule any task. Non-admins must be a
-        // write-capable member (PROJECT_MEMBER or PROJECT_MANAGER) of the task's
-        // project — PROJECT_VIEWER and non-members are rejected with 403.
-        $userId = $this->userSession->getId();
-        if (! $this->userModel->isAdmin($userId)) {
-            $role = $this->projectUserRoleModel->getUserRole($projectId, $userId);
-            if ($role !== Role::PROJECT_MEMBER && $role !== Role::PROJECT_MANAGER) {
-                $this->response->status(403);
-                return $this->response->json(array('result' => false, 'error' => 'forbidden'));
-            }
+        // Permission: admins may reschedule any task; other users must hold a
+        // write-capable role on the task's project (PROJECT_VIEWER / non-members
+        // rejected). A missing task resolves to project 0 → denied. Kept 403 for
+        // both "no such task" and "not allowed" so we don't leak task existence.
+        $projectId = $this->taskFinderModel->getProjectId($taskId);
+        if (! $this->container['calendarQueryModel']->canUserReschedule($this->userSession->getId(), $projectId)) {
+            $this->response->status(403);
+            return $this->response->json(array('result' => false, 'error' => 'forbidden'));
         }
 
         $ts = is_numeric($dueRaw) ? (int) $dueRaw : (int) strtotime($dueRaw);
@@ -150,6 +148,34 @@ class CalendarController extends BaseController
     {
         if (empty($value)) { return array(); }
         return array_values(array_filter(array_map('intval', explode(',', $value))));
+    }
+
+    /**
+     * Assignee choices for the GLOBAL calendar's filter. Admins get the full
+     * active-user list (they can see every project anyway); other users get only
+     * the users assignable on projects they can access — the global page must not
+     * expose the entire user directory. (The template already offers All + Me.)
+     *
+     * @param  int $userId
+     * @return array<int,string> id => name
+     */
+    private function assigneeChoices($userId)
+    {
+        if ($this->userModel->isAdmin($userId)) {
+            return $this->userModel->getActiveUsersList();
+        }
+
+        $users = array();
+        foreach ($this->container['calendarQueryModel']->accessibleProjectIds($userId) as $projectId) {
+            // $unassigned = false: the template supplies its own All/Me options.
+            foreach ($this->projectUserRoleModel->getAssignableUsersList($projectId, false) as $id => $name) {
+                if ((int) $id > 0) {
+                    $users[(int) $id] = $name;
+                }
+            }
+        }
+
+        return $users;
     }
 
     /** '-1' (or 'me') means the current user; '' means no assignee filter. */

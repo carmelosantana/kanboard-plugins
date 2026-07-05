@@ -3,10 +3,37 @@
 namespace Kanboard\Plugin\CalendarPlugin\Model;
 
 use Kanboard\Core\Base;
+use Kanboard\Core\Security\Role;
 use Kanboard\Model\TaskModel;
 
 class CalendarQueryModel extends Base
 {
+    /**
+     * Whether a user may reschedule (write the due date of) a task in the given
+     * project. Admins may reschedule any task; other users must hold a
+     * write-capable role (PROJECT_MEMBER or PROJECT_MANAGER) — PROJECT_VIEWER
+     * and non-members are denied. Mirrors core's task-modification ACL, which a
+     * hand-rolled write route would otherwise bypass.
+     *
+     * @param  int $userId
+     * @param  int $projectId
+     * @return bool
+     */
+    public function canUserReschedule($userId, $projectId)
+    {
+        if ((int) $projectId <= 0) {
+            return false;
+        }
+
+        if ($this->userModel->isAdmin($userId)) {
+            return true;
+        }
+
+        $role = $this->projectUserRoleModel->getUserRole($projectId, $userId);
+
+        return $role === Role::PROJECT_MEMBER || $role === Role::PROJECT_MANAGER;
+    }
+
     /**
      * @return int[] project ids the user may access
      */
