@@ -30,4 +30,28 @@ class DependencyHelper extends Base
             ? (int) $map[(int) $task['id']]['open_blockers']
             : 0;
     }
+
+    /**
+     * Tasks that block the given task (i.e. the given task "is blocked by" these).
+     *
+     * @access public
+     * @param  array $task Full task row, must contain 'id'.
+     * @return array
+     */
+    public function blockers(array $task)
+    {
+        return $this->dependencyModel->getBlockers((int) $task['id']);
+    }
+
+    /**
+     * Tasks that the given task blocks.
+     *
+     * @access public
+     * @param  array $task Full task row, must contain 'id'.
+     * @return array
+     */
+    public function blocking(array $task)
+    {
+        return $this->dependencyModel->getBlocking((int) $task['id']);
+    }
 }

@@ -19,3 +19,70 @@
     background-color: var(--destructive-foreground, rgba(192, 57, 43, 0.12));
     border: 1px solid var(--destructive, #c0392b);
 }
+
+/*
+ * Task-page dependencies panel ("Blocked by" / "Blocks" lists) and its
+ * open/done status pills. Namespaced dep-* like the badge above; same
+ * theme-token-aware + hard-coded-fallback approach so it reads on stock
+ * Kanboard and on ShadcnTheme dark.
+ *
+ * Status pills use a solid, opaque background (not a faint tint) so they
+ * stay legible on dark themes — a subtle/translucent badge was flagged as
+ * hard to read against dark panel backgrounds.
+ */
+.dep-panel-section {
+    margin-bottom: 1em;
+}
+
+.dep-panel-section:last-child {
+    margin-bottom: 0;
+}
+
+.dep-panel-section h4 {
+    margin: 0 0 0.4em;
+    font-size: 0.95em;
+    font-weight: bold;
+}
+
+.dep-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.dep-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border, #eee);
+}
+
+.dep-list-item:last-child {
+    border-bottom: none;
+}
+
+.dep-status {
+    display: inline-block;
+    flex: 0 0 auto;
+    font-size: 0.75em;
+    font-weight: bold;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: var(--radius, 3px);
+    white-space: nowrap;
+    text-transform: uppercase;
+}
+
+.dep-open {
+    color: var(--destructive-foreground, #fff);
+    background-color: var(--destructive, #c0392b);
+    border: 1px solid var(--destructive, #c0392b);
+}
+
+.dep-done {
+    color: #fff;
+    background-color: var(--success, #27ae60);
+    border: 1px solid var(--success, #27ae60);
+}

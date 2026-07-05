@@ -28,6 +28,9 @@ class Plugin extends Base
         // Board card badge: renders a "blocked" indicator before each card's title.
         $this->hook->on('template:board:private:task:before-title', array('template' => 'DependencyPlugin:board/badge'));
 
+        // Task page panel: status-aware "Blocked by" / "Blocks" lists.
+        $this->hook->on('template:task:show:before-internal-links', array('template' => 'DependencyPlugin:task/panel'));
+
         // Inject dependency.css sitewide. Unlike CalendarPlugin's FullCalendar
         // bundle (282KB, route-gated to avoid bloating every page), this
         // stylesheet is ~1KB, so sitewide injection has negligible cost and
