@@ -8,6 +8,10 @@ class Plugin extends Base
 {
     public function initialize()
     {
+        $this->container['calendarQueryModel'] = function ($c) {
+            return new \Kanboard\Plugin\CalendarPlugin\Model\CalendarQueryModel($c);
+        };
+
         // Route: global calendar page.
         $this->route->addRoute('calendar', 'CalendarController', 'show', 'CalendarPlugin');
 
