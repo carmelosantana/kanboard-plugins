@@ -15,6 +15,9 @@ class Plugin extends Base
         // Route: global calendar page.
         $this->route->addRoute('calendar', 'CalendarController', 'show', 'CalendarPlugin');
 
+        // Route: FullCalendar events JSON feed.
+        $this->route->addRoute('calendar/events', 'CalendarController', 'events', 'CalendarPlugin');
+
         // Assets. FullCalendar MUST be injected before calendar.js (both are
         // deferred, so document order = execution order).
         $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/vendor/fullcalendar/index.global.min.js']);
