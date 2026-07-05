@@ -15,6 +15,8 @@
 - **CSRF for POST**: generate the reusable token in the **controller** (`$this->token->getReusableCSRFToken()`) and pass it to the template as a variable rendered into a `data-*` attribute. **NEVER** call `$this->token->...` inside a template (`token` is not a template helper — it throws and drops the page out of its layout).
 - **POST params**: read via `$this->request->getValues()` (CSRF-validated POST array), never `getStringParam()` (GET-only).
 - **`url->href()`**: the plugin goes **inside `$params`** (`href('C','a',['plugin'=>'CalendarPlugin', ...])`), not as the 4th positional arg (that arg is `$csrf`).
+- **`route->addRoute()`**: use the **4-argument** form — `addRoute($path, 'CalendarController', 'action', 'CalendarPlugin')` (plugin as the 4th positional arg). The `'CalendarPlugin:CalendarController'` colon form does NOT work in v1.2.47 — `Router::sanitize()` rejects the colon and silently falls back to `DashboardController` (verified in Task 2). This applies only to `addRoute`; `url->to()`/`url->href()` still take the plugin inside `$params`.
+- **E2E console-error baseline:** Kanboard emits 2 console errors from its own `fciconsfont` data-URI font on EVERY page (including `/dashboard`) — NOT plugin bugs. E2E "no console errors" checks must filter them (ignore `/fciconsfont|favicon|data:font/i`) and assert no NEW errors beyond that baseline.
 - **PicoDb `->in('col', [])`** drops the WHERE clause (matches the whole table) — always guard `if (! empty($ids))` before an `in()` on a possibly-empty id list.
 - **Popover** is a plain positioned element, NOT a Kanboard `js-modal-*` (avoids the `overlayClickDestroy=false` "stuck overlay" trap).
 - Event contract (D4): a task with `time_estimated > 0` → **timed** event (`allDay=false`, `end = start + estimate hours`); `time_estimated == 0` → **all-day** event. In the Month/Agenda v1 the estimate also appears as a badge; sized-block rendering arrives with the deferred time-grid views.
@@ -267,7 +269,7 @@ class CalendarController extends BaseController
     public function initialize()
     {
         // Route: global calendar page.
-        $this->route->addRoute('calendar', 'CalendarPlugin:CalendarController', 'show');
+        $this->route->addRoute('calendar', 'CalendarController', 'show', 'CalendarPlugin');
 
         // Assets. FullCalendar MUST be injected before calendar.js (both are
         // deferred, so document order = execution order).
@@ -648,7 +650,7 @@ class CalendarControllerTest extends Base
 - [ ] **Step 4: Route** — in `Plugin.php` `initialize()`:
 
 ```php
-        $this->route->addRoute('calendar/events', 'CalendarPlugin:CalendarController', 'events');
+        $this->route->addRoute('calendar/events', 'CalendarController', 'events', 'CalendarPlugin');
 ```
 
 - [ ] **Step 5: Point FullCalendar at the endpoint** — in `calendar.js`, replace the `new FullCalendar.Calendar(...)` options with:
@@ -903,7 +905,7 @@ git add CalendarPlugin && git commit -m "feat(CalendarPlugin): events JSON endpo
     }
 ```
 
-- [ ] **Step 4: Route** — in `Plugin.php`: `$this->route->addRoute('calendar/update', 'CalendarPlugin:CalendarController', 'updateDate');`
+- [ ] **Step 4: Route** — in `Plugin.php`: `$this->route->addRoute('calendar/update', 'CalendarController', 'updateDate', 'CalendarPlugin');`
 
 - [ ] **Step 5: `eventDrop` handler** — in `calendar.js`, add to the Calendar options:
 
@@ -1014,7 +1016,7 @@ And add the helper inside the IIFE:
     }
 ```
 
-Route: `$this->route->addRoute('calendar/unscheduled', 'CalendarPlugin:CalendarController', 'unscheduled');`
+Route: `$this->route->addRoute('calendar/unscheduled', 'CalendarController', 'unscheduled', 'CalendarPlugin');`
 
 - [ ] **Step 5: Sidebar markup** — wrap the calendar in `index.php`:
 
@@ -1239,7 +1241,7 @@ Note: the **column badge** and the assignee's full name are surfaced in the popo
     }
 ```
 
-- [ ] **Step 2: Route** — `Plugin.php`: `$this->route->addRoute('project/:project_id/calendar', 'CalendarPlugin:CalendarController', 'project');`
+- [ ] **Step 2: Route** — `Plugin.php`: `$this->route->addRoute('project/:project_id/calendar', 'CalendarController', 'project', 'CalendarPlugin');`
 
 - [ ] **Step 3: JS reads `data-project-id`** — in `buildFilterQuery`, if `root.getAttribute('data-project-id')` is a positive int and no explicit project filter is selected, append `project_ids=<id>`. So the per-project page auto-scopes.
 
