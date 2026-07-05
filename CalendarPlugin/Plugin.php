@@ -18,6 +18,9 @@ class Plugin extends Base
         // Route: FullCalendar events JSON feed.
         $this->route->addRoute('calendar/events', 'CalendarController', 'events', 'CalendarPlugin');
 
+        // Route: reschedule a task's due date (drag-to-reschedule).
+        $this->route->addRoute('calendar/update', 'CalendarController', 'updateDate', 'CalendarPlugin');
+
         // Assets. FullCalendar MUST be injected before calendar.js (both are
         // deferred, so document order = execution order).
         $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/vendor/fullcalendar/index.global.min.js']);

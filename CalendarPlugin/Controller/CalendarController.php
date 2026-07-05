@@ -42,6 +42,51 @@ class CalendarController extends BaseController
     }
 
     /**
+     * POST — reschedule a task's due date. (calendar.updateTaskDate)
+     *
+     * Uses a reusable CSRF token (pcsrf), NOT the one-time token, so we must
+     * read the raw POST values via getRawValue() instead of getValues() — the
+     * latter runs a one-time CSRF check internally and returns [] on failure.
+     */
+    public function updateDate()
+    {
+        $csrfToken = $this->request->getRawValue('csrf_token');
+
+        if (! $csrfToken || ! $this->token->validateReusableCSRFToken($csrfToken)) {
+            $this->response->status(403);
+            return $this->response->json(array('result' => false, 'error' => 'csrf'));
+        }
+
+        $taskId = (int) ($this->request->getRawValue('task_id') ?: 0);
+        $dueRaw = (string) ($this->request->getRawValue('date_due') ?: '');
+        $projectId = $taskId > 0 ? $this->taskFinderModel->getProjectId($taskId) : 0;
+
+        if ($projectId === 0) {
+            $this->response->status(403);
+            return $this->response->json(array('result' => false, 'error' => 'forbidden'));
+        }
+
+        // Permission: admins can access all active projects; other users only their accessible projects.
+        $userId = $this->userSession->getId();
+        if (! $this->userModel->isAdmin($userId)) {
+            $accessible = array_map('intval', array_keys($this->projectUserRoleModel->getActiveProjectsByUser($userId)));
+            if (! in_array($projectId, $accessible, true)) {
+                $this->response->status(403);
+                return $this->response->json(array('result' => false, 'error' => 'forbidden'));
+            }
+        }
+
+        $ts = is_numeric($dueRaw) ? (int) $dueRaw : (int) strtotime($dueRaw);
+        if ($ts <= 0) {
+            $this->response->status(400);
+            return $this->response->json(array('result' => false, 'error' => 'date'));
+        }
+
+        $ok = $this->taskModificationModel->update(array('id' => $taskId, 'date_due' => $ts));
+        return $this->response->json(array('result' => (bool) $ok));
+    }
+
+    /**
      * JSON feed of FullCalendar events for the visible range + filters.
      * (calendar.getEvents)
      */

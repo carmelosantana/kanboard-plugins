@@ -47,6 +47,20 @@
         return parts.length > 0 ? '&' + parts.join('&') : '';
     }
 
+    function postDate(root, taskId, dateStr, done) {
+        var body = new URLSearchParams();
+        body.set('task_id', taskId);
+        body.set('date_due', dateStr);
+        body.set('csrf_token', root.getAttribute('data-csrf'));
+        fetch(root.getAttribute('data-update-url'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+            body: body.toString()
+        }).then(function (r) { return r.json().catch(function () { return { result: false }; }); })
+          .then(function (d) { done(!!(d && d.result)); })
+          .catch(function () { done(false); });
+    }
+
     function init() {
         var root = document.getElementById('cal-root');
         var host = document.getElementById('calendar');
@@ -60,6 +74,10 @@
             height: 'auto',
             firstDay: 1,
             headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
+            editable: true,
+            eventDrop: function (info) {
+                postDate(root, info.event.id, info.event.startStr, function (ok) { if (!ok) { info.revert(); } });
+            },
             events: function (info, success, failure) {
                 var url = eventsUrl + (eventsUrl.indexOf('?') >= 0 ? '&' : '?') +
                     'start=' + encodeURIComponent(info.startStr) + '&end=' + encodeURIComponent(info.endStr) +

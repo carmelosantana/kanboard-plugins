@@ -29,4 +29,20 @@ class CalendarControllerTest extends Base
         $ids = array_column($events, 'id');
         $this->assertContains($tid, $ids);
     }
+
+    public function testUpdateDatePersistsDueDateForAccessibleTask()
+    {
+        $projectModel = new \Kanboard\Model\ProjectModel($this->container);
+        $taskCreation = new \Kanboard\Model\TaskCreationModel($this->container);
+        $taskFinder   = new \Kanboard\Model\TaskFinderModel($this->container);
+        $pid = $projectModel->create(array('name' => 'UD'));
+        $tid = $taskCreation->create(array('project_id' => $pid, 'title' => 'move me', 'date_due' => mktime(12,0,0,(int)date('n'),5)));
+
+        $newTs = mktime(0, 0, 0, (int) date('n'), 20);
+        $ok = $this->container['taskModificationModel']->update(array('id' => $tid, 'date_due' => $newTs));
+        $this->assertTrue($ok);
+
+        $task = $taskFinder->getById($tid);
+        $this->assertSame((int) $newTs, (int) $task['date_due']);
+    }
 }
