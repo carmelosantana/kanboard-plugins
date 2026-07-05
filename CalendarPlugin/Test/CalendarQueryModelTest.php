@@ -122,17 +122,18 @@ class CalendarQueryModelTest extends Base
         $taskCreation = new TaskCreationModel($this->container);
         $pid = $projectModel->create(array('name' => 'Overdue Test'));
 
-        // Past date well within the query window (use a fixed past timestamp so it's always in the past)
-        $pastDue   = mktime(12, 0, 0, 1, 15, 2025); // Jan 15 2025 — always in the past
-        $futureDue = mktime(12, 0, 0, (int) date('n'), 15); // this month's 15th (future or today)
+        // Past date: fixed Jan 15 2025 — always in the past regardless of when the suite runs.
+        $pastDue   = mktime(12, 0, 0, 1, 15, 2025);
+        // Future date: fixed Jan 15 next year — always in the future; deterministic regardless of today.
+        $futureDue = mktime(12, 0, 0, 1, 15, (int) date('Y') + 1);
 
         $tOverdue = $taskCreation->create(array('project_id' => $pid, 'title' => 'Overdue task', 'date_due' => $pastDue));
         $tFuture  = $taskCreation->create(array('project_id' => $pid, 'title' => 'Future task',  'date_due' => $futureDue));
 
         $model = new CalendarQueryModel($this->container);
-        // Use a wide window that includes both dates
+        // Wide window: from Jan 1 2025 through Mar 1 of next year — includes both seeded dates.
         $winStart = mktime(0, 0, 0, 1, 1, 2025);
-        $winEnd   = mktime(0, 0, 0, (int) date('n') + 1, 1);
+        $winEnd   = mktime(0, 0, 0, 3, 1, (int) date('Y') + 1);
 
         $events = $model->getEvents(1, array(), $winStart, $winEnd);
         $byId = array();

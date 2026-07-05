@@ -3,6 +3,7 @@
 namespace Kanboard\Plugin\CalendarPlugin\Controller;
 
 use Kanboard\Controller\BaseController;
+use Kanboard\Core\Security\Role;
 
 class CalendarController extends BaseController
 {
@@ -85,11 +86,13 @@ class CalendarController extends BaseController
             return $this->response->json(array('result' => false, 'error' => 'forbidden'));
         }
 
-        // Permission: admins can access all active projects; other users only their accessible projects.
+        // Permission: admins may reschedule any task. Non-admins must be a
+        // write-capable member (PROJECT_MEMBER or PROJECT_MANAGER) of the task's
+        // project — PROJECT_VIEWER and non-members are rejected with 403.
         $userId = $this->userSession->getId();
         if (! $this->userModel->isAdmin($userId)) {
-            $accessible = array_map('intval', array_keys($this->projectUserRoleModel->getActiveProjectsByUser($userId)));
-            if (! in_array($projectId, $accessible, true)) {
+            $role = $this->projectUserRoleModel->getUserRole($projectId, $userId);
+            if ($role !== Role::PROJECT_MEMBER && $role !== Role::PROJECT_MANAGER) {
                 $this->response->status(403);
                 return $this->response->json(array('result' => false, 'error' => 'forbidden'));
             }

@@ -26,7 +26,7 @@ A drag-and-drop calendar view for Kanboard, enabling visual task management by d
 ## Requirements
 
 - Kanboard >= 1.2.47
-- PHP >= 8.1
+- PHP >= 8.4
 
 ## Screenshots
 
