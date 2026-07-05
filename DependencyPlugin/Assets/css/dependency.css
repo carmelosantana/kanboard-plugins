@@ -86,3 +86,17 @@
     background-color: var(--success, #27ae60);
     border: 1px solid var(--success, #27ae60);
 }
+
+/*
+ * Calendar integration (Task 7): blocked badge rendered by
+ * CalendarPlugin's calendar.js as `<span class="cal-ev-badge dep-blk">`
+ * inside a FullCalendar event pill (`.cal-ev`). Month-grid pills use dark
+ * text on pastel backgrounds, so this needs no background of its own —
+ * just enough weight/size to stay legible without crowding the title.
+ * Namespaced dep-* per suite convention.
+ */
+.dep-blk {
+    font-size: 0.9em;
+    opacity: 1;
+    line-height: 1;
+}

@@ -36,7 +36,28 @@ class Plugin extends Base
         // stylesheet is ~1KB, so sitewide injection has negligible cost and
         // avoids having to keep a route allowlist in sync with every place
         // the badge might render (board, task modal, search results, etc).
+        // This also means calendar pages already receive dependency.css, so
+        // the blocked badge below needs no extra asset wiring.
         $this->hook->on('template:layout:css', array('template' => 'plugins/DependencyPlugin/Assets/css/dependency.css'));
+
+        // Calendar integration: consume CalendarPlugin's generic
+        // `calendarEventDecorators` extension point (Task 0, CalendarPlugin
+        // >= 1.1.0) to push a blocked badge onto FullCalendar events. Append
+        // rather than overwrite, since other suite plugins may also register
+        // decorators on this same container key. The closure captures $this
+        // (the Plugin instance) so `$this->dependencyModel` resolves lazily,
+        // whenever CalendarQueryModel::getEvents() actually invokes it.
+        $this->container['calendarEventDecorators'] = array_merge(
+            isset($this->container['calendarEventDecorators']) ? $this->container['calendarEventDecorators'] : array(),
+            array(function (array $event, array $row) {
+                $projectId = (int) (isset($row['project_id']) ? $row['project_id'] : 0);
+                $map = $this->dependencyModel->getProjectBlockedMap($projectId);
+                if (! empty($map[(int) $event['id']]['open_blockers'])) {
+                    $event['extendedProps']['badges'][] = array('text' => "\u{1F512}", 'cls' => 'dep-blk');
+                }
+                return $event;
+            })
+        );
     }
 
     public function getPluginName()        { return 'DependencyPlugin'; }
