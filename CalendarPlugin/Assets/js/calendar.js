@@ -12,11 +12,12 @@
      *   <select>          data-cal-filter="category_id"  → &category_id=3
      *   <input[checkbox]> data-cal-filter="hide_completed" → &hide_completed=1
      */
-    function buildFilterQuery() {
+    function buildFilterQuery(root) {
         var bar = document.getElementById('cal-filterbar');
         if (!bar) { return ''; }
 
         var parts = [];
+        var projectFilterSelected = false;
         var controls = bar.querySelectorAll('[data-cal-filter]');
         for (var i = 0; i < controls.length; i++) {
             var el = controls[i];
@@ -32,6 +33,7 @@
                 }
                 if (selected.length > 0) {
                     parts.push(encodeURIComponent(param) + '=' + selected.join(','));
+                    if (param === 'project_ids') { projectFilterSelected = true; }
                 }
             } else if (el.tagName === 'SELECT') {
                 if (el.value !== '') {
@@ -41,6 +43,15 @@
                 if (el.checked) {
                     parts.push(encodeURIComponent(param) + '=' + encodeURIComponent(el.value));
                 }
+            }
+        }
+
+        // If we're on a per-project page (positive data-project-id) and the
+        // user hasn't explicitly picked a project filter, auto-scope to that project.
+        if (root) {
+            var projectId = parseInt(root.getAttribute('data-project-id'), 10);
+            if (projectId > 0 && !projectFilterSelected) {
+                parts.push('project_ids=' + projectId);
             }
         }
 
@@ -122,7 +133,7 @@
             initialView: 'dayGridMonth',
             height: 'auto',
             firstDay: 1,
-            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
+            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth today' },
             editable: true,
             droppable: true,
             eventClassNames: function (arg) { return arg.event.extendedProps.overdue ? ['cal-ev-overdue'] : []; },
@@ -169,7 +180,7 @@
             events: function (info, success, failure) {
                 var url = eventsUrl + (eventsUrl.indexOf('?') >= 0 ? '&' : '?') +
                     'start=' + encodeURIComponent(info.startStr) + '&end=' + encodeURIComponent(info.endStr) +
-                    buildFilterQuery();
+                    buildFilterQuery(root);
                 fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                     .then(function (r) { return r.json(); })
                     .then(function (data) { success(data); })

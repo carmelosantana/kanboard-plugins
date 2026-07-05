@@ -15,6 +15,9 @@ class Plugin extends Base
         // Route: global calendar page.
         $this->route->addRoute('calendar', 'CalendarController', 'show', 'CalendarPlugin');
 
+        // Route: per-project calendar page.
+        $this->route->addRoute('project/:project_id/calendar', 'CalendarController', 'project', 'CalendarPlugin');
+
         // Route: FullCalendar events JSON feed.
         $this->route->addRoute('calendar/events', 'CalendarController', 'events', 'CalendarPlugin');
 
@@ -29,6 +32,12 @@ class Plugin extends Base
         $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/vendor/fullcalendar/index.global.min.js']);
         $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/js/calendar.js']);
         $this->hook->on('template:layout:css', ['template' => 'plugins/CalendarPlugin/Assets/css/calendar.css']);
+
+        // Per-project view-switcher tab.
+        $this->hook->on('template:project-header:view-switcher', ['template' => 'CalendarPlugin:calendar/tab']);
+
+        // Global nav link in the user dropdown.
+        $this->hook->on('template:header:dropdown', ['template' => 'CalendarPlugin:calendar/nav']);
     }
 
     public function getPluginName()        { return 'CalendarPlugin'; }

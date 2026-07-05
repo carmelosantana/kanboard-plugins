@@ -42,6 +42,25 @@ class CalendarController extends BaseController
     }
 
     /**
+     * Per-project calendar page (scoped to one project, access-checked).
+     */
+    public function project()
+    {
+        $project = $this->getProject(); // BaseController helper: loads + access-checks by project_id
+        $this->response->html($this->helper->layout->app('CalendarPlugin:calendar/index', array(
+            'title'           => $project['name'] . ' &gt; ' . t('Calendar'),
+            'project_id'      => (int) $project['id'],
+            'projects'        => array(),
+            'users'           => $this->projectUserRoleModel->getAssignableUsersList($project['id']),
+            'categories'      => $this->categoryModel->getList($project['id'], false),
+            'events_url'      => $this->helper->url->to('CalendarController', 'events', array('plugin' => 'CalendarPlugin')),
+            'update_url'      => $this->helper->url->to('CalendarController', 'updateDate', array('plugin' => 'CalendarPlugin')),
+            'unscheduled_url' => $this->helper->url->to('CalendarController', 'unscheduled', array('plugin' => 'CalendarPlugin')),
+            'csrf'            => $this->token->getReusableCSRFToken(),
+        )));
+    }
+
+    /**
      * POST — reschedule a task's due date. (calendar.updateTaskDate)
      *
      * Uses a reusable CSRF token (pcsrf), NOT the one-time token, so we must
