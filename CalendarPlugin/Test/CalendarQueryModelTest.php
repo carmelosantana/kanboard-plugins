@@ -144,6 +144,75 @@ class CalendarQueryModelTest extends Base
         $this->assertFalse($byId[$tFuture]['extendedProps']['overdue'], 'future task must have overdue===false');
     }
 
+    // T5-F1: project_ids filter restricts events to the specified project only
+    public function testProjectFilterRestrictsEvents()
+    {
+        $projectModel = new ProjectModel($this->container);
+        $taskCreation = new TaskCreationModel($this->container);
+
+        $p1 = $projectModel->create(array('name' => 'FilterProj1'));
+        $p2 = $projectModel->create(array('name' => 'FilterProj2'));
+        $due = mktime(12, 0, 0, (int) date('n'), 15);
+        $t1 = $taskCreation->create(array('project_id' => $p1, 'title' => 'Task P1', 'date_due' => $due));
+        $t2 = $taskCreation->create(array('project_id' => $p2, 'title' => 'Task P2', 'date_due' => $due));
+
+        $model = new CalendarQueryModel($this->container);
+        $start = mktime(0, 0, 0, (int) date('n'), 1);
+        $end   = mktime(0, 0, 0, (int) date('n') + 1, 1);
+
+        // Filter to p1 only — admin user (id=1) can access both, but filter narrows to p1
+        $events = $model->getEvents(1, array('project_ids' => array($p1)), $start, $end);
+        $ids = array_column($events, 'id');
+        $this->assertContains($t1, $ids, 'filtered project task must appear');
+        $this->assertNotContains($t2, $ids, 'other project task must be excluded');
+    }
+
+    // T5-F2: assignee_id filter restricts events to assigned user only
+    public function testAssigneeFilterRestrictsEvents()
+    {
+        $projectModel = new ProjectModel($this->container);
+        $taskCreation = new TaskCreationModel($this->container);
+        $userModel    = new \Kanboard\Model\UserModel($this->container);
+
+        $uid = $userModel->create(array('username' => 'cal_assignee_filter', 'password' => 'test1234', 'role' => \Kanboard\Core\Security\Role::APP_USER));
+        $pid = $projectModel->create(array('name' => 'AssigneeFilterProj'));
+        $due = mktime(12, 0, 0, (int) date('n'), 15);
+        $tAssigned   = $taskCreation->create(array('project_id' => $pid, 'title' => 'Assigned',   'date_due' => $due, 'owner_id' => $uid));
+        $tUnassigned = $taskCreation->create(array('project_id' => $pid, 'title' => 'Unassigned', 'date_due' => $due));
+
+        $model = new CalendarQueryModel($this->container);
+        $start = mktime(0, 0, 0, (int) date('n'), 1);
+        $end   = mktime(0, 0, 0, (int) date('n') + 1, 1);
+
+        $events = $model->getEvents(1, array('assignee_id' => $uid), $start, $end);
+        $ids = array_column($events, 'id');
+        $this->assertContains($tAssigned, $ids, 'assigned task must appear');
+        $this->assertNotContains($tUnassigned, $ids, 'unassigned task must be excluded');
+    }
+
+    // T5-F3: hide_completed=true excludes closed tasks
+    public function testHideCompletedFilterExcludesClosedTasks()
+    {
+        $projectModel = new ProjectModel($this->container);
+        $taskCreation = new TaskCreationModel($this->container);
+        $taskStatus   = new \Kanboard\Model\TaskStatusModel($this->container);
+
+        $pid = $projectModel->create(array('name' => 'HideCompletedProj'));
+        $due = mktime(12, 0, 0, (int) date('n'), 15);
+        $tOpen   = $taskCreation->create(array('project_id' => $pid, 'title' => 'Open task',   'date_due' => $due));
+        $tClosed = $taskCreation->create(array('project_id' => $pid, 'title' => 'Closed task', 'date_due' => $due));
+        $taskStatus->close($tClosed);
+
+        $model = new CalendarQueryModel($this->container);
+        $start = mktime(0, 0, 0, (int) date('n'), 1);
+        $end   = mktime(0, 0, 0, (int) date('n') + 1, 1);
+
+        $events = $model->getEvents(1, array('hide_completed' => true), $start, $end);
+        $ids = array_column($events, 'id');
+        $this->assertContains($tOpen, $ids, 'open task must appear when hide_completed is true');
+        $this->assertNotContains($tClosed, $ids, 'closed task must be excluded when hide_completed is true');
+    }
+
     // R2: Non-admin member sees only their own project's tasks
     public function testNonAdminMemberSeesOnlyMemberProjects()
     {

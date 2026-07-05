@@ -2,7 +2,50 @@
 (function () {
     'use strict';
 
-    function buildFilterQuery(root) { return ''; }
+    /**
+     * Build query-string fragment from #cal-filterbar controls.
+     * Each control must have data-cal-filter="<param_name>".
+     *
+     * Supported control types:
+     *   <select multiple> data-cal-filter="project_ids"  → &project_ids=1,2,3
+     *   <select>          data-cal-filter="assignee_id"  → &assignee_id=5
+     *   <select>          data-cal-filter="category_id"  → &category_id=3
+     *   <input[checkbox]> data-cal-filter="hide_completed" → &hide_completed=1
+     */
+    function buildFilterQuery() {
+        var bar = document.getElementById('cal-filterbar');
+        if (!bar) { return ''; }
+
+        var parts = [];
+        var controls = bar.querySelectorAll('[data-cal-filter]');
+        for (var i = 0; i < controls.length; i++) {
+            var el = controls[i];
+            var param = el.getAttribute('data-cal-filter');
+
+            if (el.tagName === 'SELECT' && el.multiple) {
+                // Multi-select: collect all selected values as comma-separated list.
+                var selected = [];
+                for (var j = 0; j < el.options.length; j++) {
+                    if (el.options[j].selected) {
+                        selected.push(encodeURIComponent(el.options[j].value));
+                    }
+                }
+                if (selected.length > 0) {
+                    parts.push(encodeURIComponent(param) + '=' + selected.join(','));
+                }
+            } else if (el.tagName === 'SELECT') {
+                if (el.value !== '') {
+                    parts.push(encodeURIComponent(param) + '=' + encodeURIComponent(el.value));
+                }
+            } else if (el.type === 'checkbox') {
+                if (el.checked) {
+                    parts.push(encodeURIComponent(param) + '=' + encodeURIComponent(el.value));
+                }
+            }
+        }
+
+        return parts.length > 0 ? '&' + parts.join('&') : '';
+    }
 
     function init() {
         var root = document.getElementById('cal-root');
@@ -20,7 +63,7 @@
             events: function (info, success, failure) {
                 var url = eventsUrl + (eventsUrl.indexOf('?') >= 0 ? '&' : '?') +
                     'start=' + encodeURIComponent(info.startStr) + '&end=' + encodeURIComponent(info.endStr) +
-                    buildFilterQuery(root);
+                    buildFilterQuery();
                 fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
                     .then(function (r) { return r.json(); })
                     .then(function (data) { success(data); })
@@ -29,6 +72,14 @@
         });
         window.__calInstance = calendar; // handy for E2E assertions
         calendar.render();
+
+        // Delegated change listener: any filter control change triggers a calendar refetch.
+        document.addEventListener('change', function (e) {
+            var el = e.target;
+            if (el && el.closest && el.closest('#cal-filterbar')) {
+                calendar.refetchEvents();
+            }
+        });
     }
 
     if (document.readyState === 'loading') {

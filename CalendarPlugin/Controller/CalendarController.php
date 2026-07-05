@@ -11,6 +11,23 @@ class CalendarController extends BaseController
      */
     public function show()
     {
+        $userId = $this->userSession->getId();
+
+        // Admins see all active projects; other users see only their accessible projects.
+        if ($this->userModel->isAdmin($userId)) {
+            $projectRows = $this->db->table(\Kanboard\Model\ProjectModel::TABLE)
+                ->eq('is_active', \Kanboard\Model\ProjectModel::ACTIVE)
+                ->columns('id', 'name')
+                ->orderBy('name')
+                ->findAll();
+            $projects = array();
+            foreach ($projectRows as $row) {
+                $projects[(int) $row['id']] = $row['name'];
+            }
+        } else {
+            $projects = $this->projectUserRoleModel->getActiveProjectsByUser($userId);
+        }
+
         $this->response->html($this->helper->layout->app('CalendarPlugin:calendar/index', array(
             'title'          => t('Calendar'),
             'project_id'     => 0,
@@ -18,6 +35,9 @@ class CalendarController extends BaseController
             'update_url'     => $this->helper->url->to('CalendarController', 'updateDate', array('plugin' => 'CalendarPlugin')),
             'unscheduled_url'=> $this->helper->url->to('CalendarController', 'unscheduled', array('plugin' => 'CalendarPlugin')),
             'csrf'           => $this->token->getReusableCSRFToken(),
+            'projects'       => $projects,
+            'users'          => $this->userModel->getActiveUsersList(),
+            'categories'     => array(),
         )));
     }
 
