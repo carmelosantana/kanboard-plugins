@@ -231,6 +231,24 @@ textarea {
   line-height: 1.5;
 }
 
+/* Board selector — .select-dropdown-input-container already provides the outer
+   border, so the inner text input must have none. Our broad input[type="text"]
+   rule above would otherwise create a double box in the header project picker. */
+.select-dropdown-input-container {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--background);
+}
+
+.select-dropdown-input-container input.select-dropdown-input,
+.select-dropdown-input-container input.select-dropdown-input:focus {
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+  min-height: unset;
+  padding: 0 0 0 var(--space-2);
+}
+
 /* Flatten fieldsets — no boxed border with a legend perched on it. The legend
    becomes a plain section label; sections are separated by whitespace instead. */
 fieldset {
