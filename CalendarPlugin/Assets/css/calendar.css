@@ -20,6 +20,7 @@
     --fc-today-bg-color: color-mix(in srgb, currentColor 5%, transparent);
     --fc-neutral-bg-color: transparent;
     --fc-page-bg-color: transparent;
+    --fc-event-border-color: transparent;
 }
 /* Drop the outer frame; keep only the light internal gridlines. */
 .cal-calendar .fc-scrollgrid { border: none; }
@@ -31,12 +32,20 @@
 .cal-calendar .fc-icon-chevron-right::before { content: '\203A'; }
 .cal-unscheduled-item { background: var(--card, #fff); border: 1px solid var(--border, #ddd); border-radius: calc(var(--radius, 0.5rem) - 2px); padding: 0.35rem 0.5rem; margin-bottom: 0.4rem; cursor: grab; font-size: 0.85rem; }
 .cal-hide-unscheduled .cal-unscheduled { display: none; }
-.cal-ev { display: flex; align-items: center; gap: 0.25rem; overflow: hidden; }
-.cal-ev-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cal-ev-badge { font-size: 0.7rem; opacity: 0.85; flex: 0 0 auto; }
-.cal-ev-proj { padding: 0 0.3em; border-radius: 999px; background: rgba(0,0,0,0.15); }
-.cal-ev-avatar { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.15em; height: 1.15em; border-radius: 50%; font-size: 0.62rem; font-weight: 700; background: rgba(255,255,255,0.35); color: inherit; }
-.cal-ev-overdue { outline: 2px solid var(--destructive, #c0392b); outline-offset: -2px; }
+.cal-ev { display: flex; align-items: center; gap: 0.3rem; overflow: hidden; padding: 1px 2px; }
+.cal-ev-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.cal-ev-badge { font-size: 0.68rem; opacity: 0.8; flex: 0 0 auto; }
+.cal-ev-proj { padding: 0 0.4em; border-radius: 999px; background: rgba(0,0,0,0.14); opacity: 0.9; }
+.cal-ev-avatar { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.25em; height: 1.25em; border-radius: 50%; font-size: 0.6rem; font-weight: 700; background: rgba(0,0,0,0.16); color: inherit; }
+/* Month-grid pills carry the task's (pastel) color as background — force dark,
+   readable text there, matching Kanboard's own board. List/agenda rows sit on
+   the theme surface, so they keep the inherited theme text color. */
+.cal-calendar .fc-daygrid-event { border-radius: 5px; }
+.cal-calendar .fc-daygrid-event .cal-ev { color: #1f2933; }
+.cal-calendar .fc-daygrid-event .cal-ev-avatar { background: rgba(0,0,0,0.14); }
+/* Overdue: a solid left bar reads more clearly than a full outline. */
+.cal-calendar .fc-daygrid-event.cal-ev-overdue { box-shadow: inset 3px 0 0 0 var(--destructive, #c0392b); }
+.cal-ev-overdue { outline: 1px solid color-mix(in srgb, var(--destructive, #c0392b) 55%, transparent); outline-offset: -1px; }
 .cal-popover { position: absolute; z-index: 9000; min-width: 200px; max-width: 320px; background: var(--card, #fff); color: var(--card-foreground, #1a1a1a); border: 1px solid var(--border, #ccc); border-radius: var(--radius, 0.5rem); box-shadow: 0 8px 24px rgba(0,0,0,0.25); padding: 0.6rem 0.75rem; }
 .cal-pop-title { font-weight: 600; margin-bottom: 0.35rem; }
 .cal-pop-row { font-size: 0.85rem; }

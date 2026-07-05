@@ -1,5 +1,5 @@
-<div class="page-header"><h2><?= $this->text->e($title) ?></h2></div>
-
+<?php /* No page-header heading here: Kanboard's app layout already renders the
+   "<project> &gt; Calendar" title in the header, so a second <h2> just duplicated it. */ ?>
 <div id="cal-filterbar" class="cal-filterbar">
     <?php if (! empty($projects)): // hidden on per-project pages (auto-scoped) ?>
     <label for="cal-filter-project"><?= t('Project') ?></label>

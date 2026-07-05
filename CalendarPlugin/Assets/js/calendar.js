@@ -146,6 +146,9 @@
 
         var eventsUrl = root.getAttribute('data-events-url');
         if (!eventsUrl) { return; } // no feed URL → nothing to render (avoids null.indexOf below)
+        // On a per-project calendar every event is the same project, already named
+        // in the page title — so the per-event project badge is redundant there.
+        var perProject = parseInt(root.getAttribute('data-project-id'), 10) > 0;
         var calendar = new FullCalendar.Calendar(host, {
             initialView: 'dayGridMonth',
             height: 'auto',
@@ -169,7 +172,7 @@
                 title.className = 'cal-ev-title';
                 title.textContent = arg.event.title;
                 wrap.appendChild(title);
-                if (ep.project) {
+                if (ep.project && !perProject) {
                     var proj = document.createElement('span');
                     proj.className = 'cal-ev-badge cal-ev-proj';
                     proj.textContent = ep.project;

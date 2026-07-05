@@ -8,11 +8,24 @@ All notable changes to the CalendarPlugin will be documented in this file.
 - Calmer, more minimal calendar UI: removed the filter-bar box, the Unscheduled
   box, and (on per-project pages) the empty Project selector; softened the grid
   to faint hairlines via `--fc-border-color` and muted the "today" tint.
+- Events render with dark, readable text on their (pastel) task-color pills in
+  the month grid — matching Kanboard's own board — instead of the low-contrast
+  default white. List/agenda rows keep the theme's text color.
+- On a per-project calendar, events no longer show a project badge (redundant
+  with the page title, which already names the project).
 
 ### Fixed
+- Removed the duplicate calendar page title — Kanboard's app layout already
+  renders the "&lt;project&gt; &gt; Calendar" heading, so the template's second
+  `<h2>` was dropped.
 - Prev/next toolbar buttons now show plain ‹ › chevrons instead of tofu — the
   CSP blocks FullCalendar's embedded (data: URI) icon font, so we fall back to
   unicode glyphs in a normal font.
+- Overdue events use a clearer red left-bar accent.
+
+### Verified
+- Renders correctly on both a standard Kanboard install and ShadcnTheme
+  (month + list views), 0 non-baseline console errors on each.
 
 ## [1.0.1] - 2026-07-05
 
