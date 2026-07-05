@@ -2,6 +2,18 @@
 
 All notable changes to the CalendarPlugin will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Calmer, more minimal calendar UI: removed the filter-bar box, the Unscheduled
+  box, and (on per-project pages) the empty Project selector; softened the grid
+  to faint hairlines via `--fc-border-color` and muted the "today" tint.
+
+### Fixed
+- Prev/next toolbar buttons now show plain ‹ › chevrons instead of tofu — the
+  CSP blocks FullCalendar's embedded (data: URI) icon font, so we fall back to
+  unicode glyphs in a normal font.
+
 ## [1.0.1] - 2026-07-05
 
 ### Changed

@@ -1,12 +1,14 @@
 <div class="page-header"><h2><?= $this->text->e($title) ?></h2></div>
 
 <div id="cal-filterbar" class="cal-filterbar">
+    <?php if (! empty($projects)): // hidden on per-project pages (auto-scoped) ?>
     <label for="cal-filter-project"><?= t('Project') ?></label>
     <select id="cal-filter-project" name="project_ids" data-cal-filter="project_ids" multiple>
         <?php foreach ($projects as $id => $name): ?>
             <option value="<?= (int) $id ?>"><?= $this->text->e($name) ?></option>
         <?php endforeach ?>
     </select>
+    <?php endif ?>
 
     <label for="cal-filter-assignee"><?= t('Assignee') ?></label>
     <select id="cal-filter-assignee" name="assignee_id" data-cal-filter="assignee_id">
