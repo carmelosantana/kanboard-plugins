@@ -4,6 +4,7 @@ namespace Kanboard\Plugin\DependencyPlugin;
 
 use Kanboard\Core\Plugin\Base;
 use Kanboard\Model\TaskLinkModel;
+use Kanboard\Plugin\DependencyPlugin\Helper\DependencyHelper;
 use Kanboard\Plugin\DependencyPlugin\Model\DependencyModel;
 use Kanboard\Plugin\DependencyPlugin\Subscriber\DependencyLinkSubscriber;
 
@@ -20,6 +21,19 @@ class Plugin extends Base
         $this->dispatcher->addListener(TaskLinkModel::EVENT_CREATE_UPDATE, function ($event) use ($container) {
             (new DependencyLinkSubscriber($container))->onLinkCreateUpdate($event);
         });
+
+        // Template helper: exposes blockedOpenCount($task) to board/task templates.
+        $this->helper->register('dependency', DependencyHelper::class);
+
+        // Board card badge: renders a "blocked" indicator before each card's title.
+        $this->hook->on('template:board:private:task:before-title', array('template' => 'DependencyPlugin:board/badge'));
+
+        // Inject dependency.css sitewide. Unlike CalendarPlugin's FullCalendar
+        // bundle (282KB, route-gated to avoid bloating every page), this
+        // stylesheet is ~1KB, so sitewide injection has negligible cost and
+        // avoids having to keep a route allowlist in sync with every place
+        // the badge might render (board, task modal, search results, etc).
+        $this->hook->on('template:layout:css', array('template' => 'plugins/DependencyPlugin/Assets/css/dependency.css'));
     }
 
     public function getPluginName()        { return 'DependencyPlugin'; }

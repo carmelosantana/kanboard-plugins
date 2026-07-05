@@ -1,0 +1,21 @@
+/*
+ * DependencyPlugin — namespaced styles (dep-*) for the board-card
+ * blocked badge. Theme-token-aware with hard-coded fallbacks so it
+ * reads correctly on both standard Kanboard and ShadcnTheme (dark).
+ */
+.dep-badge {
+    display: inline-block;
+    font-size: 0.8em;
+    line-height: 1;
+    padding: 1px 5px;
+    margin-left: 4px;
+    border-radius: var(--radius, 3px);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.dep-blocked {
+    color: var(--destructive, #c0392b);
+    background-color: var(--destructive-foreground, rgba(192, 57, 43, 0.12));
+    border: 1px solid var(--destructive, #c0392b);
+}
