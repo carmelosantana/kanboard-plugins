@@ -5,6 +5,22 @@ All notable changes to ShadcnTheme are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-07-05
+
+### Fixed
+
+- **Header project selector double box, take 2** — the previous fix tied on CSS
+  specificity (0,1,0) with Kanboard's native `.select-dropdown-input-container`
+  rule (which sets a `--muted` background and its own border), so it lost
+  depending on stylesheet load order — leaving the mismatched fill and stacked
+  borders. The override is now scoped under `header` (0,1,1) to win reliably, and
+  the container is a flex row so the trigger reads as a single clean input.
+- **Distracting lighter background on board & calendar hover** — the generic
+  `table tr:hover td` row-highlight applied to *every* table, including the board
+  (`#board`) and the FullCalendar grid (`.fc`), washing the whole swimlane/week
+  row in a muted tint on hover. Those surfaces are now excluded; hover feedback on
+  cards remains the lift (shadow + translate).
+
 ## [1.0.3] - 2026-07-05
 
 ### Fixed

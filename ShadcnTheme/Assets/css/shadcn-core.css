@@ -231,22 +231,34 @@ textarea {
   line-height: 1.5;
 }
 
-/* Board selector — .select-dropdown-input-container already provides the outer
-   border, so the inner text input must have none. Our broad input[type="text"]
-   rule above would otherwise create a double box in the header project picker. */
-.select-dropdown-input-container {
+/* Header project selector — Kanboard's native CSS gives BOTH the
+   .select-dropdown-input-container wrapper AND the inner .select-dropdown-input
+   their own border + background, which stack into a "double box" with a
+   mismatched muted fill. Scope under `header` (raises specificity to 0,1,1 so it
+   reliably beats the native 0,1,0 rule regardless of stylesheet load order) and
+   collapse to a single clean input trigger: one border on the wrapper, a
+   transparent borderless input inside. */
+header .select-dropdown-input-container {
+  display: flex;
+  align-items: center;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background-color: var(--background);
+  min-height: 2rem;
+  max-width: 320px;
 }
 
-.select-dropdown-input-container input.select-dropdown-input,
-.select-dropdown-input-container input.select-dropdown-input:focus {
+header .select-dropdown-input-container input.select-dropdown-input,
+header .select-dropdown-input-container input.select-dropdown-input:focus {
+  flex: 1;
+  height: auto;
+  width: auto;
+  margin: 0;
   border: none;
   box-shadow: none;
   background-color: transparent;
   min-height: unset;
-  padding: 0 0 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
 }
 
 /* Flatten fieldsets — no boxed border with a legend perched on it. The legend
@@ -330,6 +342,17 @@ table td {
 
 table tr:hover td {
   background-color: color-mix(in oklch, var(--muted) 45%, transparent);
+}
+
+/* ...but NOT the board or the calendar. Both render as <table>s, so the generic
+   row-hover above would wash the whole board swimlane row / calendar week row in
+   a lighter muted fill on every hover — distracting, and it fights the task
+   cards' own colors. Keep those surfaces flat; hover feedback there comes from
+   the card lift (box-shadow + translateY), not a row tint. */
+#board tr:hover td,
+.fc tr:hover td,
+.cal-calendar tr:hover td {
+  background-color: transparent;
 }
 
 /* ================================
