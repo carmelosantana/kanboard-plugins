@@ -8,7 +8,14 @@ class Plugin extends Base
 {
     public function initialize()
     {
-        // Wired in later tasks.
+        // Route: global calendar page.
+        $this->route->addRoute('calendar', 'CalendarController', 'show', 'CalendarPlugin');
+
+        // Assets. FullCalendar MUST be injected before calendar.js (both are
+        // deferred, so document order = execution order).
+        $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/vendor/fullcalendar/index.global.min.js']);
+        $this->hook->on('template:layout:js', ['template' => 'plugins/CalendarPlugin/Assets/js/calendar.js']);
+        $this->hook->on('template:layout:css', ['template' => 'plugins/CalendarPlugin/Assets/css/calendar.css']);
     }
 
     public function getPluginName()        { return 'CalendarPlugin'; }

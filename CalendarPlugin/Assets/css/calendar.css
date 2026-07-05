@@ -1,0 +1,2 @@
+.cal-root { margin-top: 0.5rem; }
+.cal-calendar { background: var(--card, #fff); color: var(--card-foreground, #1a1a1a); border-radius: var(--radius, 0.5rem); padding: 0.5rem; }
