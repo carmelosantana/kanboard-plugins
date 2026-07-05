@@ -35,6 +35,97 @@ class DependencyModelTest extends Base
         $this->assertTrue(empty($map2[$a]['open_blockers']) || $map2[$a]['open_blockers'] === 0);
     }
 
+    public function testWouldCreateCycleDetectsDirectAndSelf()
+    {
+        $p = new \Kanboard\Model\ProjectModel($this->container);
+        $tc = new \Kanboard\Model\TaskCreationModel($this->container);
+        $tl = new \Kanboard\Model\TaskLinkModel($this->container);
+        $linkModel = new \Kanboard\Model\LinkModel($this->container);
+
+        $blockedById = $linkModel->getByLabel('is blocked by');
+        $this->assertNotEmpty($blockedById);
+        $blockedById = $blockedById['id'];
+
+        $pid = $p->create(array('name' => 'CycleDirect'));
+        $a = $tc->create(array('project_id' => $pid, 'title' => 'A'));
+        $b = $tc->create(array('project_id' => $pid, 'title' => 'B'));
+        $tl->create($a, $b, $blockedById); // "A is blocked by B" => A -> B
+
+        $model = new DependencyModel($this->container);
+
+        // B blocked-by A would close A <-> B
+        $this->assertTrue($model->wouldCreateCycle($b, $a));
+
+        // self
+        $this->assertTrue($model->wouldCreateCycle($a, $a));
+    }
+
+    public function testWouldCreateCycleDetectsTransitive()
+    {
+        $p = new \Kanboard\Model\ProjectModel($this->container);
+        $tc = new \Kanboard\Model\TaskCreationModel($this->container);
+        $tl = new \Kanboard\Model\TaskLinkModel($this->container);
+        $linkModel = new \Kanboard\Model\LinkModel($this->container);
+
+        $blockedById = $linkModel->getByLabel('is blocked by');
+        $this->assertNotEmpty($blockedById);
+        $blockedById = $blockedById['id'];
+
+        $pid = $p->create(array('name' => 'CycleTransitive'));
+        $a = $tc->create(array('project_id' => $pid, 'title' => 'A'));
+        $b = $tc->create(array('project_id' => $pid, 'title' => 'B'));
+        $c = $tc->create(array('project_id' => $pid, 'title' => 'C'));
+        $x = $tc->create(array('project_id' => $pid, 'title' => 'X'));
+
+        $tl->create($a, $b, $blockedById); // A -> B
+        $tl->create($b, $c, $blockedById); // B -> C
+
+        $model = new DependencyModel($this->container);
+
+        // C blocked-by A would close A->B->C->A
+        $this->assertTrue($model->wouldCreateCycle($c, $a));
+
+        // A blocked-by C is acyclic (C reaches nothing)
+        $this->assertFalse($model->wouldCreateCycle($a, $c));
+
+        // self, unrelated task
+        $this->assertTrue($model->wouldCreateCycle($x, $x));
+    }
+
+    public function testGetBlockersAndGetBlocking()
+    {
+        $p = new \Kanboard\Model\ProjectModel($this->container);
+        $tc = new \Kanboard\Model\TaskCreationModel($this->container);
+        $tl = new \Kanboard\Model\TaskLinkModel($this->container);
+        $ts = new \Kanboard\Model\TaskStatusModel($this->container);
+        $linkModel = new \Kanboard\Model\LinkModel($this->container);
+
+        $blockedById = $linkModel->getByLabel('is blocked by');
+        $this->assertNotEmpty($blockedById);
+        $blockedById = $blockedById['id'];
+
+        $pid = $p->create(array('name' => 'Panel'));
+        $a = $tc->create(array('project_id' => $pid, 'title' => 'A'));
+        $b = $tc->create(array('project_id' => $pid, 'title' => 'B (blocker)'));
+        $tl->create($a, $b, $blockedById); // "A is blocked by B"
+
+        $model = new DependencyModel($this->container);
+
+        $blockers = $model->getBlockers($a);
+        $this->assertCount(1, $blockers);
+        $this->assertSame($b, $blockers[0]['task_id']);
+        $this->assertEquals(1, $blockers[0]['is_active']);
+
+        $blocking = $model->getBlocking($b);
+        $this->assertCount(1, $blocking);
+        $this->assertSame($a, $blocking[0]['task_id']);
+
+        $ts->close($b);
+        $model2 = new DependencyModel($this->container);
+        $blockers2 = $model2->getBlockers($a);
+        $this->assertEquals(0, $blockers2[0]['is_active']);
+    }
+
     public function testBlockedMapMemoizedAndEmptyProject()
     {
         $p = new \Kanboard\Model\ProjectModel($this->container);

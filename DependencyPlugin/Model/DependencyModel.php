@@ -17,14 +17,6 @@ use Kanboard\Model\TaskModel;
 class DependencyModel extends Base
 {
     /**
-     * Core seeded link ids (fallback reference only — always resolved by label at runtime).
-     *
-     * @var int
-     */
-    const LINK_IS_BLOCKED_BY = 2;
-    const LINK_BLOCKS = 3;
-
-    /**
      * Per-project memoization cache.
      *
      * @var array
@@ -156,5 +148,100 @@ class DependencyModel extends Base
             }
             $map[$taskId]['blocks'] = (int) $row['c'];
         }
+    }
+
+    /**
+     * Would making $taskId "blocked by" $blockerId close a dependency cycle?
+     *
+     * True if $taskId === $blockerId, or if $blockerId can already
+     * (transitively) reach $taskId by following existing "is blocked by"
+     * edges (i.e. $blockerId already depends, directly or indirectly, on
+     * $taskId — adding the new edge would form a loop).
+     *
+     * @access public
+     * @param  int $taskId
+     * @param  int $blockerId
+     * @return bool
+     */
+    public function wouldCreateCycle($taskId, $blockerId)
+    {
+        $taskId = (int) $taskId;
+        $blockerId = (int) $blockerId;
+
+        if ($taskId === $blockerId) {
+            return true;
+        }
+
+        $blockedByLink = $this->linkModel->getByLabel('is blocked by');
+        if (empty($blockedByLink)) {
+            return false;
+        }
+        $blockedById = $blockedByLink['id'];
+
+        $stack = array($blockerId);
+        $seen = array();
+
+        while (! empty($stack)) {
+            $node = array_pop($stack);
+
+            if (isset($seen[$node])) {
+                continue;
+            }
+            $seen[$node] = true;
+
+            if ($node === $taskId) {
+                return true;
+            }
+
+            $blockerIds = $this->db->table(TaskLinkModel::TABLE)
+                ->eq('task_id', $node)
+                ->eq('link_id', $blockedById)
+                ->findAllByColumn('opposite_task_id');
+
+            foreach ($blockerIds as $bid) {
+                $stack[] = (int) $bid;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Tasks that block $taskId (i.e. $taskId "is blocked by" these tasks).
+     *
+     * @access public
+     * @param  int $taskId
+     * @return array
+     */
+    public function getBlockers($taskId)
+    {
+        return $this->filterLinksByLabel($taskId, 'is blocked by');
+    }
+
+    /**
+     * Tasks that $taskId blocks.
+     *
+     * @access public
+     * @param  int $taskId
+     * @return array
+     */
+    public function getBlocking($taskId)
+    {
+        return $this->filterLinksByLabel($taskId, 'blocks');
+    }
+
+    /**
+     * @access private
+     * @param  int    $taskId
+     * @param  string $label
+     * @return array
+     */
+    private function filterLinksByLabel($taskId, $label)
+    {
+        $links = $this->taskLinkModel->getAll((int) $taskId);
+
+        return array_values(array_filter($links, function (array $link) use ($label) {
+            return $link['label'] === $label;
+        }));
     }
 }
