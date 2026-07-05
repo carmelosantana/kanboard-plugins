@@ -2,6 +2,12 @@
  * DependencyPlugin — namespaced styles (dep-*) for the board-card
  * blocked badge. Theme-token-aware with hard-coded fallbacks so it
  * reads correctly on both standard Kanboard and ShadcnTheme (dark).
+ *
+ * .dep-blocked uses a solid --destructive background with
+ * --destructive-foreground text (same pairing as the task-panel's
+ * .dep-open status pill below) rather than a faint tinted background —
+ * a review flagged the earlier faint-background/--destructive-foreground
+ * pairing as too subtle to read on dark card backgrounds.
  */
 .dep-badge {
     display: inline-block;
@@ -15,9 +21,10 @@
 }
 
 .dep-blocked {
-    color: var(--destructive, #c0392b);
-    background-color: var(--destructive-foreground, rgba(192, 57, 43, 0.12));
+    color: var(--destructive-foreground, #fff);
+    background-color: var(--destructive, #c0392b);
     border: 1px solid var(--destructive, #c0392b);
+    font-weight: bold;
 }
 
 /*
