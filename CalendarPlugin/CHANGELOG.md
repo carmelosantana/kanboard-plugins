@@ -2,7 +2,7 @@
 
 All notable changes to the CalendarPlugin will be documented in this file.
 
-## [Unreleased]
+## [1.0.2] - 2026-07-05
 
 ### Changed
 - Calmer, more minimal calendar UI: removed the filter-bar box, the Unscheduled
