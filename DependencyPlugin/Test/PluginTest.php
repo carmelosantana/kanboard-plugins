@@ -2,7 +2,7 @@
 
 require_once 'tests/units/Base.php';
 
-use Kanboard\Plugin\CalendarPlugin\Plugin;
+use Kanboard\Plugin\DependencyPlugin\Plugin;
 use KanboardTests\units\Base;
 
 class PluginTest extends Base
@@ -10,13 +10,13 @@ class PluginTest extends Base
     public function testPluginNameValue()
     {
         $plugin = new Plugin($this->container);
-        $this->assertSame('CalendarPlugin', $plugin->getPluginName());
+        $this->assertSame('DependencyPlugin', $plugin->getPluginName());
     }
 
-    public function testPluginVersionValue()
+    public function testPluginCompatibleVersionValue()
     {
         $plugin = new Plugin($this->container);
-        $this->assertSame('1.1.0', $plugin->getPluginVersion());
+        $this->assertSame('>=1.2.47', $plugin->getCompatibleVersion());
     }
 
     public function testPluginMetadataNotEmpty()

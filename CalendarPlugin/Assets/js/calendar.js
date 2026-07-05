@@ -184,6 +184,13 @@
                     est.textContent = '~' + ep.estimate + 'h';
                     wrap.appendChild(est);
                 }
+                var badges = ep.badges || [];
+                badges.forEach(function (b) {
+                    var el = document.createElement('span');
+                    el.className = 'cal-ev-badge ' + (b.cls || '');
+                    el.textContent = b.text;
+                    wrap.appendChild(el);
+                });
                 return { domNodes: [wrap] };
             },
             eventClick: function (info) { info.jsEvent.preventDefault(); showPopover(info); },

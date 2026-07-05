@@ -17,6 +17,7 @@ services:
       - ../SubtaskGenerator:/var/www/app/plugins/SubtaskGenerator
       - ../ModMenu:/var/www/app/plugins/ModMenu
       - ../CalendarPlugin:/var/www/app/plugins/CalendarPlugin
+      - ../DependencyPlugin:/var/www/app/plugins/DependencyPlugin
 
 volumes:
   kb-suite-data:
