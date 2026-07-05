@@ -3,11 +3,23 @@
 namespace Kanboard\Plugin\DependencyPlugin;
 
 use Kanboard\Core\Plugin\Base;
+use Kanboard\Model\TaskLinkModel;
+use Kanboard\Plugin\DependencyPlugin\Model\DependencyModel;
+use Kanboard\Plugin\DependencyPlugin\Subscriber\DependencyLinkSubscriber;
 
 class Plugin extends Base
 {
     public function initialize()
     {
+        $this->container['dependencyModel'] = function ($c) {
+            return new DependencyModel($c);
+        };
+
+        $container = $this->container;
+
+        $this->dispatcher->addListener(TaskLinkModel::EVENT_CREATE_UPDATE, function ($event) use ($container) {
+            (new DependencyLinkSubscriber($container))->onLinkCreateUpdate($event);
+        });
     }
 
     public function getPluginName()        { return 'DependencyPlugin'; }
