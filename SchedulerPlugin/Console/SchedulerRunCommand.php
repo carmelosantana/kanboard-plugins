@@ -20,7 +20,23 @@ class SchedulerRunCommand extends BaseCommand
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $output->writeln('<info>scheduler:run</info> registered.');
+        $options = array(
+            'dry_run' => (bool) $input->getOption('dry-run'),
+            'trigger' => 'cli',
+        );
+        if ($input->getOption('project')) {
+            $options['project_id'] = (int) $input->getOption('project');
+        }
+
+        $result = $this->schedulerRunner->run($options);
+
+        $mode = $result['dry_run'] ? 'DRY-RUN' : 'applied';
+        $output->writeln(sprintf('<info>Scheduler %s:</info> %d task(s) across %d project(s).', $mode, $result['total_moved'], count($result['projects'])));
+
+        foreach ($result['projects'] as $p) {
+            $output->writeln(sprintf('  project %d: %d move(s)', $p['project_id'], count($p['moves'])));
+        }
+
         return 0;
     }
 }
