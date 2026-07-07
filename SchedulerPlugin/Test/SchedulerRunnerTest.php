@@ -61,7 +61,6 @@ class SchedulerRunnerTest extends Base
         $tf = new TaskFinderModel($this->container);
         $reloaded = $tf->getById($task);
         $this->assertSame(date('Y-m-d'), date('Y-m-d', (int) $reloaded['date_due'])); // now due today
-        $this->assertSame(date('Y-m-d'), $cfg->recentlyMovedTaskIds($pid) ? date('Y-m-d', time()) : ''); // marker set (window contains it)
         $this->assertContains($task, $cfg->recentlyMovedTaskIds($pid));
     }
 
@@ -157,5 +156,42 @@ class SchedulerRunnerTest extends Base
         $this->assertSame($uid, (int) $rows[0]['creator_id']);
         $data = json_decode($rows[0]['data'], true);
         $this->assertSame(1, (int) $data['count']);
+    }
+
+    public function testActivitySummaryFallsBackToProjectOwnerWhenCreatorZero()
+    {
+        // A real user to own the project (valid users FK target for the fallback).
+        $userModel = new \Kanboard\Model\UserModel($this->container);
+        $ownerId = $userModel->create(array('username' => 'sched_owner', 'password' => 'x'));
+        $this->assertGreaterThan(0, $ownerId);
+
+        $cfg = new SchedulerConfigModel($this->container);
+        $this->container['configModel']->save(array(
+            SchedulerConfigModel::MASTER => '1',
+            SchedulerConfigModel::WORKING_DAYS => '1,2,3,4,5,6,7',
+        ));
+
+        $p = new ProjectModel($this->container);
+        $tc = new TaskCreationModel($this->container);
+        $pid = $p->create(array('name' => 'P', 'owner_id' => $ownerId));
+        // Ensure the project owner is our valid user (create() may override owner_id from session).
+        $this->container['db']->table('projects')->eq('id', $pid)->update(array('owner_id' => $ownerId));
+        $cfg->setProjectEnabled($pid, true);
+
+        $task = $tc->create(array('project_id' => $pid, 'title' => 'overdue', 'date_due' => $this->midnight(5)));
+        // Force the system/API creator_id = 0 case.
+        $this->container['db']->table('tasks')->eq('id', $task)->update(array('creator_id' => 0));
+
+        $runner = new SchedulerRunner($this->container);
+        $result = $runner->run(array('trigger' => 'cli'));
+        $this->assertSame(1, $result['total_moved']);
+
+        $rows = $this->container['db']->table('project_activities')
+            ->eq('event_name', 'scheduler.tasks.rescheduled')
+            ->eq('project_id', $pid)
+            ->findAll();
+        $this->assertCount(1, $rows, 'summary must still post via project-owner fallback');
+        $this->assertSame($ownerId, (int) $rows[0]['creator_id']);
+        $this->assertSame($task, (int) $rows[0]['task_id']);
     }
 }

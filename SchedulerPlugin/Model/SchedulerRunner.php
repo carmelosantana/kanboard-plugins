@@ -78,15 +78,27 @@ class SchedulerRunner extends Base
                 $totalMoved += count($moved);
 
                 if (! $dryRun && $config->postToActivity()) {
-                    // project_activities has FK constraints on task_id and creator_id,
-                    // so a 0/0 "system" event is rejected by the DB. Anchor the per-run
-                    // summary to the first moved task and attribute it to that task's
-                    // creator (always a valid user), which the activity stream accepts.
+                    // project_activities FK-requires a valid task_id (tasks) and
+                    // creator_id (users). tasks.creator_id can legitimately be 0
+                    // (API/system tasks), so pick the first moved task WITH a real
+                    // creator; fall back to the project owner so the summary still
+                    // posts. Skip only if no valid creator can be found at all.
                     $anchorTaskId = (int) $moved[0]['task_id'];
-                    $creatorId = (int) $this->db->table(TaskModel::TABLE)
-                        ->eq('id', $anchorTaskId)
-                        ->findOneColumn('creator_id');
-
+                    $creatorId = 0;
+                    foreach ($moved as $mv) {
+                        $cid = (int) $this->db->table(TaskModel::TABLE)
+                            ->eq('id', (int) $mv['task_id'])
+                            ->findOneColumn('creator_id');
+                        if ($cid > 0) {
+                            $creatorId = $cid;
+                            break;
+                        }
+                    }
+                    if ($creatorId <= 0) {
+                        $creatorId = (int) $this->db->table(\Kanboard\Model\ProjectModel::TABLE)
+                            ->eq('id', (int) $pid)
+                            ->findOneColumn('owner_id');
+                    }
                     if ($anchorTaskId > 0 && $creatorId > 0) {
                         $this->projectActivityModel->createEvent(
                             (int) $pid,
