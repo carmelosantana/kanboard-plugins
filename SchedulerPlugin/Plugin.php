@@ -12,6 +12,9 @@ class Plugin extends Base
         $this->container['schedulerConfigModel'] = function ($c) {
             return new \Kanboard\Plugin\SchedulerPlugin\Model\SchedulerConfigModel($c);
         };
+        $this->container['schedulerLogModel'] = function ($c) {
+            return new \Kanboard\Plugin\SchedulerPlugin\Model\SchedulerLogModel($c);
+        };
         $this->container['cli']->add(new SchedulerRunCommand($this->container));
     }
 
