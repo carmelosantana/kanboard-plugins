@@ -78,10 +78,24 @@ class SchedulerRunner extends Base
                 $totalMoved += count($moved);
 
                 if (! $dryRun && $config->postToActivity()) {
-                    $this->projectActivityModel->createEvent((int) $pid, 0, 0, self::EVENT_NAME, array(
-                        'count'  => count($moved),
-                        'run_id' => $runId,
-                    ));
+                    // project_activities has FK constraints on task_id and creator_id,
+                    // so a 0/0 "system" event is rejected by the DB. Anchor the per-run
+                    // summary to the first moved task and attribute it to that task's
+                    // creator (always a valid user), which the activity stream accepts.
+                    $anchorTaskId = (int) $moved[0]['task_id'];
+                    $creatorId = (int) $this->db->table(TaskModel::TABLE)
+                        ->eq('id', $anchorTaskId)
+                        ->findOneColumn('creator_id');
+
+                    if ($anchorTaskId > 0 && $creatorId > 0) {
+                        $this->projectActivityModel->createEvent(
+                            (int) $pid,
+                            $anchorTaskId,
+                            $creatorId,
+                            self::EVENT_NAME,
+                            array('count' => count($moved), 'run_id' => $runId)
+                        );
+                    }
                 }
             }
         }

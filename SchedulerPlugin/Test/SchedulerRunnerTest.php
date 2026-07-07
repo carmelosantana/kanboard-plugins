@@ -121,4 +121,41 @@ class SchedulerRunnerTest extends Base
         $this->assertSame(1, $result['total_moved']);
         $this->assertSame($a, $result['projects'][0]['project_id']);
     }
+
+    public function testCreatesActivitySummaryAnchoredToMovedTask()
+    {
+        // Ensure a valid creator user exists and own the task via creator_id.
+        $userModel = new \Kanboard\Model\UserModel($this->container);
+        $uid = $userModel->create(array('username' => 'sched_creator', 'password' => 'x'));
+        $this->assertGreaterThan(0, $uid);
+
+        $cfg = new SchedulerConfigModel($this->container);
+        $this->container['configModel']->save(array(
+            SchedulerConfigModel::MASTER => '1',
+            SchedulerConfigModel::WORKING_DAYS => '1,2,3,4,5,6,7',
+        ));
+
+        $p = new ProjectModel($this->container);
+        $tc = new TaskCreationModel($this->container);
+        $pid = $p->create(array('name' => 'P'));
+        $cfg->setProjectEnabled($pid, true);
+        $task = $tc->create(array('project_id' => $pid, 'title' => 'overdue', 'creator_id' => $uid, 'date_due' => $this->midnight(5)));
+
+        // Sanity: creator persisted.
+        $this->assertSame($uid, (int) (new TaskFinderModel($this->container))->getById($task)['creator_id']);
+
+        $runner = new SchedulerRunner($this->container);
+        $result = $runner->run(array('trigger' => 'cli'));
+        $this->assertSame(1, $result['total_moved']);
+
+        $rows = $this->container['db']->table('project_activities')
+            ->eq('event_name', 'scheduler.tasks.rescheduled')
+            ->eq('project_id', $pid)
+            ->findAll();
+        $this->assertCount(1, $rows);
+        $this->assertSame($task, (int) $rows[0]['task_id']);
+        $this->assertSame($uid, (int) $rows[0]['creator_id']);
+        $data = json_decode($rows[0]['data'], true);
+        $this->assertSame(1, (int) $data['count']);
+    }
 }
