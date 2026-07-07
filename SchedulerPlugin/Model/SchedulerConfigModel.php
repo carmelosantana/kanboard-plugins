@@ -90,7 +90,13 @@ class SchedulerConfigModel extends Base
     public function setLastRun($ymd)
     {
         $this->configModel->save(array(self::LAST_RUN => $ymd));
-        $this->memoryCache->remove('proxy:Kanboard\Model\ConfigModel:getAll');
+
+        // configModel and memoryCache are shared singletons within a request, and
+        // ConfigModel::get() memoizes getAll() through the proxy cache. Without this
+        // flush, a getLastRun() read later in the same request (e.g. WebCronTrigger's
+        // double-fire guard) would return the stale pre-save value. flush() avoids
+        // coupling to core's internal proxy-cache key format.
+        $this->memoryCache->flush();
     }
 
     public function isProjectEnabled($projectId)
