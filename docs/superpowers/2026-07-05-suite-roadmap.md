@@ -1,6 +1,6 @@
 # Kanboard Plugin Suite — Roadmap (next set of plugins)
 
-- **Date:** 2026-07-05
+- **Date:** 2026-07-05 (updated 2026-07-07)
 - **Status:** Planning reference (each plugin still gets its own brainstorm → spec → plan → SDD cycle)
 - **Repo:** `kanboard-plugins` (Kanboard v1.2.47, PHP ≥ 8.4, buildless, MIT). Dev stack: `testing/docker-compose.dev.yml` on `:8081` (admin/admin), all plugins bind-mounted.
 - **Directory:** `../kanboard-modmenu-directory/plugins.json` → releases consumed by ModMenu.
@@ -14,9 +14,12 @@
 | FeatureSync | 1.0.0 | Copy project features across projects |
 | SubtaskGenerator | 1.0.0 | AI subtask generation (Anthropic/OpenAI/Grok) |
 | ModMenu | 1.0.1 | Standalone plugin manager |
-| **CalendarPlugin** | **1.0.1** | Drag-and-drop calendar (global + per-project). Polish M1–M13 done. |
+| **CalendarPlugin** | **1.1.0** | Drag-and-drop calendar (global + per-project). Polish M1–M13 + generic `calendarEventDecorators` hook. |
+| **DependencyPlugin** | **1.0.0** | Task dependencies on core links: blocked/blocker badges (board, calendar, task page) + cycle guard. |
 
 The four-plugin design suite was: **CalendarPlugin → DependencyPlugin → SchedulerPlugin → EnhancedTaskPlugin.** CalendarPlugin is the flagship visual surface the later plugins decorate. See `docs/superpowers/specs/2026-07-04-calendarplugin-design.md` §11.
+
+**Progress:** CalendarPlugin ✅ shipped (v1.1.0) · DependencyPlugin ✅ shipped (v1.0.0). **SchedulerPlugin is next.**
 
 ---
 
@@ -34,26 +37,26 @@ Not polish (all polish M1–M13 shipped in 1.0.1). These are net-new capabilitie
 
 Keep the event payload's `extendedProps` extensible (DependencyPlugin/SchedulerPlugin decorate it).
 
-### 1. DependencyPlugin (next distinct plugin — recommended next)
+### 1. DependencyPlugin ✅ SHIPPED (v1.0.0, 2026-07-07)
 
-**Purpose:** task dependencies built on Kanboard's core task links, with cascade behavior and a visual graph; decorates CalendarPlugin events with blocked/blocker badges.
+Task dependencies built on Kanboard's core task links. Delivered:
+- Blocked-by / blocks relationships on top of core `TaskLinkModel` (reuses the "blocks"/"is blocked by" link types — no new store).
+- **Blocked/blocker badges** on board cards, the task page panel, and CalendarPlugin events (via the `calendarEventDecorators` hook + `extendedProps.badges`).
+- **Cycle guard** — an event listener rejects link creations that would form a cycle (removes both directions + flashes a failure).
 
-Candidate scope (refine in brainstorm):
-- Blocked-by / blocks relationships on top of core `TaskLinkModel` (reuse the "blocks"/"is blocked by" link types; don't invent a new store).
-- **Cascade** — moving/rescheduling a task nudges dependents (policy-driven; overlaps SchedulerPlugin — draw the boundary in brainstorm).
-- **Dependency graph** view (chain/DAG visualization).
-- **Blocked badges + chain highlight** on the calendar and board (cross-plugin decoration of CalendarPlugin events via `extendedProps`).
-- Cycle detection / guard against circular dependencies.
+**Deferred from v1 (future DependencyPlugin v1.1+ — own brainstorm):**
+- **Dependency graph** view (chain/DAG visualization — needs a graph-rendering lib).
+- **Cascade** — moving/rescheduling a task nudges dependents. *This belongs to SchedulerPlugin's boundary, not here.*
 
-**Integration contract with CalendarPlugin:** documented endpoints `events` (`calendar.getEvents`) and `updateDate` (`calendar.updateTaskDate`); communicate via Kanboard's event system (e.g. `TaskModificationEvent`) — no hard coupling.
-
-### 2. SchedulerPlugin
+### 2. SchedulerPlugin (recommended next)
 
 **Purpose:** automated rescheduling as a plugin CLI command (cron-friendly).
 
-Candidate scope:
-- **Nightly sweep** + **reschedule policies** (e.g. roll overdue-incomplete forward; respect dependencies from DependencyPlugin).
+Candidate scope (refine in brainstorm):
+- **Nightly sweep** + **reschedule policies** (e.g. roll overdue-incomplete forward; **respect DependencyPlugin's blocks** via `DependencyModel::getProjectBlockedMap()` — don't schedule a task ahead of its blocker).
+- **Cascade auto-reschedule** — the cascade behavior deferred from DependencyPlugin lands here.
 - **Auto-move log** — audit trail of automated moves.
+- Optionally decorate calendar events (`calendarEventDecorators`) with an "auto-moved" badge.
 - Implemented as a Kanboard plugin **CLI command** (console), not a request-time hook.
 
 ### 3. EnhancedTaskPlugin
