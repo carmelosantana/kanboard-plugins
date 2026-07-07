@@ -9,6 +9,9 @@ class Plugin extends Base
 {
     public function initialize()
     {
+        $this->container['schedulerConfigModel'] = function ($c) {
+            return new \Kanboard\Plugin\SchedulerPlugin\Model\SchedulerConfigModel($c);
+        };
         $this->container['cli']->add(new SchedulerRunCommand($this->container));
     }
 
