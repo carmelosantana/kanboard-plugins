@@ -34,8 +34,21 @@ class Plugin extends Base
         $this->route->addRoute('scheduler/save', 'SchedulerController', 'save', 'SchedulerPlugin');
         $this->route->addRoute('scheduler/run', 'SchedulerController', 'run', 'SchedulerPlugin');
 
+        // Admin log routes + per-project toggle route.
+        $this->route->addRoute('scheduler/log', 'SchedulerController', 'log', 'SchedulerPlugin');
+        $this->route->addRoute('scheduler/log/run', 'SchedulerController', 'runDetail', 'SchedulerPlugin');
+        $this->route->addRoute('scheduler/project/toggle', 'SchedulerController', 'toggleProject', 'SchedulerPlugin');
+
         // Config sidebar link.
         $this->hook->on('template:config:sidebar', array('template' => 'SchedulerPlugin:config/sidebar'));
+
+        // Per-project sidebar: enable/disable auto-reschedule toggle.
+        $this->hook->on('template:project:sidebar', array(
+            'template' => 'SchedulerPlugin:project/toggle',
+            'callable' => function ($project) use ($container) {
+                return array('enabled' => $container['schedulerConfigModel']->isProjectEnabled($project['id']));
+            },
+        ));
 
         // Activity-stream event: register the name and point its render at our template.
         $this->eventManager->register('scheduler.tasks.rescheduled', t('Automatically rescheduled tasks'));

@@ -71,4 +71,46 @@ class SchedulerController extends BaseController
 
         $this->response->redirect($this->helper->url->to('SchedulerController', 'settings', array('plugin' => 'SchedulerPlugin')));
     }
+
+    public function log()
+    {
+        $this->requireAdmin();
+        $this->response->html($this->helper->layout->config('SchedulerPlugin:log/index', array(
+            'title' => t('Scheduler').' &gt; '.t('Log'),
+            'runs'  => $this->schedulerLogModel->getRecentRuns(50),
+        )));
+    }
+
+    public function runDetail()
+    {
+        $this->requireAdmin();
+        $runId = $this->request->getIntegerParam('run_id');
+        $this->response->html($this->helper->layout->config('SchedulerPlugin:log/run', array(
+            'title'  => t('Scheduler').' &gt; '.t('Run #%d', $runId),
+            'run_id' => $runId,
+            'moves'  => $this->schedulerLogModel->getMovesForRun($runId),
+        )));
+    }
+
+    public function toggleProject()
+    {
+        $projectId = $this->request->getIntegerParam('project_id');
+        $project = $this->projectModel->getById($projectId);
+        if (empty($project)) {
+            throw new AccessForbiddenException();
+        }
+
+        // Manager or admin on THIS project.
+        if (! $this->userSession->isAdmin() &&
+            $this->projectUserRoleModel->getUserRole($projectId, $this->userSession->getId()) !== \Kanboard\Core\Security\Role::PROJECT_MANAGER) {
+            throw new AccessForbiddenException();
+        }
+
+        $this->checkCSRFForm();
+        $enable = ! $this->schedulerConfigModel->isProjectEnabled($projectId);
+        $this->schedulerConfigModel->setProjectEnabled($projectId, $enable);
+
+        $this->flash->success($enable ? t('Auto-reschedule enabled for this project.') : t('Auto-reschedule disabled for this project.'));
+        $this->response->redirect($this->helper->url->to('ProjectViewController', 'show', array('project_id' => $projectId)));
+    }
 }
