@@ -56,6 +56,25 @@ class Plugin extends Base
 
         // Tiny sitewide CSS (badge + activity marker) — mirrors DependencyPlugin's decision.
         $this->hook->on('template:layout:css', array('template' => 'plugins/SchedulerPlugin/Assets/css/scheduler.css'));
+
+        // CalendarPlugin's calendarEventDecorators extension point (soft dependency —
+        // if CalendarPlugin isn't installed, nothing ever consumes this container key).
+        // Append, don't overwrite, so other plugins' decorators (e.g. DependencyPlugin's)
+        // still run. The closure captures $this so schedulerConfigModel resolves lazily.
+        $this->container['calendarEventDecorators'] = array_merge(
+            isset($this->container['calendarEventDecorators']) ? $this->container['calendarEventDecorators'] : array(),
+            array(function (array $event, array $row) {
+                $projectId = (int) (isset($row['project_id']) ? $row['project_id'] : 0);
+                $recent = $this->schedulerConfigModel->recentlyMovedTaskIds($projectId);
+                if (in_array((int) $event['id'], $recent, true)) {
+                    if (! isset($event['extendedProps']['badges'])) {
+                        $event['extendedProps']['badges'] = array();
+                    }
+                    $event['extendedProps']['badges'][] = array('text' => "\u{23F0}", 'cls' => 'sch-moved');
+                }
+                return $event;
+            })
+        );
     }
 
     public function getPluginName()        { return 'SchedulerPlugin'; }
