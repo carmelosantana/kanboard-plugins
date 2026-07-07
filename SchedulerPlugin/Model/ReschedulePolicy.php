@@ -81,7 +81,7 @@ class ReschedulePolicy
 
             if ($this->declumpThreshold >= 1) {
                 $guard = 0;
-                while ((isset($load[date('Y-m-d', $targetDay)]) ? $load[date('Y-m-d', $targetDay)] : 0) >= ($this->declumpThreshold - 1) && $guard < 366) {
+                while ((isset($load[date('Y-m-d', $targetDay)]) ? $load[date('Y-m-d', $targetDay)] : 0) >= $this->declumpThreshold && $guard < 366) {
                     $targetDay = $this->nextWorkingDay($targetDay + 86400);
                     $reason = 'de-clump';
                     $guard++;

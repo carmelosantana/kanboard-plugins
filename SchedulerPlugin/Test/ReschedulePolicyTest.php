@@ -75,21 +75,34 @@ class ReschedulePolicyTest extends Base
         $this->assertTrue($moves[0]['move']);
     }
 
-    public function testDeclumpSpreadsAcrossDays()
+    public function testDeclumpFillsToThresholdThenSpills()
     {
-        // Threshold 2: today already has 2 scheduled; three overdue tasks must spread.
-        $policy = new ReschedulePolicy([1, 2, 3, 4, 5], [], 2, true);
-        $today = $this->midnight('2026-07-08'); // Wed
-        $dayLoad = [date('Y-m-d', $today) => 2];
+        // Every day is a working day, so only de-clump changes dates. Threshold 2 =
+        // at most 2 tasks may land on a day; the 3rd overdue task spills forward.
+        $policy = new ReschedulePolicy([1, 2, 3, 4, 5, 6, 7], [], 2, true);
+        $today = $this->midnight('2026-07-08');
         $tasks = [
             ['id' => 1, 'date_due' => $this->midnight('2026-07-01')],
             ['id' => 2, 'date_due' => $this->midnight('2026-07-02')],
+            ['id' => 3, 'date_due' => $this->midnight('2026-07-03')],
         ];
-        $moves = $policy->plan($tasks, $today, [], $dayLoad);
-        // Today is already full (2 >= 2) → first task goes to Thu 07-09, second to Fri 07-10.
+        $moves = $policy->plan($tasks, $today, [], []);
+        $this->assertSame($today, $moves[0]['new_date']);                        // 1st -> today
+        $this->assertSame($today, $moves[1]['new_date']);                        // 2nd -> today (2 <= threshold)
+        $this->assertSame($this->midnight('2026-07-09'), $moves[2]['new_date']); // 3rd spills forward
+        $this->assertSame('de-clump', $moves[2]['reason']);
+    }
+
+    public function testDeclumpRespectsExistingDayLoad()
+    {
+        // Today already holds 2 scheduled tasks; threshold 2 -> today is full, so an
+        // overdue task spills to the next day.
+        $policy = new ReschedulePolicy([1, 2, 3, 4, 5, 6, 7], [], 2, true);
+        $today = $this->midnight('2026-07-08');
+        $dayLoad = [date('Y-m-d', $today) => 2];
+        $moves = $policy->plan([['id' => 1, 'date_due' => $this->midnight('2026-07-01')]], $today, [], $dayLoad);
         $this->assertSame($this->midnight('2026-07-09'), $moves[0]['new_date']);
         $this->assertSame('de-clump', $moves[0]['reason']);
-        $this->assertSame($this->midnight('2026-07-10'), $moves[1]['new_date']);
     }
 
     public function testDeclumpDisabledWhenThresholdZero()
