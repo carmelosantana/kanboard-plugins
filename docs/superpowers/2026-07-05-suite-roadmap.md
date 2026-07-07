@@ -19,7 +19,7 @@
 
 The four-plugin design suite was: **CalendarPlugin → DependencyPlugin → SchedulerPlugin → EnhancedTaskPlugin.** CalendarPlugin is the flagship visual surface the later plugins decorate. See `docs/superpowers/specs/2026-07-04-calendarplugin-design.md` §11.
 
-**Progress:** CalendarPlugin ✅ shipped (v1.1.0) · DependencyPlugin ✅ shipped (v1.0.0). **SchedulerPlugin is next.**
+**Progress:** CalendarPlugin ✅ shipped (v1.1.0) · DependencyPlugin ✅ shipped (v1.0.0) · SchedulerPlugin ✅ shipped (v1.0.0). **EnhancedTaskPlugin is next.**
 
 ---
 
@@ -48,16 +48,15 @@ Task dependencies built on Kanboard's core task links. Delivered:
 - **Dependency graph** view (chain/DAG visualization — needs a graph-rendering lib).
 - **Cascade** — moving/rescheduling a task nudges dependents. *This belongs to SchedulerPlugin's boundary, not here.*
 
-### 2. SchedulerPlugin (recommended next)
+### 2. SchedulerPlugin ✅ SHIPPED (v1.0.0, 2026-07-07)
 
-**Purpose:** automated rescheduling as a plugin CLI command (cron-friendly).
+Automated overdue-task rescheduling. See `docs/superpowers/specs/2026-07-07-schedulerplugin-design.md` + `docs/superpowers/plans/2026-07-07-schedulerplugin.md`. Delivered:
+- **Daily sweep** per opt-in project; policy pipeline: skip-blocked (via `DependencyModel::getProjectBlockedMap()`) → snap-to-today → working-days → de-clump (max N/day).
+- **Three triggers** wrapping one `SchedulerRunner`: lazy web-cron (guarded once/day), admin Run-now with dry-run preview, and `./cli scheduler:run`.
+- **Audit log** (`scheduler_runs` + `scheduler_moves` tables + admin log page) and a per-run **activity-stream summary**.
+- **Calendar auto-moved badge** via CalendarPlugin's `calendarEventDecorators`.
 
-Candidate scope (refine in brainstorm):
-- **Nightly sweep** + **reschedule policies** (e.g. roll overdue-incomplete forward; **respect DependencyPlugin's blocks** via `DependencyModel::getProjectBlockedMap()` — don't schedule a task ahead of its blocker).
-- **Cascade auto-reschedule** — the cascade behavior deferred from DependencyPlugin lands here.
-- **Auto-move log** — audit trail of automated moves.
-- Optionally decorate calendar events (`calendarEventDecorators`) with an "auto-moved" badge.
-- Implemented as a Kanboard plugin **CLI command** (console), not a request-time hook.
+**Deferred to a future SchedulerPlugin release:** cascade auto-reschedule (moving a task nudges dependents); column/WIP-aware de-clumping; per-project policy overrides.
 
 ### 3. EnhancedTaskPlugin
 
