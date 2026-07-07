@@ -28,6 +28,21 @@ class Plugin extends Base
                 return array();
             },
         ));
+
+        // Admin settings routes.
+        $this->route->addRoute('scheduler/settings', 'SchedulerController', 'settings', 'SchedulerPlugin');
+        $this->route->addRoute('scheduler/save', 'SchedulerController', 'save', 'SchedulerPlugin');
+        $this->route->addRoute('scheduler/run', 'SchedulerController', 'run', 'SchedulerPlugin');
+
+        // Config sidebar link.
+        $this->hook->on('template:config:sidebar', array('template' => 'SchedulerPlugin:config/sidebar'));
+
+        // Activity-stream event: register the name and point its render at our template.
+        $this->eventManager->register('scheduler.tasks.rescheduled', t('Automatically rescheduled tasks'));
+        $this->template->setTemplateOverride('event/scheduler_tasks_rescheduled', 'SchedulerPlugin:event/tasks_rescheduled');
+
+        // Tiny sitewide CSS (badge + activity marker) — mirrors DependencyPlugin's decision.
+        $this->hook->on('template:layout:css', array('template' => 'plugins/SchedulerPlugin/Assets/css/scheduler.css'));
     }
 
     public function getPluginName()        { return 'SchedulerPlugin'; }
