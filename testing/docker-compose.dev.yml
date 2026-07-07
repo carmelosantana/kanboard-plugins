@@ -18,6 +18,7 @@ services:
       - ../ModMenu:/var/www/app/plugins/ModMenu
       - ../CalendarPlugin:/var/www/app/plugins/CalendarPlugin
       - ../DependencyPlugin:/var/www/app/plugins/DependencyPlugin
+      - ../SchedulerPlugin:/var/www/app/plugins/SchedulerPlugin
 
 volumes:
   kb-suite-data:
