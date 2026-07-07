@@ -90,6 +90,7 @@ class SchedulerConfigModel extends Base
     public function setLastRun($ymd)
     {
         $this->configModel->save(array(self::LAST_RUN => $ymd));
+        $this->memoryCache->remove('proxy:Kanboard\Model\ConfigModel:getAll');
     }
 
     public function isProjectEnabled($projectId)

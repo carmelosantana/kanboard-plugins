@@ -19,6 +19,15 @@ class Plugin extends Base
             return new \Kanboard\Plugin\SchedulerPlugin\Model\SchedulerRunner($c);
         };
         $this->container['cli']->add(new SchedulerRunCommand($this->container));
+
+        $container = $this->container;
+        $this->hook->on('template:layout:top', array(
+            'template' => 'SchedulerPlugin:layout/webcron',
+            'callable' => function () use ($container) {
+                (new \Kanboard\Plugin\SchedulerPlugin\Trigger\WebCronTrigger($container))->maybeRun();
+                return array();
+            },
+        ));
     }
 
     public function getPluginName()        { return 'SchedulerPlugin'; }
