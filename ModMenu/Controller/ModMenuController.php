@@ -38,10 +38,19 @@ class ModMenuController extends BaseController
         $this->requireAdmin();
         $manager = $this->manager();
 
+        // Classify each installed plugin's unmet deps against install state only
+        // (empty catalog → no network on the Installed tab; the Install/Enable
+        // buttons re-resolve server-side). recommends surface as soft hints.
+        $plugins = $manager->listInstalled();
+        foreach ($plugins as &$p) {
+            $p['unmet_deps'] = $manager->unmetDepsFor($p['requires'] ?? [], $p['recommends'] ?? [], []);
+        }
+        unset($p);
+
         $this->response->html($this->helper->layout->config('ModMenu:settings/installed', [
             'title' => t('ModMenu'),
             'tab' => 'installed',
-            'plugins' => $manager->listInstalled(),
+            'plugins' => $plugins,
             'is_configured' => $manager->isConfigured(),
             'not_configured_reason' => $manager->notConfiguredReason(),
             'self_name' => PluginManager::SELF,
