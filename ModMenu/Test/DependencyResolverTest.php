@@ -99,6 +99,35 @@ class DependencyResolverTest extends Base
         $this->assertSame('none', $c['action']);
     }
 
+    public function testClassifyDisabledButTooOldWithNewerCatalogIsUpdate()
+    {
+        $map = ['Cal' => ['version' => '1.0.0', 'status' => 'disabled']];
+        $catalog = ['Cal' => ['version' => '1.2.0', 'download' => 'https://x/cal.zip']];
+        $c = DependencyResolver::classify($this->dep('Cal', '1.1.0'), $map, $catalog);
+        $this->assertSame('disabled', $c['status']);
+        $this->assertSame('update', $c['action']);
+        $this->assertSame('https://x/cal.zip', $c['download']);
+    }
+
+    public function testClassifyDisabledButTooOldWithoutCatalogIsUnresolvable()
+    {
+        $map = ['Cal' => ['version' => '1.0.0', 'status' => 'disabled']];
+        $c = DependencyResolver::classify($this->dep('Cal', '1.1.0'), $map, []);
+        $this->assertSame('disabled', $c['status']);
+        $this->assertSame('unresolvable', $c['action']);
+        $this->assertNull($c['download']);
+    }
+
+    public function testClassifyOutdatedWhenCatalogVersionAlsoBelowMinIsUnresolvable()
+    {
+        $map = ['Cal' => ['version' => '1.0.0', 'status' => 'active']];
+        $catalog = ['Cal' => ['version' => '1.0.5', 'download' => 'https://x/cal.zip']]; // still < 1.1.0
+        $c = DependencyResolver::classify($this->dep('Cal', '1.1.0'), $map, $catalog);
+        $this->assertSame('outdated', $c['status']);
+        $this->assertSame('unresolvable', $c['action']);
+        $this->assertNull($c['download']);
+    }
+
     // ---- resolveForward ----
     public function testResolveForwardSatisfiedFlagAndKind()
     {
