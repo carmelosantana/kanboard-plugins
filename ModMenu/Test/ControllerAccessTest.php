@@ -37,4 +37,10 @@ class ControllerAccessTest extends Base
         $this->expectException(\Kanboard\Core\Controller\AccessForbiddenException::class);
         (new \Kanboard\Plugin\ModMenu\Controller\UploadController($this->container))->upload();
     }
+
+    public function testResolveForbiddenForNonAdmin()
+    {
+        $this->expectException(AccessForbiddenException::class);
+        $this->nonAdminController()->resolve();
+    }
 }
