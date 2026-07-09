@@ -164,6 +164,15 @@ class ModMenuController extends BaseController
         $check    = $manager->forwardCheck($requires, $catalog);
         $target   = $action === 'install' ? (string) ($catalog[$name]['download'] ?? '') : '';
 
+        // Guard against the catalog changing between the confirm render and this
+        // submit (TOCTOU): if a requirement is no longer auto-resolvable, refuse
+        // rather than run a plan that resolveAndActivate would abort on anyway.
+        if ($check['blocked']) {
+            $this->flash->failure(t('"%s" has requirements that can no longer be installed automatically. Install them manually first.', $name));
+            $action === 'install' ? $this->backToDirectory() : $this->backToInstalled();
+            return;
+        }
+
         $this->runAndFlash(
             fn (PluginManager $m) => $m->resolveAndActivate($name, $action, $target, $check['plan']),
             $action === 'install' ? t('Plugin and its dependencies installed.') : t('Plugin and its dependencies enabled.')
