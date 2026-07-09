@@ -198,4 +198,41 @@ class DependencyResolverTest extends Base
         ];
         $this->assertSame([], $this->resolver->resolveReverse('Cal', $depsByPlugin, $installedMap));
     }
+
+    // ---- resolveClosure ----
+    public function testResolveClosureSingleMissing()
+    {
+        $catalog = ['Cal' => ['version' => '1.1.0', 'download' => 'https://x/cal.zip']];
+        $plan = $this->resolver->resolveClosure([$this->dep('Cal', '1.1.0')], [], $catalog);
+        $this->assertCount(1, $plan);
+        $this->assertSame('Cal', $plan[0]['plugin']);
+        $this->assertSame('install', $plan[0]['action']);
+    }
+
+    public function testResolveClosureOmitsSatisfied()
+    {
+        $map = ['Cal' => ['version' => '1.1.0', 'status' => 'active']];
+        $plan = $this->resolver->resolveClosure([$this->dep('Cal', '1.1.0')], $map, []);
+        $this->assertSame([], $plan);
+    }
+
+    public function testResolveClosureIsDepsFirstAndDeduped()
+    {
+        // Dep(missing) requires Cal(missing). Plan must list Cal before Dep, once each.
+        $catalog = [
+            'Dep' => ['version' => '1.0.0', 'download' => 'https://x/dep.zip', 'requires' => [['plugin' => 'Cal', 'min_version' => '1.1.0']]],
+            'Cal' => ['version' => '1.1.0', 'download' => 'https://x/cal.zip'],
+        ];
+        $plan = $this->resolver->resolveClosure([$this->dep('Dep')], [], $catalog);
+        $order = array_column($plan, 'plugin');
+        $this->assertSame(['Cal', 'Dep'], $order);
+    }
+
+    public function testResolveClosureMarksUnresolvable()
+    {
+        // Missing and not in the catalog → a plan step the caller must block on.
+        $plan = $this->resolver->resolveClosure([$this->dep('Ghost')], [], []);
+        $this->assertCount(1, $plan);
+        $this->assertSame('unresolvable', $plan[0]['action']);
+    }
 }

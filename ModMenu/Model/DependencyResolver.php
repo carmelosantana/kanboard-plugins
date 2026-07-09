@@ -130,4 +130,54 @@ class DependencyResolver extends Base
         }
         return $blockers;
     }
+
+    /**
+     * Build the ordered plan (deps-first, deduped) needed to satisfy a plugin's
+     * hard `requires`, transitively. Satisfied deps are omitted. A required dep
+     * that cannot be auto-resolved appears with action 'unresolvable' so the
+     * caller blocks instead of half-installing.
+     *
+     * @param array $requires  the starting plugin's `requires` list
+     * @return array list of ['plugin','action','download','min_version']
+     */
+    public function resolveClosure(array $requires, array $installedMap, array $catalog): array
+    {
+        $plan = [];
+        $seen = [];
+        $this->walk($requires, $installedMap, $catalog, $plan, $seen);
+        return $plan;
+    }
+
+    private function walk(array $requires, array $installedMap, array $catalog, array &$plan, array &$seen): void
+    {
+        foreach ($requires as $dep) {
+            if (! is_array($dep) || empty($dep['plugin'])) {
+                continue;
+            }
+            $name = (string) $dep['plugin'];
+            if (isset($seen[$name])) {
+                continue;
+            }
+            $seen[$name] = true;
+
+            $c = self::classify($dep, $installedMap, $catalog);
+            if ($c['status'] === 'satisfied') {
+                continue;
+            }
+
+            // Recurse into this dep's own requires (from the catalog) FIRST, so the
+            // plan is deps-first (post-order): grandchildren before children.
+            $childRequires = $catalog[$name]['requires'] ?? [];
+            if (is_array($childRequires) && $childRequires !== []) {
+                $this->walk($childRequires, $installedMap, $catalog, $plan, $seen);
+            }
+
+            $plan[] = [
+                'plugin'      => $name,
+                'action'      => $c['action'],
+                'download'    => $c['download'],
+                'min_version' => $c['min_version'],
+            ];
+        }
+    }
 }
