@@ -252,6 +252,8 @@ class PluginManager extends Base
             'description' => '',
             'author' => '',
             'homepage' => '',
+            'requires' => [],
+            'recommends' => [],
         ];
 
         $jsonFile = $path . '/plugin.json';
@@ -267,9 +269,64 @@ class PluginManager extends Base
                 $meta['description'] = $json['description'] ?? '';
                 $meta['author'] = $json['author'] ?? '';
                 $meta['homepage'] = $json['homepage'] ?? '';
+                $meta['requires']   = self::normalizeDeps($json['requires'] ?? []);
+                $meta['recommends'] = self::normalizeDeps($json['recommends'] ?? []);
             }
         }
         return $meta;
+    }
+
+    /**
+     * Normalize a raw deps array into clean dep objects. Non-arrays and elements
+     * without a 'plugin' key are dropped (never fatal).
+     */
+    private static function normalizeDeps($raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $entry) {
+            if (is_array($entry) && ! empty($entry['plugin'])) {
+                $out[] = [
+                    'plugin'      => (string) $entry['plugin'],
+                    'min_version' => isset($entry['min_version']) && $entry['min_version'] !== '' ? (string) $entry['min_version'] : null,
+                    'reason'      => isset($entry['reason']) ? (string) $entry['reason'] : '',
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * name => ['status' => 'active'|'disabled', 'requires' => [dep objects]] for
+     * every installed plugin — the input the reverse-dependency check needs.
+     */
+    public function installedPluginsDeps(): array
+    {
+        $out = [];
+        foreach ($this->listInstalled() as $p) {
+            $out[$p['name']] = [
+                'status'   => $p['status'],
+                'requires' => $p['requires'] ?? [],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Classified unmet deps (requires + recommends) for one plugin, for display.
+     * Satisfied deps are omitted; each entry carries its 'kind'.
+     */
+    public function unmetDepsFor(array $requires, array $recommends, array $catalog): array
+    {
+        $resolver = new DependencyResolver($this->container);
+        $map = $this->installedMap();
+        $all = array_merge(
+            $resolver->resolveForward($requires, 'requires', $map, $catalog)['deps'],
+            $resolver->resolveForward($recommends, 'recommends', $map, $catalog)['deps']
+        );
+        return array_values(array_filter($all, static fn ($d) => $d['status'] !== 'satisfied'));
     }
 
     private function guardName(string $name): void
