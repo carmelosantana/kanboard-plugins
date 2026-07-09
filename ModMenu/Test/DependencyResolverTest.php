@@ -150,4 +150,52 @@ class DependencyResolverTest extends Base
         $this->assertTrue($out['satisfied']); // nothing valid to be unsatisfied
         $this->assertCount(0, $out['deps']);
     }
+
+    // ---- resolveReverse ----
+    public function testResolveReverseFindsActiveHardDependent()
+    {
+        $installedMap = [
+            'Cal' => ['version' => '1.1.0', 'status' => 'active'],
+            'Dep' => ['version' => '1.0.0', 'status' => 'active'],
+        ];
+        $depsByPlugin = [
+            'Cal' => ['status' => 'active', 'requires' => []],
+            'Dep' => ['status' => 'active', 'requires' => [['plugin' => 'Cal', 'min_version' => '1.1.0']]],
+        ];
+        $blockers = $this->resolver->resolveReverse('Cal', $depsByPlugin, $installedMap);
+        $this->assertCount(1, $blockers);
+        $this->assertSame('Dep', $blockers[0]['plugin']);
+    }
+
+    public function testResolveReverseIgnoresDisabledDependent()
+    {
+        $installedMap = ['Cal' => ['version' => '1.1.0', 'status' => 'active']];
+        $depsByPlugin = [
+            'Cal' => ['status' => 'active', 'requires' => []],
+            'Dep' => ['status' => 'disabled', 'requires' => [['plugin' => 'Cal']]],
+        ];
+        $this->assertSame([], $this->resolver->resolveReverse('Cal', $depsByPlugin, $installedMap));
+    }
+
+    public function testResolveReverseIgnoresRecommendsOnlyDependent()
+    {
+        // 'Sched' only recommends Cal (not in its requires) → not a blocker.
+        $installedMap = ['Cal' => ['version' => '1.1.0', 'status' => 'active']];
+        $depsByPlugin = [
+            'Cal'   => ['status' => 'active', 'requires' => []],
+            'Sched' => ['status' => 'active', 'requires' => []], // recommends live elsewhere; reverse only reads requires
+        ];
+        $this->assertSame([], $this->resolver->resolveReverse('Cal', $depsByPlugin, $installedMap));
+    }
+
+    public function testResolveReverseIgnoresUnsatisfiedRequirement()
+    {
+        // Dep requires Cal >= 2.0.0 but Cal is 1.1.0 → requirement not currently met,
+        // so removing Cal doesn't break an already-broken relationship.
+        $installedMap = ['Cal' => ['version' => '1.1.0', 'status' => 'active']];
+        $depsByPlugin = [
+            'Dep' => ['status' => 'active', 'requires' => [['plugin' => 'Cal', 'min_version' => '2.0.0']]],
+        ];
+        $this->assertSame([], $this->resolver->resolveReverse('Cal', $depsByPlugin, $installedMap));
+    }
 }

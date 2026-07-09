@@ -104,4 +104,30 @@ class DependencyResolver extends Base
         }
         return ['satisfied' => $satisfied, 'deps' => $resolved];
     }
+
+    /**
+     * Which ACTIVE installed plugins hard-require $target and are satisfied by it
+     * today? Only `requires` count; `recommends` never block removal. A dependent
+     * whose requirement is already unmet is not a blocker (nothing to break).
+     *
+     * @param array $installedPluginsDeps  name => ['status'=>..., 'requires'=>[dep objects]]
+     */
+    public function resolveReverse(string $target, array $installedPluginsDeps, array $installedMap): array
+    {
+        $blockers = [];
+        foreach ($installedPluginsDeps as $name => $info) {
+            if ($name === $target || ($info['status'] ?? '') !== 'active') {
+                continue;
+            }
+            foreach (($info['requires'] ?? []) as $dep) {
+                if (! is_array($dep) || ($dep['plugin'] ?? '') !== $target) {
+                    continue;
+                }
+                if (self::isSatisfied($dep, $installedMap)) {
+                    $blockers[] = ['plugin' => (string) $name, 'min_version' => $dep['min_version'] ?? null];
+                }
+            }
+        }
+        return $blockers;
+    }
 }
