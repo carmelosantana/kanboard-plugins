@@ -13,7 +13,7 @@
 | ShadcnTheme | 1.0.1 | shadcn/ui dark theme + toggle |
 | FeatureSync | 1.0.0 | Copy project features across projects |
 | SubtaskGenerator | 1.0.0 | AI subtask generation (Anthropic/OpenAI/Grok) |
-| ModMenu | 1.0.1 | Standalone plugin manager |
+| **ModMenu** | **1.1.0** | Standalone plugin manager + **dependency system**: plugins declare `requires` (hard, gates activation w/ one-click transitive resolve + reverse-block) / `recommends` (soft prompt). Pure `DependencyResolver`, 94 tests. See `specs/2026-07-09-modmenu-dependency-system-design.md`. |
 | **CalendarPlugin** | **1.1.0** | Drag-and-drop calendar (global + per-project). Polish M1–M13 + generic `calendarEventDecorators` hook. |
 | **DependencyPlugin** | **1.0.0** | Task dependencies on core links: blocked/blocker badges (board, calendar, task page) + cycle guard. |
 
