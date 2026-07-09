@@ -343,4 +343,25 @@ class PluginManagerTest extends Base
             $this->assertDirectoryDoesNotExist("{$this->active}/Dep");
         }
     }
+
+    public function testResolveAndActivateAbortsBeforeExecutingAnyResolvableStep()
+    {
+        // A resolvable 'enable' step precedes an 'unresolvable' one: validate-all-first
+        // means NEITHER runs — proves no partial activation when abort is not step-0.
+        $this->seedPlugin($this->disabled, 'A', '1.0.0');
+        $this->seedPlugin($this->disabled, 'Dep', '1.0.0');
+        $plan = [
+            ['plugin' => 'A', 'action' => 'enable', 'download' => null, 'min_version' => null],
+            ['plugin' => 'Ghost', 'action' => 'unresolvable', 'download' => null, 'min_version' => null],
+        ];
+        try {
+            $this->manager->resolveAndActivate('Dep', 'enable', '', $plan);
+            $this->fail('expected ModMenuException');
+        } catch (ModMenuException $e) {
+            $this->assertDirectoryExists("{$this->disabled}/A", 'resolvable dep A must NOT have been enabled');
+            $this->assertDirectoryDoesNotExist("{$this->active}/A");
+            $this->assertDirectoryExists("{$this->disabled}/Dep", 'target must NOT have been enabled');
+            $this->assertDirectoryDoesNotExist("{$this->active}/Dep");
+        }
+    }
 }
