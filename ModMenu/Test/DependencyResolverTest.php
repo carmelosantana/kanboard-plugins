@@ -235,4 +235,32 @@ class DependencyResolverTest extends Base
         $this->assertCount(1, $plan);
         $this->assertSame('unresolvable', $plan[0]['action']);
     }
+
+    public function testResolveClosureDiamondDedupesSharedDep()
+    {
+        // Root requires Dep1 and Dep2; both require Cal. Cal must appear exactly once, before both.
+        $catalog = [
+            'Dep1' => ['version' => '1.0.0', 'download' => 'https://x/dep1.zip', 'requires' => [['plugin' => 'Cal', 'min_version' => '1.1.0']]],
+            'Dep2' => ['version' => '1.0.0', 'download' => 'https://x/dep2.zip', 'requires' => [['plugin' => 'Cal', 'min_version' => '1.1.0']]],
+            'Cal'  => ['version' => '1.1.0', 'download' => 'https://x/cal.zip'],
+        ];
+        $plan = $this->resolver->resolveClosure([$this->dep('Dep1'), $this->dep('Dep2')], [], $catalog);
+        $plugins = array_column($plan, 'plugin');
+        $this->assertCount(1, array_keys($plugins, 'Cal'), 'Cal must be deduped to a single step');
+        $this->assertLessThan(array_search('Dep1', $plugins), array_search('Cal', $plugins));
+        $this->assertLessThan(array_search('Dep2', $plugins), array_search('Cal', $plugins));
+    }
+
+    public function testResolveClosureTerminatesOnCyclicCatalog()
+    {
+        // Cyclic catalog: A requires B, B requires A. Must terminate; each appears once.
+        $catalog = [
+            'A' => ['version' => '1.0.0', 'download' => 'https://x/a.zip', 'requires' => [['plugin' => 'B']]],
+            'B' => ['version' => '1.0.0', 'download' => 'https://x/b.zip', 'requires' => [['plugin' => 'A']]],
+        ];
+        $plan = $this->resolver->resolveClosure([$this->dep('A')], [], $catalog);
+        $plugins = array_column($plan, 'plugin');
+        sort($plugins);
+        $this->assertSame(['A', 'B'], $plugins, 'each node appears exactly once, no infinite recursion');
+    }
 }
