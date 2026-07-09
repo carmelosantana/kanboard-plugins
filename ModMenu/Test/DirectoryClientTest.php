@@ -87,4 +87,30 @@ class DirectoryClientTest extends Base
         $this->assertCount(1, $merged);
         $this->assertSame('1.0.0', $merged[0]['version']);
     }
+
+    public function testAnnotatePreservesDependencyFields()
+    {
+        $plugins = [[
+            'name' => 'Dep', 'version' => '1.0.0',
+            'requires'   => [['plugin' => 'Cal', 'min_version' => '1.1.0']],
+            'recommends' => [['plugin' => 'Cal']],
+        ]];
+        $out = $this->client->annotate($plugins, 'https://x.com/plugins.json', []);
+        $this->assertSame('Cal', $out[0]['requires'][0]['plugin']);
+        $this->assertSame('1.1.0', $out[0]['requires'][0]['min_version']);
+        $this->assertSame('Cal', $out[0]['recommends'][0]['plugin']);
+    }
+
+    public function testMergePreservesDependencyFields()
+    {
+        $sourcesData = [[
+            'url' => 'https://a.com/plugins.json',
+            'plugins' => [[
+                'name' => 'Dep', 'version' => '1.0.0',
+                'requires' => [['plugin' => 'Cal', 'min_version' => '1.1.0']],
+            ]],
+        ]];
+        $merged = $this->client->merge($sourcesData, []);
+        $this->assertSame('Cal', $merged[0]['requires'][0]['plugin']);
+    }
 }
