@@ -88,6 +88,7 @@ class PluginManager extends Base
     {
         $this->guardName($name);
         $this->guardSelf($name);
+        $this->assertNoActiveDependents($name);
         $this->move($name, $this->activeDir(), $this->disabledDir());
     }
 
@@ -95,6 +96,7 @@ class PluginManager extends Base
     {
         $this->guardName($name);
         $this->guardSelf($name);
+        $this->assertNoActiveDependents($name);
 
         foreach ([$this->activeDir(), $this->disabledDir()] as $base) {
             $path = $base . '/' . $name;
@@ -252,6 +254,8 @@ class PluginManager extends Base
             'description' => '',
             'author' => '',
             'homepage' => '',
+            'requires' => [],
+            'recommends' => [],
         ];
 
         $jsonFile = $path . '/plugin.json';
@@ -267,9 +271,131 @@ class PluginManager extends Base
                 $meta['description'] = $json['description'] ?? '';
                 $meta['author'] = $json['author'] ?? '';
                 $meta['homepage'] = $json['homepage'] ?? '';
+                $meta['requires']   = self::normalizeDeps($json['requires'] ?? []);
+                $meta['recommends'] = self::normalizeDeps($json['recommends'] ?? []);
             }
         }
         return $meta;
+    }
+
+    /**
+     * Normalize a raw deps array into clean dep objects. Non-arrays and elements
+     * without a 'plugin' key are dropped (never fatal).
+     */
+    private static function normalizeDeps($raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $entry) {
+            if (is_array($entry) && ! empty($entry['plugin'])) {
+                $out[] = [
+                    'plugin'      => (string) $entry['plugin'],
+                    'min_version' => isset($entry['min_version']) && $entry['min_version'] !== '' ? (string) $entry['min_version'] : null,
+                    'reason'      => isset($entry['reason']) ? (string) $entry['reason'] : '',
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * name => ['status' => 'active'|'disabled', 'requires' => [dep objects]] for
+     * every installed plugin — the input the reverse-dependency check needs.
+     */
+    public function installedPluginsDeps(): array
+    {
+        $out = [];
+        foreach ($this->listInstalled() as $p) {
+            $out[$p['name']] = [
+                'status'   => $p['status'],
+                'requires' => $p['requires'] ?? [],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Classified unmet deps (requires + recommends) for one plugin, for display.
+     * Satisfied deps are omitted; each entry carries its 'kind'.
+     */
+    public function unmetDepsFor(array $requires, array $recommends, array $catalog): array
+    {
+        $resolver = new DependencyResolver($this->container);
+        $map = $this->installedMap();
+        $all = array_merge(
+            $resolver->resolveForward($requires, 'requires', $map, $catalog)['deps'],
+            $resolver->resolveForward($recommends, 'recommends', $map, $catalog)['deps']
+        );
+        return array_values(array_filter($all, static fn ($d) => $d['status'] !== 'satisfied'));
+    }
+
+    private function assertNoActiveDependents(string $name): void
+    {
+        $resolver = new DependencyResolver($this->container);
+        $blockers = $resolver->resolveReverse($name, $this->installedPluginsDeps(), $this->installedMap());
+        if ($blockers !== []) {
+            $names = implode(', ', array_map(static fn ($b) => $b['plugin'], $blockers));
+            throw new ModMenuException(t('"%s" is required by: %s. Disable or remove those first.', $name, $names));
+        }
+    }
+
+    /**
+     * Forward verdict for activating a plugin with the given `requires`.
+     * satisfied=true → act directly. Otherwise 'plan' is the deps-first closure;
+     * 'blocked'=true when a required dep cannot be auto-resolved.
+     */
+    public function forwardCheck(array $requires, array $catalog): array
+    {
+        $resolver = new DependencyResolver($this->container);
+        $map = $this->installedMap();
+        $forward = $resolver->resolveForward($requires, 'requires', $map, $catalog);
+        if ($forward['satisfied']) {
+            return ['satisfied' => true, 'plan' => [], 'blocked' => false, 'requires' => $forward['deps']];
+        }
+        $plan = $resolver->resolveClosure($requires, $map, $catalog);
+        $blocked = false;
+        foreach ($plan as $step) {
+            if ($step['action'] === 'unresolvable') {
+                $blocked = true;
+                break;
+            }
+        }
+        return ['satisfied' => false, 'plan' => $plan, 'blocked' => $blocked, 'requires' => $forward['deps']];
+    }
+
+    /**
+     * Execute a resolve plan deps-first, then activate the target. Aborts before
+     * any action if the plan contains an unresolvable step (no partial activation).
+     *
+     * @param string $action  'enable' | 'install'
+     * @param string $target  target's own download URL (only used when action='install')
+     * @param array  $plan    ordered steps from forwardCheck()
+     */
+    public function resolveAndActivate(string $name, string $action, string $target, array $plan): void
+    {
+        foreach ($plan as $step) {
+            if (($step['action'] ?? '') === 'unresolvable') {
+                throw new ModMenuException(t('"%s" cannot be resolved automatically. Install it manually first.', $step['plugin'] ?? '?'));
+            }
+        }
+        foreach ($plan as $step) {
+            switch ($step['action']) {
+                case 'enable':
+                    $this->enable($step['plugin']);
+                    break;
+                case 'install':
+                case 'update':
+                    $this->installFromUrl((string) $step['download']);
+                    break;
+            }
+        }
+        if ($action === 'install') {
+            $this->installFromUrl($target);
+        } else {
+            $this->enable($name);
+        }
     }
 
     private function guardName(string $name): void

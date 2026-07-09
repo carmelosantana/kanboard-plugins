@@ -28,6 +28,7 @@ class Plugin extends Base
         $this->route->addRoute('config/modmenu/source/add', 'ModMenu:ModMenuController', 'addSource');
         $this->route->addRoute('config/modmenu/source/remove', 'ModMenu:ModMenuController', 'removeSource');
         $this->route->addRoute('config/modmenu/plugin/confirm', 'ModMenu:ModMenuController', 'confirm');
+        $this->route->addRoute('config/modmenu/plugin/resolve', 'ModMenu:ModMenuController', 'resolve');
         $this->route->addRoute('config/modmenu/plugin/enable', 'ModMenu:ModMenuController', 'enable');
         $this->route->addRoute('config/modmenu/plugin/disable', 'ModMenu:ModMenuController', 'disable');
         $this->route->addRoute('config/modmenu/plugin/uninstall', 'ModMenu:ModMenuController', 'uninstall');
@@ -53,7 +54,7 @@ class Plugin extends Base
 
     public function getPluginVersion(): string
     {
-        return '1.0.1';
+        return '1.1.0';
     }
 
     public function getCompatibleVersion(): string

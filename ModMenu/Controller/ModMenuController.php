@@ -7,6 +7,7 @@ use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Plugin\ModMenu\Model\PluginManager;
 use Kanboard\Plugin\ModMenu\Model\DirectoryClient;
 use Kanboard\Plugin\ModMenu\Model\SourceRepository;
+use Kanboard\Plugin\ModMenu\Model\DependencyResolver;
 use Kanboard\Plugin\ModMenu\Exception\ModMenuException;
 
 /**
@@ -37,10 +38,19 @@ class ModMenuController extends BaseController
         $this->requireAdmin();
         $manager = $this->manager();
 
+        // Classify each installed plugin's unmet deps against install state only
+        // (empty catalog → no network on the Installed tab; the Install/Enable
+        // buttons re-resolve server-side). recommends surface as soft hints.
+        $plugins = $manager->listInstalled();
+        foreach ($plugins as &$p) {
+            $p['unmet_deps'] = $manager->unmetDepsFor($p['requires'] ?? [], $p['recommends'] ?? [], []);
+        }
+        unset($p);
+
         $this->response->html($this->helper->layout->config('ModMenu:settings/installed', [
             'title' => t('ModMenu'),
             'tab' => 'installed',
-            'plugins' => $manager->listInstalled(),
+            'plugins' => $plugins,
             'is_configured' => $manager->isConfigured(),
             'not_configured_reason' => $manager->notConfiguredReason(),
             'self_name' => PluginManager::SELF,
@@ -99,8 +109,13 @@ class ModMenuController extends BaseController
     public function confirm()
     {
         $this->requireAdmin();
+        $name = $this->request->getStringParam('name');
+        $manager = $this->manager();
+        $resolver = new DependencyResolver($this->container);
+        $blockers = $resolver->resolveReverse($name, $manager->installedPluginsDeps(), $manager->installedMap());
         $this->response->html($this->template->render('ModMenu:plugin/remove', [
-            'name' => $this->request->getStringParam('name'),
+            'name'     => $name,
+            'blockers' => array_map(static fn ($b) => $b['plugin'], $blockers),
         ]));
     }
 
@@ -108,8 +123,7 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $this->runAndFlash(fn (PluginManager $m) => $m->enable($this->postValue('name')), t('Plugin enabled.'));
-        $this->backToInstalled();
+        $this->forwardOrConfirm($this->postValue('name'), 'enable', '');
     }
 
     public function disable()
@@ -132,9 +146,47 @@ class ModMenuController extends BaseController
     {
         $this->requireAdmin();
         $this->checkCSRFForm();
-        $url = $this->postValue('archive_url');
-        $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin installed.'));
-        $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
+        $name   = $this->postValue('name');
+        $target = $this->postValue('archive_url');
+
+        // Legacy path: an install form that posts only archive_url (no name) can't
+        // pre-flight deps — install directly, unchanged behavior.
+        if ($name === '') {
+            $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($target), t('Plugin installed.'));
+            $this->backToDirectory();
+            return;
+        }
+        $this->forwardOrConfirm($name, 'install', $target);
+    }
+
+    public function resolve()
+    {
+        $this->requireAdmin();
+        $this->checkCSRFForm();
+        $name   = $this->postValue('name');
+        $action = $this->postValue('action') === 'install' ? 'install' : 'enable';
+
+        // Re-derive the plan + URLs server-side from a fresh catalog — never trust the post.
+        $manager  = $this->manager();
+        $catalog  = $this->catalog();
+        $requires = $this->requiresFor($name, $action, $catalog, $manager);
+        $check    = $manager->forwardCheck($requires, $catalog);
+        $target   = $action === 'install' ? (string) ($catalog[$name]['download'] ?? '') : '';
+
+        // Guard against the catalog changing between the confirm render and this
+        // submit (TOCTOU): if a requirement is no longer auto-resolvable, refuse
+        // rather than run a plan that resolveAndActivate would abort on anyway.
+        if ($check['blocked']) {
+            $this->flash->failure(t('"%s" has requirements that can no longer be installed automatically. Install them manually first.', $name));
+            $action === 'install' ? $this->backToDirectory() : $this->backToInstalled();
+            return;
+        }
+
+        $this->runAndFlash(
+            fn (PluginManager $m) => $m->resolveAndActivate($name, $action, $target, $check['plan']),
+            $action === 'install' ? t('Plugin and its dependencies installed.') : t('Plugin and its dependencies enabled.')
+        );
+        $action === 'install' ? $this->backToDirectory() : $this->backToInstalled();
     }
 
     public function update()
@@ -143,6 +195,66 @@ class ModMenuController extends BaseController
         $this->checkCSRFForm();
         $url = $this->postValue('archive_url');
         $this->runAndFlash(fn (PluginManager $m) => $m->installFromUrl($url), t('Plugin updated.'));
+        $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
+    }
+
+    // ── dependency helpers ──────────────────────────────────────────────────
+
+    private function catalog(): array
+    {
+        return (new DirectoryClient($this->container))->catalogMap();
+    }
+
+    private function requiresFor(string $name, string $action, array $catalog, PluginManager $manager): array
+    {
+        if ($action === 'install') {
+            return $catalog[$name]['requires'] ?? [];
+        }
+        $deps = $manager->installedPluginsDeps();
+        return $deps[$name]['requires'] ?? [];
+    }
+
+    /**
+     * Forward gate for enable/install: act directly when satisfied, block when a
+     * requirement is unresolvable, otherwise render the resolve-plan confirmation.
+     */
+    private function forwardOrConfirm(string $name, string $action, string $target): void
+    {
+        $manager  = $this->manager();
+        $catalog  = $this->catalog();
+        $requires = $this->requiresFor($name, $action, $catalog, $manager);
+
+        // Resolve the target's own download URL when installing without one.
+        if ($action === 'install' && $target === '') {
+            $target = (string) ($catalog[$name]['download'] ?? '');
+        }
+
+        $check = $manager->forwardCheck($requires, $catalog);
+
+        if ($check['satisfied']) {
+            $this->runAndFlash(function (PluginManager $m) use ($name, $action, $target) {
+                $action === 'install' ? $m->installFromUrl($target) : $m->enable($name);
+            }, $action === 'install' ? t('Plugin installed.') : t('Plugin enabled.'));
+            $action === 'install' ? $this->backToDirectory() : $this->backToInstalled();
+            return;
+        }
+
+        if ($check['blocked']) {
+            $this->flash->failure(t('"%s" has requirements that cannot be installed automatically. Install them manually first.', $name));
+            $action === 'install' ? $this->backToDirectory() : $this->backToInstalled();
+            return;
+        }
+
+        $this->response->html($this->helper->layout->config('ModMenu:plugin/resolve', [
+            'title'  => t('ModMenu'),
+            'name'   => $name,
+            'action' => $action,
+            'plan'   => $check['plan'],
+        ]));
+    }
+
+    private function backToDirectory()
+    {
         $this->response->redirect($this->helper->url->to('ModMenuController', 'directory', ['plugin' => 'ModMenu']));
     }
 

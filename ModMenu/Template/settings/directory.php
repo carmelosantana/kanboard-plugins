@@ -22,6 +22,19 @@
             <div class="modmenu-card__status">v<?= $this->text->e($p['version']) ?><?php if (! empty($p['author'])): ?> · <?= $this->text->e($p['author']) ?><?php endif ?></div>
             <?php if (! empty($p['description'])): ?><p><?= $this->text->e($p['description']) ?></p><?php endif ?>
 
+            <?php if (! empty($p['requires'])): ?>
+                <div class="modmenu-dep modmenu-dep--required">
+                    <?= t('Requires:') ?>
+                    <?php foreach ($p['requires'] as $i => $r): ?><?= $i ? ', ' : ' ' ?><?= $this->text->e($r['plugin']) ?><?php if (! empty($r['min_version'])): ?> &ge; <?= $this->text->e($r['min_version']) ?><?php endif ?><?php endforeach ?>
+                </div>
+            <?php endif ?>
+            <?php if (! empty($p['recommends'])): ?>
+                <div class="modmenu-dep modmenu-dep--recommended">
+                    <?= t('Recommends:') ?>
+                    <?php foreach ($p['recommends'] as $i => $r): ?><?= $i ? ', ' : ' ' ?><?= $this->text->e($r['plugin']) ?><?php endforeach ?>
+                </div>
+            <?php endif ?>
+
             <?php if (! empty($p['screenshots'])): ?>
                 <div class="modmenu-shots">
                     <?php foreach ($p['screenshots'] as $shot): ?>
@@ -34,6 +47,7 @@
                 <?php if ($p['status'] === 'available'): ?>
                     <form method="post" class="modmenu-action" action="<?= $this->url->href('ModMenuController', 'install', ['plugin' => 'ModMenu']) ?>">
                         <?= $this->form->csrf() ?>
+                        <input type="hidden" name="name" value="<?= $this->text->e($p['name']) ?>">
                         <input type="hidden" name="archive_url" value="<?= $this->text->e($p['download']) ?>">
                         <button type="submit" class="btn btn-blue"><?= t('Install') ?></button>
                     </form>

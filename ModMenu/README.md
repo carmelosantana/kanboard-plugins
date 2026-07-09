@@ -127,6 +127,24 @@ Each entry in the JSON array is an object. All fields are optional except `name`
 | `homepage` | string | URL to the plugin's home page or repository. |
 | `download` | string | URL to the `.zip` archive. ModMenu downloads this URL when the admin clicks Install or Update. |
 | `screenshots` | array | List of screenshot URLs (or paths relative to the `plugins.json` URL). Displayed as thumbnails in the Browse tab. |
+| `requires` | array | Hard dependencies — dep objects `{ "plugin": "Name", "min_version": "1.1.0" }`. ModMenu blocks activation until each is installed, active, and ≥ `min_version`, offering a one-click resolve. Reverse-protected: a required plugin can't be disabled/removed while an active dependent needs it. |
+| `recommends` | array | Soft dependencies — same dep-object shape plus an optional `"reason"`. Non-blocking: ModMenu shows a "works better with" hint and a one-click install, but activation proceeds without them. |
+
+### Dependencies
+
+A plugin declares dependencies on other plugins in its own `plugin.json` (authoritative) and, for directory listings, the same fields are mirrored into `plugins.json`:
+
+```json
+{
+  "name": "DependencyPlugin",
+  "requires":   [ { "plugin": "CalendarPlugin", "min_version": "1.1.0" } ],
+  "recommends": [ { "plugin": "CalendarPlugin", "min_version": "1.1.0", "reason": "adds calendar badges" } ]
+}
+```
+
+- **`requires`** blocks enable/install until satisfied (with a one-click resolve that installs/enables the chain), and blocks disable/uninstall of anything an active plugin still needs.
+- **`recommends`** only prompts an easy install; it never blocks.
+- Both are optional and backward-compatible — a plugin without them behaves exactly as before.
 
 Example:
 

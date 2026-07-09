@@ -196,4 +196,172 @@ class PluginManagerTest extends Base
         $this->assertFileExists($dst . '/Plugin.php');
         $this->assertSame('hello harmozi', file_get_contents($dst . '/sub/quote.php'));
     }
+
+    // Extended seeder: pass optional requires/recommends arrays.
+    private function seedPluginWithDeps(string $dir, string $name, string $version, array $requires = [], array $recommends = []): void
+    {
+        mkdir("$dir/$name", 0777, true);
+        file_put_contents("$dir/$name/Plugin.php", "<?php\n");
+        $json = ['name' => $name, 'version' => $version];
+        if ($requires !== [])   { $json['requires'] = $requires; }
+        if ($recommends !== []) { $json['recommends'] = $recommends; }
+        file_put_contents("$dir/$name/plugin.json", json_encode($json));
+    }
+
+    public function testReadMetaDefaultsDepsToEmpty()
+    {
+        $this->seedPlugin($this->active, 'Alpha', '1.0.0'); // existing seeder, no deps
+        $byName = [];
+        foreach ($this->manager->listInstalled() as $p) { $byName[$p['name']] = $p; }
+        $this->assertSame([], $byName['Alpha']['requires']);
+        $this->assertSame([], $byName['Alpha']['recommends']);
+    }
+
+    public function testReadMetaParsesDeps()
+    {
+        $this->seedPluginWithDeps($this->active, 'Dep', '1.0.0',
+            [['plugin' => 'Cal', 'min_version' => '1.1.0']],
+            [['plugin' => 'Cal', 'min_version' => '1.1.0', 'reason' => 'badges']]);
+        $byName = [];
+        foreach ($this->manager->listInstalled() as $p) { $byName[$p['name']] = $p; }
+        $this->assertSame('Cal', $byName['Dep']['requires'][0]['plugin']);
+        $this->assertSame('1.1.0', $byName['Dep']['requires'][0]['min_version']);
+        $this->assertSame('badges', $byName['Dep']['recommends'][0]['reason']);
+    }
+
+    public function testReadMetaIgnoresMalformedDeps()
+    {
+        // requires is a string, and an element lacks 'plugin' → both dropped, not fatal.
+        $this->seedPluginWithDeps($this->active, 'Bad', '1.0.0');
+        $dir = "{$this->active}/Bad";
+        file_put_contents("$dir/plugin.json", json_encode([
+            'name' => 'Bad', 'version' => '1.0.0',
+            'requires' => 'oops', 'recommends' => [['no_plugin' => 'x']],
+        ]));
+        $byName = [];
+        foreach ($this->manager->listInstalled() as $p) { $byName[$p['name']] = $p; }
+        $this->assertSame([], $byName['Bad']['requires']);
+        $this->assertSame([], $byName['Bad']['recommends']);
+    }
+
+    public function testInstalledPluginsDepsShape()
+    {
+        $this->seedPluginWithDeps($this->active, 'Dep', '1.0.0', [['plugin' => 'Cal']]);
+        $this->seedPlugin($this->disabled, 'Cal', '1.1.0');
+        $deps = $this->manager->installedPluginsDeps();
+        $this->assertSame('active', $deps['Dep']['status']);
+        $this->assertSame('Cal', $deps['Dep']['requires'][0]['plugin']);
+        $this->assertSame('disabled', $deps['Cal']['status']);
+    }
+
+    public function testUnmetDepsForReturnsOnlyUnsatisfied()
+    {
+        // Cal active & new enough → satisfied requires drop out; missing recommend stays.
+        $this->seedPlugin($this->active, 'Cal', '1.1.0');
+        $catalog = [];
+        $unmet = $this->manager->unmetDepsFor(
+            [['plugin' => 'Cal', 'min_version' => '1.1.0']],           // satisfied requires
+            [['plugin' => 'Extra', 'reason' => 'nice to have']],       // missing recommend
+            $catalog
+        );
+        $this->assertCount(1, $unmet);
+        $this->assertSame('Extra', $unmet[0]['plugin']);
+        $this->assertSame('recommends', $unmet[0]['kind']);
+    }
+
+    public function testDisableBlockedByActiveDependent()
+    {
+        $this->seedPlugin($this->active, 'Cal', '1.1.0');
+        $this->seedPluginWithDeps($this->active, 'Dep', '1.0.0', [['plugin' => 'Cal', 'min_version' => '1.1.0']]);
+        $this->expectException(ModMenuException::class);
+        $this->manager->disable('Cal');
+    }
+
+    public function testUninstallBlockedByActiveDependent()
+    {
+        $this->seedPlugin($this->active, 'Cal', '1.1.0');
+        $this->seedPluginWithDeps($this->active, 'Dep', '1.0.0', [['plugin' => 'Cal']]);
+        $this->expectException(ModMenuException::class);
+        $this->manager->uninstall('Cal');
+    }
+
+    public function testDisableAllowedWhenDependentDisabled()
+    {
+        $this->seedPlugin($this->active, 'Cal', '1.1.0');
+        $this->seedPluginWithDeps($this->disabled, 'Dep', '1.0.0', [['plugin' => 'Cal']]);
+        $this->manager->disable('Cal'); // no throw
+        $this->assertDirectoryExists("{$this->disabled}/Cal");
+    }
+
+    public function testForwardCheckSatisfied()
+    {
+        $this->seedPlugin($this->active, 'Cal', '1.1.0');
+        $check = $this->manager->forwardCheck([['plugin' => 'Cal', 'min_version' => '1.1.0']], []);
+        $this->assertTrue($check['satisfied']);
+        $this->assertSame([], $check['plan']);
+        $this->assertFalse($check['blocked']);
+    }
+
+    public function testForwardCheckNeedsConfirm()
+    {
+        $catalog = ['Cal' => ['version' => '1.1.0', 'download' => 'https://x/cal.zip']];
+        $check = $this->manager->forwardCheck([['plugin' => 'Cal', 'min_version' => '1.1.0']], $catalog);
+        $this->assertFalse($check['satisfied']);
+        $this->assertFalse($check['blocked']);
+        $this->assertSame('Cal', $check['plan'][0]['plugin']);
+        $this->assertSame('install', $check['plan'][0]['action']);
+    }
+
+    public function testForwardCheckBlockedWhenUnresolvable()
+    {
+        $check = $this->manager->forwardCheck([['plugin' => 'Ghost']], []); // missing, no catalog
+        $this->assertFalse($check['satisfied']);
+        $this->assertTrue($check['blocked']);
+    }
+
+    public function testResolveAndActivateEnablesDepThenTarget()
+    {
+        // Cal is disabled; Dep is disabled and requires Cal. Enabling Dep must enable Cal first.
+        $this->seedPlugin($this->disabled, 'Cal', '1.1.0');
+        $this->seedPluginWithDeps($this->disabled, 'Dep', '1.0.0', [['plugin' => 'Cal', 'min_version' => '1.1.0']]);
+        $plan = [['plugin' => 'Cal', 'action' => 'enable', 'download' => null, 'min_version' => '1.1.0']];
+        $this->manager->resolveAndActivate('Dep', 'enable', '', $plan);
+        $this->assertDirectoryExists("{$this->active}/Cal");
+        $this->assertDirectoryExists("{$this->active}/Dep");
+    }
+
+    public function testResolveAndActivateThrowsOnUnresolvableStepBeforeActing()
+    {
+        $this->seedPlugin($this->disabled, 'Dep', '1.0.0');
+        $plan = [['plugin' => 'Ghost', 'action' => 'unresolvable', 'download' => null, 'min_version' => null]];
+        try {
+            $this->manager->resolveAndActivate('Dep', 'enable', '', $plan);
+            $this->fail('expected ModMenuException');
+        } catch (ModMenuException $e) {
+            // Target must NOT have been enabled.
+            $this->assertDirectoryExists("{$this->disabled}/Dep");
+            $this->assertDirectoryDoesNotExist("{$this->active}/Dep");
+        }
+    }
+
+    public function testResolveAndActivateAbortsBeforeExecutingAnyResolvableStep()
+    {
+        // A resolvable 'enable' step precedes an 'unresolvable' one: validate-all-first
+        // means NEITHER runs — proves no partial activation when abort is not step-0.
+        $this->seedPlugin($this->disabled, 'A', '1.0.0');
+        $this->seedPlugin($this->disabled, 'Dep', '1.0.0');
+        $plan = [
+            ['plugin' => 'A', 'action' => 'enable', 'download' => null, 'min_version' => null],
+            ['plugin' => 'Ghost', 'action' => 'unresolvable', 'download' => null, 'min_version' => null],
+        ];
+        try {
+            $this->manager->resolveAndActivate('Dep', 'enable', '', $plan);
+            $this->fail('expected ModMenuException');
+        } catch (ModMenuException $e) {
+            $this->assertDirectoryExists("{$this->disabled}/A", 'resolvable dep A must NOT have been enabled');
+            $this->assertDirectoryDoesNotExist("{$this->active}/A");
+            $this->assertDirectoryExists("{$this->disabled}/Dep", 'target must NOT have been enabled');
+            $this->assertDirectoryDoesNotExist("{$this->active}/Dep");
+        }
+    }
 }

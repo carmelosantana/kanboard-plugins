@@ -22,6 +22,42 @@
                 <p><?= $this->text->e($p['description']) ?></p>
             <?php endif ?>
 
+            <?php if (! empty($p['unmet_deps'])): ?>
+                <div class="modmenu-deps">
+                    <?php foreach ($p['unmet_deps'] as $dep): ?>
+                        <?php $hard = $dep['kind'] === 'requires'; ?>
+                        <div class="modmenu-dep modmenu-dep--<?= $hard ? 'required' : 'recommended' ?>">
+                            <span class="modmenu-dep__label">
+                                <?php if ($hard): ?>
+                                    <?= t('Missing requirement: %s', $this->text->e($dep['plugin'])) ?>
+                                <?php else: ?>
+                                    <?= t('Works better with %s', $this->text->e($dep['plugin'])) ?>
+                                <?php endif ?>
+                                <?php if (! empty($dep['min_version'])): ?> (&ge; <?= $this->text->e($dep['min_version']) ?>)<?php endif ?>
+                                <?php if (! empty($dep['reason'])): ?> — <?= $this->text->e($dep['reason']) ?><?php endif ?>
+                            </span>
+                            <?php if ($dep['status'] === 'disabled'): ?>
+                                <form method="post" style="display:inline"
+                                      action="<?= $this->url->href('ModMenuController', 'enable', ['plugin' => 'ModMenu']) ?>">
+                                    <?= $this->form->csrf() ?>
+                                    <input type="hidden" name="name" value="<?= $this->text->e($dep['plugin']) ?>">
+                                    <button type="submit" class="btn btn-blue"><?= t('Enable %s', $this->text->e($dep['plugin'])) ?></button>
+                                </form>
+                            <?php elseif ($dep['status'] === 'missing'): ?>
+                                <form method="post" style="display:inline"
+                                      action="<?= $this->url->href('ModMenuController', 'install', ['plugin' => 'ModMenu']) ?>">
+                                    <?= $this->form->csrf() ?>
+                                    <input type="hidden" name="name" value="<?= $this->text->e($dep['plugin']) ?>">
+                                    <button type="submit" class="btn btn-blue"><?= t('Install %s', $this->text->e($dep['plugin'])) ?></button>
+                                </form>
+                            <?php else: /* outdated */ ?>
+                                <?= $this->url->link(t('Update via Browse'), 'ModMenuController', 'directory', ['plugin' => 'ModMenu'], false, 'btn') ?>
+                            <?php endif ?>
+                        </div>
+                    <?php endforeach ?>
+                </div>
+            <?php endif ?>
+
             <?php if ($p['name'] !== $self_name): ?>
                 <div class="modmenu-actions">
                     <?php if ($p['status'] === 'active'): ?>

@@ -96,4 +96,21 @@ class DirectoryClient extends Base
             'errors' => $errors,
         ];
     }
+
+    /**
+     * Merged directory catalog indexed by plugin name, for the dependency
+     * resolver/controller. Network wrapper over fetchAll(); returns [] rather
+     * than throwing when sources are unreachable (callers degrade gracefully:
+     * fewer deps are auto-resolvable, nothing crashes).
+     */
+    public function catalogMap(): array
+    {
+        $map = [];
+        foreach ($this->fetchAll()['plugins'] as $entry) {
+            if (! empty($entry['name'])) {
+                $map[$entry['name']] = $entry;
+            }
+        }
+        return $map;
+    }
 }
