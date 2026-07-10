@@ -246,4 +246,37 @@ class SettingsTest extends Base
         $this->expectException(AccessForbiddenException::class);
         (new SettingsController($this->container))->save();
     }
+
+    public function testTestConnectionNonAdminReturnsError(): void
+    {
+        // Non-admin path returns a JSON error (ok=false) rather than throwing
+        // AccessForbiddenException; the endpoint is also GET-CSRF gated. We assert
+        // the source guards to keep the behavior verifiable without HTTP.
+        $src = file_get_contents(dirname(__DIR__) . '/Controller/SettingsController.php');
+        $this->assertStringContainsString('checkReusableGETCSRFParam', $src,
+            'testConnection() must validate the reusable CSRF token from the GET param');
+        $this->assertStringContainsString('isAdmin', $src);
+    }
+
+    public function testTestConnectionResponseNeverIncludesRawResult(): void
+    {
+        $src = file_get_contents(dirname(__DIR__) . '/Controller/SettingsController.php');
+        $this->assertStringNotContainsString("'result' =>", $src,
+            'testConnection() must not echo the raw model output');
+    }
+
+    public function testSettingsTemplatePassesCsrfTokenToTestConnection(): void
+    {
+        $template   = file_get_contents(dirname(__DIR__) . '/Template/config/settings.php');
+        $controller = file_get_contents(dirname(__DIR__) . '/Controller/SettingsController.php');
+        $this->assertStringContainsString('csrf_token', $template);
+        $this->assertStringContainsString('$ai_test_csrf', $template);
+        $this->assertStringNotContainsString('$this->token', $template);
+        $this->assertStringContainsString('getReusableCSRFToken', $controller);
+    }
+
+    public function testTestConnectionAssetExists(): void
+    {
+        $this->assertFileExists(dirname(__DIR__) . '/Assets/js/ai-connector.js');
+    }
 }

@@ -33,13 +33,17 @@ class Plugin extends Base
             'template' => 'AiConnector:config/sidebar',
         ]);
 
+        // ── External JS (CSP-safe: Test Connection + provider→model auto-fill) ─
+        $this->hook->on('template:layout:js', [
+            'template' => 'plugins/AiConnector/Assets/js/ai-connector.js',
+        ]);
+
         // ── Settings routes ───────────────────────────────────────────────────
         $this->route->addRoute('ai-connector/settings', 'SettingsController', 'show');
         $this->route->addRoute('ai-connector/save',     'SettingsController', 'save');
         $this->route->addRoute('ai-connector/delete',   'SettingsController', 'delete');
         $this->route->addRoute('ai-connector/default',  'SettingsController', 'setDefault');
-
-        // Test-connection route is registered in Task 4.
+        $this->route->addRoute('ai-connector/test',     'SettingsController', 'testConnection');
     }
 
     public function getPluginName(): string

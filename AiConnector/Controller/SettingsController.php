@@ -163,6 +163,47 @@ class SettingsController extends BaseController
         $this->redirectToShow();
     }
 
+    /**
+     * Test a profile's connection: build its provider and make a minimal
+     * structured() call. Admin + reusable-CSRF gated. Returns {ok} / {ok,error}
+     * — never the key or the raw model output.
+     */
+    public function testConnection(): void
+    {
+        if (! $this->userSession->isAdmin()) {
+            $this->response->json(['ok' => false, 'error' => t('Access denied.')]);
+            return;
+        }
+
+        // The Test Connection button fetches via GET with csrf_token in the query
+        // string — checkReusableGETCSRFParam() validates the reusable token from
+        // $_GET (checkReusableCSRFParam() reads $_POST only, so it would 403).
+        $this->checkReusableGETCSRFParam();
+
+        $profileId = $this->request->getStringParam('profile', '');
+
+        try {
+            $registry = new ProviderRegistry($this->container);
+            $schema = json_encode([
+                'name'   => 'test_output',
+                'schema' => [
+                    'type'       => 'object',
+                    'properties' => ['ok' => ['type' => 'boolean']],
+                    'required'   => ['ok'],
+                ],
+            ]);
+            $registry->structured(
+                [['role' => 'user', 'content' => 'Reply with ok=true to confirm the connection works.']],
+                $schema,
+                $profileId !== '' ? $profileId : null
+            );
+            $this->response->json(['ok' => true]);
+        } catch (\Throwable $e) {
+            // Message never contains the key (buildProvider guarantees this).
+            $this->response->json(['ok' => false, 'error' => $e->getMessage()]);
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /** Deterministic unique id (no random() — keeps the harness reproducible). */

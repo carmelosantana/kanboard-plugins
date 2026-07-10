@@ -112,4 +112,26 @@
     </div>
 </form>
 
-<?php /* ── Test Connection block is added in Task 4 ─────────────────────────── */ ?>
+<hr>
+<h3><?= t('Test Connection') ?></h3>
+<p class="form-help"><?= t('Verify a saved profile works. Select a profile and click Test.') ?></p>
+
+<div id="ai-test-result" style="display:none; padding:8px; border-radius:4px; margin-bottom:12px;"></div>
+
+<?php if (! empty($profiles)): ?>
+<select id="ai-test-profile" class="form-select">
+    <?php foreach ($profiles as $p): ?>
+        <option value="<?= $this->text->e($p['id']) ?>" <?= ($p['id'] === $default_id) ? 'selected' : '' ?>>
+            <?= $this->text->e($p['label']) ?>
+        </option>
+    <?php endforeach ?>
+</select>
+<button type="button" class="btn btn-blue" id="ai-test-btn"
+        data-test-url="<?= $this->url->href('SettingsController', 'testConnection', ['plugin' => 'AiConnector', 'csrf_token' => $ai_test_csrf]) ?>"
+        data-msg-ok="<?= $this->text->e(t('Connection successful.')) ?>"
+        data-msg-fail="<?= $this->text->e(t('Connection failed:')) ?>"
+        data-msg-unknown="<?= $this->text->e(t('Unknown error')) ?>"
+        data-msg-request-failed="<?= $this->text->e(t('Request failed:')) ?>">
+    <?= t('Test Connection') ?>
+</button>
+<?php endif ?>
