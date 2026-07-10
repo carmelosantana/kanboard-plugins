@@ -1,6 +1,6 @@
 {
-    "name": "vctrs-io/kanboard-subtask-generator",
-    "description": "Kanboard plugin — AI-powered subtask generation via Anthropic, OpenAI, or Grok",
+    "name": "carmelosantana/kanboard-ai-connector",
+    "description": "Kanboard plugin — universal multi-provider AI backend (php-agents) with named provider profiles and a shared PHP API",
     "type": "kanboard-plugin",
     "license": "MIT",
     "authors": [

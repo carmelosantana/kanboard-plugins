@@ -5,7 +5,7 @@ namespace Kanboard\Plugin\SubtaskGenerator\Controller;
 use Kanboard\Controller\BaseController;
 use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Core\Controller\PageNotFoundException;
-use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
+use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;
 use Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel;
 
 /**
@@ -50,9 +50,12 @@ class GeneratorController extends BaseController
         // Build the prefilled prompt: title + (optional) description.
         $sg_prompt = $this->buildPrompt($task);
 
+        $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
         $this->response->html($this->template->render('SubtaskGenerator:generator/modal', [
-            'task'      => $task,
-            'sg_prompt' => $sg_prompt,
+            'task'               => $task,
+            'sg_prompt'          => $sg_prompt,
+            'profiles'           => $registry->listProfiles(),
+            'default_profile_id' => $registry->getDefaultProfileId(),
         ]));
     }
 
@@ -189,9 +192,19 @@ class GeneratorController extends BaseController
 
         // ── 6. Call the model ─────────────────────────────────────────────────
         try {
+            // Resolve the chosen profile (validate against known ids).
+            $profileId = trim($this->request->getStringParam('sg_profile', ''));
+            if ($profileId !== '') {
+                $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
+                $known = array_column($registry->listProfiles(), 'id');
+                if (! in_array($profileId, $known, true)) {
+                    $profileId = '';
+                }
+            }
+
             /** @var SubtaskGeneratorModel $model */
             $model    = $this->getGeneratorModel();
-            $subtasks = $model->generate($prompt);
+            $subtasks = $model->generate($prompt, $profileId !== '' ? $profileId : null);
 
             $this->response->json(['subtasks' => $subtasks]);
         } catch (\Throwable $e) {
@@ -243,16 +256,16 @@ class GeneratorController extends BaseController
     /**
      * Returns true when the runtime is fully AI-ready.
      *
-     * Delegates to ProviderFactory::isAiReady() — the single source of truth
-     * shared with Plugin::initialize(). This guarantees the sidebar link is
-     * hidden if and only if the controller also rejects the request: the two
-     * gates are identical by construction.
+     * Delegates to AiGate::isReady() — the single source of truth shared with
+     * Plugin::initialize(). This guarantees the sidebar link is hidden if and
+     * only if the controller also rejects the request: the two gates are
+     * identical by construction.
      *
      * Protected so tests can override via anonymous subclass to inject any
      * gate result without spawning a child process.
      */
     protected function isAiEnabled(): bool
     {
-        return ProviderFactory::isAiReady($this->configModel);
+        return AiGate::isReady($this->container);
     }
 }

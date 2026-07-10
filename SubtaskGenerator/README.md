@@ -1,92 +1,82 @@
 # SubtaskGenerator — Kanboard Plugin
 
-Generate candidate subtasks from a task description using an AI provider. Supports **Anthropic** (default), **OpenAI**, and **Grok (xAI)** out of the box.
+Generate candidate subtasks from a task description using AI. SubtaskGenerator
+no longer talks to a provider directly — it consumes the **[AiConnector](../AiConnector/README.md)**
+plugin, which is **required** and supplies the provider backend (Anthropic,
+OpenAI, OpenAI Responses, Grok, Gemini, Mistral, or Ollama).
 
 ## Requirements
 
-**PHP >= 8.4 is required.** The underlying `carmelosantana/php-agents` library declares `require php: ^8.4`. On hosts running PHP < 8.4 the plugin loads without errors but all AI features are disabled and a notice is written to the PHP error log.
-
 - Kanboard >= 1.2.47
 - PHP >= 8.4
-- An API key for at least one supported provider: Anthropic, OpenAI, or Grok (xAI)
+- **[AiConnector](../AiConnector/README.md) >= 1.0.0**, installed and active,
+  with at least one provider profile configured and ready. This is declared as a
+  hard `requires` in `plugin.json`. Kanboard core does not itself parse
+  `requires`, so it will not block activation; the dependency is *enforced* by the
+  [ModMenu](../ModMenu/README.md) plugin manager (install/enable/disable gates).
+  Without ModMenu, SubtaskGenerator still degrades gracefully at runtime: if
+  AiConnector is absent or has no ready profile, the AI features stay hidden and
+  the routes return 403 (no fatal).
 
 ## Installation
 
-1. Copy or clone this directory to `<kanboard-root>/plugins/SubtaskGenerator/`.
-2. Inside the plugin directory, install PHP dependencies:
-   ```
-   composer install --no-dev
-   ```
+1. Install and configure **AiConnector** first (see its README) — add at
+   least one provider profile and mark one as the default.
+2. Copy or clone this directory to `<kanboard-root>/plugins/SubtaskGenerator/`.
 3. Set file permissions so the web server can read the plugin:
    ```
    chmod -R o+rX SubtaskGenerator/
    ```
-4. Go to **Settings → Plugins** in Kanboard to confirm the plugin is active.
-5. Go to **Settings → SubtaskGenerator** to enter your API key.
+4. Go to **Settings → Plugins** in Kanboard to confirm both plugins are
+   active.
+
+SubtaskGenerator ships no vendored dependencies of its own — there is no
+`composer install` step for this plugin.
 
 ## Provider Configuration
 
-Navigate to **Settings → SubtaskGenerator** to configure which AI provider to use.
+Provider/model/API-key configuration lives entirely in **Settings → AI
+Connector** (the AiConnector plugin), not in SubtaskGenerator. See
+AiConnector's README for provider types, key storage, and env-var fallbacks.
 
-### Anthropic (default)
+### Point-of-use provider picker
 
-Anthropic is the default provider. No base URL configuration is needed.
-
-| Setting | Value |
-|---------|-------|
-| Provider | `anthropic` |
-| Model | `claude-sonnet-4-20250514` (default) |
-| API Key | Your Anthropic API key (starts with `sk-ant-`) |
-| Env var fallback | `ANTHROPIC_API_KEY` |
-
-### OpenAI
-
-| Setting | Value |
-|---------|-------|
-| Provider | `openai` |
-| Model | e.g. `gpt-4o`, `gpt-4o-mini` |
-| API Key | Your OpenAI API key (starts with `sk-`) |
-| Env var fallback | `OPENAI_API_KEY` |
-
-### Grok (xAI)
-
-| Setting | Value |
-|---------|-------|
-| Provider | `grok` |
-| Model | e.g. `grok-3`, `grok-3-mini` |
-| API Key | Your xAI API key |
-| Env var fallback | `XAI_API_KEY` |
+When AiConnector has **two or more** profiles configured, the Generate-subtasks
+modal shows an **AI provider** dropdown (defaulting to AiConnector's default
+profile) so you can pick a different profile per generation without changing
+the global default. With only one profile configured, the dropdown is hidden
+and that profile is used silently.
 
 ## API Key Security
 
-- Keys are stored via Kanboard's `configModel` (the `settings` database table), which is only accessible to administrators.
-- The API key field in the settings form always renders empty (`value=""`). The stored key is **never echoed back** into the HTML response.
-- If the form is submitted with a blank key or the placeholder sentinel, the existing stored key is preserved unchanged.
-- Keys are **never written to the PHP error log**. If a provider call fails, only the exception class and code are logged — not the exception message, request URL, or any provider response body.
-- As an alternative to storing the key in the database, you can set the corresponding environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `XAI_API_KEY`) on the server. The plugin reads the env var as a fallback when the database setting is empty.
+API keys are stored and secured entirely by AiConnector — see its README for
+details (separate storage key, masked UI, never logged, env-var fallback).
+SubtaskGenerator itself never reads or stores a key.
 
 ## Usage Walkthrough
 
 1. Open any task in Kanboard.
-2. In the task sidebar, click **Generate subtasks** (appears only when AI is fully configured).
-3. Review and optionally edit the pre-filled prompt (the task title and description are used as the default prompt).
-4. Click **Generate**. The plugin calls the configured AI provider and displays a candidate checklist.
-5. Uncheck any subtasks you do not want, and edit titles inline if needed.
-6. Click **Create** to persist the selected subtasks on the task.
-7. You are redirected back to the task view with a flash notice showing how many subtasks were created.
+2. In the task sidebar, click **Generate subtasks** (appears only when
+   AiConnector reports at least one ready provider profile).
+3. If two or more provider profiles are configured, optionally pick one from
+   the **AI provider** dropdown.
+4. Review and optionally edit the pre-filled prompt (the task title and
+   description are used as the default prompt).
+5. Click **Generate**. The plugin calls the selected (or default) AI provider
+   via AiConnector and displays a candidate checklist.
+6. Uncheck any subtasks you do not want, and edit titles inline if needed.
+7. Click **Create** to persist the selected subtasks on the task.
+8. You are redirected back to the task view with a flash notice showing how
+   many subtasks were created.
 
 If the provider is unreachable, times out, or returns malformed output, a friendly error message is shown in the modal — nothing is created, and the page does not 500.
 
 ## Graceful Degradation
 
 - **PHP < 8.4:** the plugin loads cleanly, AI features are disabled, the sidebar link is hidden.
-- **No API key configured:** same — AI features are disabled, the sidebar link is hidden.
+- **No ready AiConnector profile:** same — AI features are disabled, the sidebar link is hidden.
 - **Provider error (network, timeout, malformed output, empty result):** the modal shows a friendly error message; no subtasks are created; no page crash.
 - **Partial create failure:** if one subtask cannot be saved to the database, the remaining subtasks are still created. The flash notice reports both the created and failed counts.
-
-## Optional: Ollama (local)
-
-Ollama/local LLM support is not included in the default configuration. The plugin is designed for hosted providers (Anthropic, OpenAI, Grok) which require no local infrastructure.
 
 ## License
 

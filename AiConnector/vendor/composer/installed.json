@@ -1,14 +1,9 @@
 {
-    "_readme": [
-        "This file locks the dependencies of your project to a known state",
-        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
-        "This file is @generated automatically"
-    ],
-    "content-hash": "3fe7ea41c7e21699ba3ab73611f1e80c",
     "packages": [
         {
             "name": "carmelosantana/php-agents",
             "version": "dev-main",
+            "version_normalized": "dev-main",
             "dist": {
                 "type": "path",
                 "url": "/home/carmelo/Projects/CoquiBot/Core/php-agents",
@@ -31,6 +26,7 @@
             "extra": {
                 "php-agents": []
             },
+            "installation-source": "dist",
             "autoload": {
                 "psr-4": {
                     "CarmeloSantana\\PHPAgents\\": "src/"
@@ -88,11 +84,13 @@
             "transport-options": {
                 "symlink": false,
                 "relative": false
-            }
+            },
+            "install-path": "../carmelosantana/php-agents"
         },
         {
             "name": "symfony/deprecation-contracts",
             "version": "v3.7.1",
+            "version_normalized": "3.7.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/deprecation-contracts.git",
@@ -107,6 +105,7 @@
             "require": {
                 "php": ">=8.1"
             },
+            "time": "2026-06-05T06:23:12+00:00",
             "type": "library",
             "extra": {
                 "thanks": {
@@ -117,6 +116,7 @@
                     "dev-main": "3.7-dev"
                 }
             },
+            "installation-source": "dist",
             "autoload": {
                 "files": [
                     "function.php"
@@ -159,11 +159,12 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-06-05T06:23:12+00:00"
+            "install-path": "../symfony/deprecation-contracts"
         },
         {
             "name": "symfony/http-client",
             "version": "v8.1.1",
+            "version_normalized": "8.1.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/http-client.git",
@@ -207,7 +208,9 @@
                 "symfony/rate-limiter": "^7.4|^8.0",
                 "symfony/stopwatch": "^7.4|^8.0"
             },
+            "time": "2026-06-16T12:55:20+00:00",
             "type": "library",
+            "installation-source": "dist",
             "autoload": {
                 "psr-4": {
                     "Symfony\\Component\\HttpClient\\": ""
@@ -256,11 +259,12 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-06-16T12:55:20+00:00"
+            "install-path": "../symfony/http-client"
         },
         {
             "name": "symfony/http-client-contracts",
             "version": "v3.7.1",
+            "version_normalized": "3.7.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/http-client-contracts.git",
@@ -275,6 +279,7 @@
             "require": {
                 "php": ">=8.1"
             },
+            "time": "2026-06-05T06:23:12+00:00",
             "type": "library",
             "extra": {
                 "thanks": {
@@ -285,6 +290,7 @@
                     "dev-main": "3.7-dev"
                 }
             },
+            "installation-source": "dist",
             "autoload": {
                 "psr-4": {
                     "Symfony\\Contracts\\HttpClient\\": ""
@@ -338,11 +344,12 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-06-05T06:23:12+00:00"
+            "install-path": "../symfony/http-client-contracts"
         },
         {
             "name": "symfony/service-contracts",
             "version": "v3.7.1",
+            "version_normalized": "3.7.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/service-contracts.git",
@@ -362,6 +369,7 @@
             "conflict": {
                 "ext-psr": "<1.1|>=2"
             },
+            "time": "2026-06-16T09:55:08+00:00",
             "type": "library",
             "extra": {
                 "thanks": {
@@ -372,6 +380,7 @@
                     "dev-main": "3.7-dev"
                 }
             },
+            "installation-source": "dist",
             "autoload": {
                 "psr-4": {
                     "Symfony\\Contracts\\Service\\": ""
@@ -425,20 +434,9 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2026-06-16T09:55:08+00:00"
+            "install-path": "../symfony/service-contracts"
         }
     ],
-    "packages-dev": [],
-    "aliases": [],
-    "minimum-stability": "dev",
-    "stability-flags": {
-        "carmelosantana/php-agents": 20
-    },
-    "prefer-stable": true,
-    "prefer-lowest": false,
-    "platform": {
-        "php": ">=8.4"
-    },
-    "platform-dev": {},
-    "plugin-api-version": "2.9.0"
+    "dev": true,
+    "dev-package-names": []
 }

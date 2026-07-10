@@ -5,7 +5,6 @@ require_once 'tests/units/Base.php';
 use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Core\Controller\PageNotFoundException;
 use Kanboard\Plugin\SubtaskGenerator\Controller\GeneratorController;
-use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
 use KanboardTests\units\Base;
 
 /**
@@ -225,84 +224,20 @@ class GeneratorTest extends Base
     // ── Gate-parity regression tests ──────────────────────────────────────────
 
     /**
-     * Gate-parity: PHP>=8.4 + vendor present + NO provider configured
-     * → ProviderFactory::isAiReady() returns false → sidebar link hidden AND
-     * controller rejects.
-     *
-     * RED evidence (old code): the old controller isAiEnabled() only checked
-     * PHP version + vendor/autoload.php — it would return TRUE here even
-     * without a configured API key, while Plugin.php would show the link as
-     * hidden. After the fix, both delegate to ProviderFactory::isAiReady()
-     * which adds the provider-configured condition, making this test GREEN.
-     *
-     * We test ProviderFactory::isAiReady() directly (with override args so the
-     * test is deterministic on any host) and then verify show() also rejects
-     * when the underlying gate returns false.
-     */
-    public function testAiReadyReturnsFalseWhenNoProviderConfigured(): void
-    {
-        // Unset any env vars that would satisfy the provider check.
-        $originalAnthropicKey = getenv('ANTHROPIC_API_KEY');
-        $originalOpenaiKey    = getenv('OPENAI_API_KEY');
-        $originalXaiKey       = getenv('XAI_API_KEY');
-
-        putenv('ANTHROPIC_API_KEY=');
-        putenv('OPENAI_API_KEY=');
-        putenv('XAI_API_KEY=');
-
-        try {
-            // ConfigModel with no sg_api_key set (defaults to '').
-            // PHP_VERSION_ID override → 80400, autoload path → real vendor path.
-            $autoload = dirname(__DIR__) . '/vendor/autoload.php';
-
-            $isReady = ProviderFactory::isAiReady(
-                $this->container['configModel'],
-                80400,         // simulate PHP 8.4
-                $autoload      // real vendor path (present on this test host)
-            );
-
-            $this->assertFalse(
-                $isReady,
-                'isAiReady() must return false when no provider API key is configured — ' .
-                'this ensures the sidebar link hidden state matches the controller gate. ' .
-                'RED with old controller isAiEnabled() (PHP+vendor only); GREEN after the fix.'
-            );
-        } finally {
-            // Restore env vars so we don't bleed into other tests.
-            if ($originalAnthropicKey !== false) {
-                putenv("ANTHROPIC_API_KEY={$originalAnthropicKey}");
-            }
-            if ($originalOpenaiKey !== false) {
-                putenv("OPENAI_API_KEY={$originalOpenaiKey}");
-            }
-            if ($originalXaiKey !== false) {
-                putenv("XAI_API_KEY={$originalXaiKey}");
-            }
-        }
-    }
-
-    /**
      * Gate-parity: with NO provider configured, show() must reject (403) — matching
      * the hidden sidebar link state.
      *
-     * The real GeneratorController::isAiEnabled() now calls ProviderFactory::isAiReady()
-     * which includes the provider-configured check. With empty sg_api_key and no env var,
-     * it returns false → show() throws AccessForbiddenException.
-     *
-     * Note: this test clears the provider env vars so the real gate (not overridden)
-     * evaluates to false. If the test host has a real API key in the environment,
-     * the env-var clearing in the finally block is still performed but the test
-     * correctly reflects that "configured via env" → isAiReady=true. For a clean
-     * no-provider scenario we use a subclass that exposes the gate result from the
-     * real ProviderFactory with cleared env, which is what testAiReadyReturnsFalseWhenNoProviderConfigured
-     * already verifies. Here we specifically confirm show() rejects when the gate is false.
+     * The real GeneratorController::isAiEnabled() now delegates to AiGate::isReady(),
+     * which requires PHP >= 8.4 AND AiConnector present AND a provider profile
+     * configured. Coverage for the AiGate matrix itself (PHP version / connector
+     * presence / registry readiness) lives in PluginTest.
      */
     public function testShowRejectsWhenGateReturnsFalseMatchingSidebarHiddenState(): void
     {
         $this->stubAdmin();
 
         // Use an anonymous subclass that forces isAiEnabled() to false (no provider),
-        // matching what ProviderFactory::isAiReady() returns in testAiReadyReturnsFalseWhenNoProviderConfigured.
+        // matching what AiGate::isReady() returns when no provider is configured.
         $controller = new class($this->container) extends GeneratorController {
             protected function isAiEnabled(): bool { return false; }
         };
@@ -388,5 +323,46 @@ class GeneratorTest extends Base
             'No PHP warnings in the modal output');
         $this->assertStringNotContainsString('Fatal error', $html,
             'No PHP fatal errors in the modal output');
+    }
+
+    // ── Point-of-use profile dropdown ────────────────────────────────────────
+
+    public function testModalOmitsProfileDropdownWithZeroOrOneProfile(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [],
+            'default_profile_id' => '',
+        ]);
+        $this->assertStringNotContainsString('name="sg_profile"', $html);
+    }
+
+    public function testModalOmitsProfileDropdownWithExactlyOneProfile(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [
+                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
+            ],
+            'default_profile_id' => 'a',
+        ]);
+        $this->assertStringNotContainsString('name="sg_profile"', $html);
+    }
+
+    public function testModalShowsProfileDropdownWithTwoProfiles(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [
+                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
+                ['id' => 'b', 'label' => 'B', 'provider' => 'openai', 'model' => 'm'],
+            ],
+            'default_profile_id' => 'b',
+        ]);
+        $this->assertStringContainsString('name="sg_profile"', $html);
+        $this->assertStringContainsString('value="b"', $html);
     }
 }

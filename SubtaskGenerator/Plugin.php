@@ -3,7 +3,7 @@
 namespace Kanboard\Plugin\SubtaskGenerator;
 
 use Kanboard\Core\Plugin\Base;
-use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
+use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;
 
 class Plugin extends Base
 {
@@ -14,21 +14,12 @@ class Plugin extends Base
 
     public function initialize(): void
     {
-        // Load the plugin-local vendor autoload (php-agents + deps).
-        // Guard with file_exists so a missing vendor/ produces a clear error rather than a fatal.
-        $autoload = __DIR__ . '/vendor/autoload.php';
-        if (file_exists($autoload)) {
-            require_once $autoload;
-        } else {
-            error_log('[SubtaskGenerator] vendor/autoload.php not found — run composer install inside the plugin directory.');
-        }
-
-        // Full AI-ready gate: PHP >= 8.4 AND vendor loaded AND provider configured.
-        // Uses ProviderFactory::isAiReady() — the single source of truth shared by
-        // both this initializer (sidebar link) and GeneratorController::isAiEnabled()
-        // (controller show/generate). The two must agree; never compute the gate here
-        // independently.
-        $this->aiEnabled = ProviderFactory::isAiReady($this->configModel);
+        // Full AI-ready gate: PHP >= 8.4 AND AiConnector present AND a provider
+        // profile configured. Uses AiGate::isReady() — the single source of truth
+        // shared by both this initializer (sidebar link) and
+        // GeneratorController::isAiEnabled() (controller show/generate). The two
+        // must agree; never compute the gate here independently.
+        $this->aiEnabled = AiGate::isReady($this->container);
 
         if (! $this->isPhpCompatible()) {
             error_log(
@@ -91,11 +82,6 @@ class Plugin extends Base
             'SubtaskGenerator:SettingsController',
             'save'
         );
-        $this->route->addRoute(
-            'subtask-generator/test',
-            'SubtaskGenerator:SettingsController',
-            'testConnection'
-        );
     }
 
     /**
@@ -128,7 +114,7 @@ class Plugin extends Base
 
     public function getPluginDescription(): string
     {
-        return t('Generate subtasks from a task description using an AI provider (Anthropic, OpenAI, or Grok).');
+        return t('Generate subtasks from a task description using AI (provider backend supplied by the AiConnector plugin).');
     }
 
     public function getPluginAuthor(): string
@@ -138,7 +124,7 @@ class Plugin extends Base
 
     public function getPluginVersion(): string
     {
-        return '1.0.1';
+        return '1.1.0';
     }
 
     public function getPluginHomepage(): string

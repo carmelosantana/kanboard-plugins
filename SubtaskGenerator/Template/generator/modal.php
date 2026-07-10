@@ -33,6 +33,19 @@
 
     <input type="hidden" name="task_id" value="<?= $this->text->e($task['id']) ?>">
 
+    <?php if (isset($profiles) && count($profiles) >= 2): ?>
+    <div class="form-group">
+        <?= $this->form->label(t('AI provider'), 'sg_profile') ?>
+        <select name="sg_profile" id="sg_profile" class="form-select">
+            <?php foreach ($profiles as $p): ?>
+                <option value="<?= $this->text->e($p['id']) ?>" <?= ($p['id'] === ($default_profile_id ?? '')) ? 'selected' : '' ?>>
+                    <?= $this->text->e($p['label']) ?>
+                </option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <?php endif ?>
+
     <div class="form-group">
         <?= $this->form->label(t('Prompt'), 'sg_prompt') ?>
         <textarea id="sg_prompt"

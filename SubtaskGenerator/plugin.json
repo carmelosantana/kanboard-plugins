@@ -1,10 +1,13 @@
 {
     "name": "SubtaskGenerator",
-    "description": "Generate subtasks from a task description using an AI provider (Anthropic, OpenAI, or Grok).",
-    "version": "1.0.1",
+    "description": "Generate subtasks from a task description using AI (provider backend supplied by the AiConnector plugin).",
+    "version": "1.1.0",
     "author": "Carmelo Santana",
     "homepage": "https://github.com/vctrs-io/kanboard-subtask-generator",
     "license": "MIT",
     "kanboard_version": ">=1.2.47",
-    "php_version": ">=8.4"
+    "php_version": ">=8.4",
+    "requires": [
+        { "plugin": "AiConnector", "min_version": "1.0.0", "reason": "provides the AI provider backend" }
+    ]
 }

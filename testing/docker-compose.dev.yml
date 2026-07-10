@@ -11,6 +11,7 @@ services:
       - "8081:80"
     volumes:
       - kb-suite-data:/var/www/app/data
+      - ../AiConnector:/var/www/app/plugins/AiConnector
       - ../BulkProjectDelete:/var/www/app/plugins/BulkProjectDelete
       - ../ShadcnTheme:/var/www/app/plugins/ShadcnTheme
       - ../FeatureSync:/var/www/app/plugins/FeatureSync

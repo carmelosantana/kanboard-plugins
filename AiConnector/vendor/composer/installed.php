@@ -1,15 +1,24 @@
 <?php return array(
     'root' => array(
-        'name' => 'vctrs-io/kanboard-subtask-generator',
+        'name' => 'carmelosantana/kanboard-ai-connector',
         'pretty_version' => 'dev-master',
         'version' => 'dev-master',
-        'reference' => 'c5595369f82f0c05e328b50e28aa29d0c7383467',
+        'reference' => '3acebde91dbca89436d4a7ca975e631a232b0955',
         'type' => 'kanboard-plugin',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
-        'dev' => false,
+        'dev' => true,
     ),
     'versions' => array(
+        'carmelosantana/kanboard-ai-connector' => array(
+            'pretty_version' => 'dev-master',
+            'version' => 'dev-master',
+            'reference' => '3acebde91dbca89436d4a7ca975e631a232b0955',
+            'type' => 'kanboard-plugin',
+            'install_path' => __DIR__ . '/../../',
+            'aliases' => array(),
+            'dev_requirement' => false,
+        ),
         'carmelosantana/php-agents' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
@@ -88,15 +97,6 @@
             'reference' => 'c0a284bab1ed8aa0417e3d69250ab437739563a0',
             'type' => 'library',
             'install_path' => __DIR__ . '/../symfony/service-contracts',
-            'aliases' => array(),
-            'dev_requirement' => false,
-        ),
-        'vctrs-io/kanboard-subtask-generator' => array(
-            'pretty_version' => 'dev-master',
-            'version' => 'dev-master',
-            'reference' => 'c5595369f82f0c05e328b50e28aa29d0c7383467',
-            'type' => 'kanboard-plugin',
-            'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
             'dev_requirement' => false,
         ),
