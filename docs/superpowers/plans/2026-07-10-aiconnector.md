@@ -1769,21 +1769,28 @@ git commit -m "feat(AiConnector): per-profile Test Connection (reusable CSRF) + 
 
 ---
 
-## Task 5: SubtaskGenerator — consume ProviderRegistry; delete ProviderFactory & vendored php-agents
+## Task 5: SubtaskGenerator — swap backend to AiConnector (keep tests green @ v1.0.1)
+
+> **Boundary note:** `ProviderFactory` is referenced by `Plugin.php`, both controllers, the model, the sidebar-link comment, and 4 tests. Deleting it forces updating ALL of them in this one task so the tree stays green. Version/`requires`/the modal dropdown are additive and land in Task 6. This task keeps `getPluginVersion()` at `1.0.1`.
 
 **Files:**
 - Delete: `SubtaskGenerator/Model/ProviderFactory.php`, `SubtaskGenerator/composer.json`, `SubtaskGenerator/composer.lock`, `SubtaskGenerator/vendor/**`
+- Create: `SubtaskGenerator/Model/AiGate.php`
 - Modify: `SubtaskGenerator/Model/SubtaskGeneratorModel.php`
-- Create: `SubtaskGenerator/Model/AiGate.php` (the shared readiness gate replacing `ProviderFactory::isAiReady`)
-- Modify: `SubtaskGenerator/Test/SubtaskGeneratorModelTest.php`
-- Modify: `SubtaskGenerator/Test/SettingsTest.php`, `SubtaskGenerator/Test/GeneratorTest.php`, `SubtaskGenerator/Test/PluginTest.php` (remove php-agents/ProviderFactory imports; retarget to the registry/gate)
+- Modify: `SubtaskGenerator/Plugin.php` (gate → AiGate; drop the vendor `require_once` block; drop the `subtask-generator/test` route; drop the `ProviderFactory` import)
+- Modify: `SubtaskGenerator/Controller/GeneratorController.php` (gate → AiGate; drop `ProviderFactory` import)
+- Modify: `SubtaskGenerator/Controller/SettingsController.php` (trim to `sg_max_subtasks`; delete `testConnection()`; drop `ProviderFactory` import)
+- Modify: `SubtaskGenerator/Template/config/settings.php` (trim to max-subtasks + AI Connector link)
+- Modify: `SubtaskGenerator/Assets/js/subtask-generator.js` (delete the settings-page Test-Connection + provider-auto-fill handlers)
+- Modify: `SubtaskGenerator/Template/generator/sidebar_link.php` (update the stale `ProviderFactory::isAiReady` comment to `AiGate::isReady`)
+- Modify: `SubtaskGenerator/Test/SubtaskGeneratorModelTest.php`, `SettingsTest.php`, `GeneratorTest.php`, `PluginTest.php`, `CreateSubtaskTest.php` (drop php-agents/ProviderFactory refs; retarget to the registry/gate)
 
 **Interfaces:**
-- Consumes: `Kanboard\Plugin\AiConnector\Model\ProviderRegistry` (`structured`, `isReady`, `listProfiles`, `getDefaultProfileId`, `setProviderForTesting`).
+- Consumes: `Kanboard\Plugin\AiConnector\Model\ProviderRegistry` (`structured`, `isReady`).
 - Produces:
-  - `SubtaskGeneratorModel::generate(string $prompt, ?string $profileId = null): array` — builds `[['role'=>'system','content'=>SYSTEM_PROMPT],['role'=>'user','content'=>$prompt]]`, calls `structured()`, then `normalise()`. Test seam: `setRegistry(ProviderRegistry $r): void`.
-  - `SubtaskGeneratorModel::DEFAULT_MAX_SUBTASKS = 8` (moved from ProviderFactory).
+  - `SubtaskGeneratorModel::generate(string $prompt, ?string $profileId = null): array` — builds `[['role'=>'system','content'=>SYSTEM_PROMPT],['role'=>'user','content'=>$prompt]]`, calls `structured()`, then `normalise()`. Test seam `setRegistry(ProviderRegistry $r): void`. `const DEFAULT_MAX_SUBTASKS = 8`.
   - `AiGate::isReady($container, ?int $phpVersionId = null, ?bool $connectorPresent = null): bool` — PHP≥8.4 AND AiConnector present AND `ProviderRegistry::isReady()`.
+  - `GeneratorController::isAiEnabled()` and `Plugin::initialize()` both delegate to `AiGate::isReady($this->container)`.
 
 - [ ] **Step 1: Update the model test first** — rewrite `SubtaskGenerator/Test/SubtaskGeneratorModelTest.php` to drive through an injected fake registry. Replace the php-agents/ProviderFactory imports with:
 
@@ -1793,7 +1800,7 @@ use Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel;
 use KanboardTests\units\Base;
 ```
 
-Replace `makeModel()`/`mockProvider()`/`makeResponse()`/`throwingProvider()` helpers with a fake-registry helper:
+Replace the `makeModel()`/`mockProvider()`/`makeResponse()`/`throwingProvider()` helpers with a fake-registry helper:
 
 ```php
     /** A registry stub whose structured() returns/throws a canned value — no network. */
@@ -1816,12 +1823,12 @@ Replace `makeModel()`/`mockProvider()`/`makeResponse()`/`throwingProvider()` hel
     }
 ```
 
-Then update each existing case: `$this->makeModel($this->mockProvider($cannedArray))` → `$this->makeModel($cannedArray)`. The `Response`-shape cases (`testGenerateWithOpenAIStyleResponseResult`, `testGenerateReturnsEmptyOnInvalidJson`) move to AiConnector's `ProviderRegistryBuildTest` (already covered there) — **delete** them here; keep the array-path, dedupe, blank, clamp, non-string, and propagation cases (now `structured()` returns the decoded array directly, so feed decoded arrays). For propagation: `$this->makeModel(null, new \RuntimeException('boom'))` then `expectException`. Also **delete** `testAnthropicProviderStructuredReturnsArrayOrResponse` and `testModelHandlesBothReturnShapes` (that logic now lives in AiConnector; assert there).
+Update each case: `$this->makeModel($this->mockProvider($cannedArray))` → `$this->makeModel($cannedArray)` (feed a decoded array — `structured()` now returns the decoded array directly). Keep the array-path, dedupe, blank, clamp, and non-string cases. For propagation: `$this->makeModel(null, new \RuntimeException('boom'))` then `expectException`. **Delete** the `Response`-shape cases (`testGenerateWithOpenAIStyleResponseResult`, `testGenerateReturnsEmptyOnInvalidJson`), plus `testAnthropicProviderStructuredReturnsArrayOrResponse` and `testModelHandlesBothReturnShapes` — that shape-handling moved to AiConnector's `ProviderRegistryBuildTest`. Remove the `setUpBeforeClass()` vendor load (no local vendor now). The controller structure-check tests (`testControllerSourceGuardsOnPermissions` etc.) stay but drop the `ProviderFactory` import.
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
-Expected: FAIL — `setRegistry()` undefined / `ProviderFactory` still referenced.
+Expected: FAIL — `setRegistry()` undefined / `ProviderFactory` referenced by not-yet-updated code.
 
 - [ ] **Step 3: Rewrite `SubtaskGenerator/Model/SubtaskGeneratorModel.php`:**
 
@@ -1956,7 +1963,7 @@ class SubtaskGeneratorModel extends Base
 }
 ```
 
-- [ ] **Step 4: Create `SubtaskGenerator/Model/AiGate.php`** (replaces `ProviderFactory::isAiReady`):
+- [ ] **Step 4: Create `SubtaskGenerator/Model/AiGate.php`:**
 
 ```php
 <?php
@@ -1980,7 +1987,7 @@ class AiGate
 {
     /**
      * @param \Pimple\Container $container
-     * @param int|null  $phpVersionId    PHP_VERSION_ID override (tests).
+     * @param int|null  $phpVersionId     PHP_VERSION_ID override (tests).
      * @param bool|null $connectorPresent AiConnector-present override (tests).
      */
     public static function isReady($container, ?int $phpVersionId = null, ?bool $connectorPresent = null): bool
@@ -2001,122 +2008,11 @@ class AiGate
 }
 ```
 
-- [ ] **Step 5: Delete the obsolete files**
+- [ ] **Step 5: Update `SubtaskGenerator/Plugin.php`** — (a) replace `use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;` with `use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;`; (b) **delete** the vendor `require_once` block (the `$autoload = __DIR__ . '/vendor/autoload.php'; if (file_exists($autoload)) { require_once $autoload; } else { error_log(...); }` lines) — SubtaskGenerator no longer bundles php-agents; (c) replace `$this->aiEnabled = ProviderFactory::isAiReady($this->configModel);` with `$this->aiEnabled = AiGate::isReady($this->container);`; (d) **delete** the `subtask-generator/test` route registration; (e) leave `getPluginVersion()` at `'1.0.1'` (Task 6 bumps it). Keep the PHP-compat log block and the sidebar/JS hooks and other routes unchanged.
 
-```bash
-git rm SubtaskGenerator/Model/ProviderFactory.php SubtaskGenerator/composer.json SubtaskGenerator/composer.lock
-git rm -r SubtaskGenerator/vendor
-```
+- [ ] **Step 6: Update `SubtaskGenerator/Controller/GeneratorController.php`** — replace `use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;` with `use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;`; change `isAiEnabled()` body to `return AiGate::isReady($this->container);`. Leave `show()`/`generate()` otherwise unchanged (profile passing lands in Task 6).
 
-- [ ] **Step 6: Fix the other SubtaskGenerator tests** — remove `use CarmeloSantana\PHPAgents\...` and `use ...\ProviderFactory;` from `SettingsTest.php`, `GeneratorTest.php`, `PluginTest.php`. `PluginTest`: bump the version assertion to `1.1.0` (Task 6 sets the value) and drop `testProviderClassesResolve` + `testVendorAutoloadExists` (SubtaskGenerator no longer vendors php-agents) and the ProviderFactory-based gate tests; replace gate tests with `AiGate::isReady(...)` using the `$connectorPresent`/`$phpVersionId` overrides. `SettingsTest`: keep only the `sg_max_subtasks` + admin-gate + template checks (Task 6 trims the template); remove ProviderFactory/testConnection cases. `GeneratorTest`: keep show/generate gate cases but route them through `isAiEnabled()` overrides (already anonymous-subclass based). *(Some of these tests are edited again in Task 6 when the templates/controller change — that's fine; keep this task green first.)*
-
-- [ ] **Step 7: Run to verify it passes**
-
-Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
-Expected: PASS (model + gate green; controller/template cases updated in Task 6 if any remain red, note them).
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add -A SubtaskGenerator/Model SubtaskGenerator/Test
-git commit -m "refactor(SubtaskGenerator): consume AiConnector ProviderRegistry; drop ProviderFactory + vendored php-agents"
-```
-
----
-
-## Task 6: SubtaskGenerator — controllers, modal dropdown, settings trim, plugin.json requires
-
-**Files:**
-- Modify: `SubtaskGenerator/Controller/GeneratorController.php` (gate via `AiGate`; pass profiles to modal; read `sg_profile`)
-- Modify: `SubtaskGenerator/Controller/SettingsController.php` (drop provider/model/key + testConnection; keep `sg_max_subtasks`; gate via `AiGate`)
-- Modify: `SubtaskGenerator/Plugin.php` (gate via `AiGate`; drop the `subtask-generator/test` route + `ProviderFactory` import; version 1.1.0; description wording)
-- Modify: `SubtaskGenerator/Template/generator/modal.php` (add `sg_profile` select when ≥2 profiles)
-- Modify: `SubtaskGenerator/Template/config/settings.php` (trim to `sg_max_subtasks` + AI Connector link)
-- Modify: `SubtaskGenerator/Assets/js/subtask-generator.js` (remove the now-dead settings Test-Connection + provider auto-fill handlers; keep the generate/create modal logic)
-- Modify: `SubtaskGenerator/plugin.json` (add hard `requires`, version 1.1.0)
-- Modify: `SubtaskGenerator/Test/GeneratorTest.php`, `CreateSubtaskTest.php`, `PluginTest.php`, `SettingsTest.php` (dropdown presence; version)
-
-**Interfaces:**
-- Consumes: `AiGate::isReady`, `ProviderRegistry::listProfiles`, `ProviderRegistry::getDefaultProfileId`, `SubtaskGeneratorModel::generate($prompt, $profileId)`.
-- Produces: modal renders `<select name="sg_profile">` **only when ≥2 profiles**; `generate()` reads `sg_profile`, validates against `listProfiles()` ids (unknown/empty → null), passes to the model.
-
-- [ ] **Step 1: Update controller/template tests first** — in `GeneratorTest.php`, add:
-
-```php
-    public function testModalOmitsProfileDropdownWithZeroOrOneProfile(): void
-    {
-        // 0 profiles.
-        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
-            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
-            'sg_prompt' => 'T',
-            'profiles'  => [],
-            'default_profile_id' => '',
-        ]);
-        $this->assertStringNotContainsString('name="sg_profile"', $html);
-    }
-
-    public function testModalShowsProfileDropdownWithTwoProfiles(): void
-    {
-        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
-            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
-            'sg_prompt' => 'T',
-            'profiles'  => [
-                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
-                ['id' => 'b', 'label' => 'B', 'provider' => 'openai', 'model' => 'm'],
-            ],
-            'default_profile_id' => 'b',
-        ]);
-        $this->assertStringContainsString('name="sg_profile"', $html);
-        $this->assertStringContainsString('value="b"', $html);
-    }
-```
-
-In `PluginTest.php` set the version assertion to `1.1.0`. In `SettingsTest.php` add a check that the settings template links to AI Connector and no longer has a `sg_api_key` field:
-
-```php
-    public function testSettingsTemplateLinksToAiConnectorAndDropsKeyField(): void
-    {
-        $content = file_get_contents(dirname(__DIR__) . '/Template/config/settings.php');
-        $this->assertStringNotContainsString('name="sg_api_key"', $content);
-        $this->assertStringContainsString('AiConnector', $content);
-        $this->assertStringContainsString('sg_max_subtasks', $content);
-    }
-```
-
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
-Expected: FAIL — modal has no `sg_profile`; settings template still has `sg_api_key`; version mismatch.
-
-- [ ] **Step 3: Update `SubtaskGenerator/Plugin.php`** — replace `use ...\ProviderFactory;` with `use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;`; in `initialize()` replace `ProviderFactory::isAiReady($this->configModel)` with `AiGate::isReady($this->container)`; keep the PHP-compat log; **remove** the `subtask-generator/test` route; set `getPluginVersion()` to `'1.1.0'`; update `getPluginDescription()` to `t('Generate subtasks from a task description using AI (provider backend supplied by the AiConnector plugin).')`. Keep the guarded vendor `require_once` **removed** — SubtaskGenerator no longer has a `vendor/`; delete those 6 lines (the `$autoload = __DIR__ . '/vendor/autoload.php'; ...` block) since AiConnector owns php-agents now.
-
-- [ ] **Step 4: Update `GeneratorController.php`** — replace `use ...\ProviderFactory;` with `use Kanboard\Plugin\SubtaskGenerator\Model\AiGate;` and `use Kanboard\Plugin\AiConnector\Model\ProviderRegistry;`. Change `isAiEnabled()` to `return AiGate::isReady($this->container);`. In `show()`, pass profiles to the modal:
-
-```php
-        $registry = new ProviderRegistry($this->container);
-        $this->response->html($this->template->render('SubtaskGenerator:generator/modal', [
-            'task'               => $task,
-            'sg_prompt'          => $sg_prompt,
-            'profiles'           => $registry->listProfiles(),
-            'default_profile_id' => $registry->getDefaultProfileId(),
-        ]));
-```
-
-In `generate()`, read + validate the profile and pass it through:
-
-```php
-        // ── Resolve the chosen profile (validate against known ids) ───────────
-        $profileId = trim($this->request->getStringParam('sg_profile', ''));
-        if ($profileId !== '') {
-            $known = array_column((new ProviderRegistry($this->container))->listProfiles(), 'id');
-            if (! in_array($profileId, $known, true)) {
-                $profileId = '';
-            }
-        }
-        $subtasks = $model->generate($prompt, $profileId !== '' ? $profileId : null);
-```
-
-- [ ] **Step 5: Update `SettingsController.php`** — remove `use ...\ProviderFactory;` and the whole `testConnection()` method. `show()` drops provider/model/key/csrf-token vars, passes only `sg_max_subtasks` + `ai_enabled`. `save()` persists only `sg_max_subtasks` (clamped 1–20). Gate helper `isAiEnabled()` → `AiGate::isReady($this->container)`:
+- [ ] **Step 7: Update `SubtaskGenerator/Controller/SettingsController.php`** — remove `use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;` and the entire `testConnection()` method. Replace `show()` and `save()` with the trimmed versions:
 
 ```php
     public function show(): void
@@ -2126,7 +2022,10 @@ In `generate()`, read + validate the profile and pass it through:
         }
         $this->response->html($this->helper->layout->config('SubtaskGenerator:config/settings', [
             'title'           => t('Settings') . ' &gt; ' . t('Subtask Generator'),
-            'sg_max_subtasks' => (int) $this->configModel->get('sg_max_subtasks', (string) \Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel::DEFAULT_MAX_SUBTASKS),
+            'sg_max_subtasks' => (int) $this->configModel->get(
+                'sg_max_subtasks',
+                (string) \Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel::DEFAULT_MAX_SUBTASKS
+            ),
         ]));
     }
 
@@ -2137,32 +2036,17 @@ In `generate()`, read + validate the profile and pass it through:
         }
         $this->checkCSRFForm();
         $values = $this->request->getValues();
-        $maxSubtasks = max(1, min(20, (int) ($values['sg_max_subtasks'] ?? \Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel::DEFAULT_MAX_SUBTASKS)));
+        $maxSubtasks = max(1, min(20, (int) ($values['sg_max_subtasks']
+            ?? \Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel::DEFAULT_MAX_SUBTASKS)));
         $this->configModel->save(['sg_max_subtasks' => (string) $maxSubtasks]);
         $this->flash->success(t('Settings saved successfully.'));
         $this->response->redirect($this->helper->url->to('SettingsController', 'show', ['plugin' => 'SubtaskGenerator']));
     }
 ```
-Remove the old `use` for `AccessForbiddenException`? No — keep it. Remove the private `isAiEnabled()` if it's now unused, or keep and point at `AiGate`. Delete the vendor-path `isAiEnabled()` helper body that checked `vendor/autoload.php`.
 
-- [ ] **Step 6: Update `Template/generator/modal.php`** — add, right after the opening `<form ...>` + csrf + hidden task_id (before the prompt `form-group`):
+Delete the old private `isAiEnabled()` helper (it checked `vendor/autoload.php`, now gone) if nothing else uses it. Keep the `AccessForbiddenException` import.
 
-```php
-    <?php if (isset($profiles) && count($profiles) >= 2): ?>
-    <div class="form-group">
-        <?= $this->form->label(t('AI provider'), 'sg_profile') ?>
-        <select name="sg_profile" id="sg_profile" class="form-select">
-            <?php foreach ($profiles as $p): ?>
-                <option value="<?= $this->text->e($p['id']) ?>" <?= ($p['id'] === ($default_profile_id ?? '')) ? 'selected' : '' ?>>
-                    <?= $this->text->e($p['label']) ?>
-                </option>
-            <?php endforeach ?>
-        </select>
-    </div>
-    <?php endif ?>
-```
-
-- [ ] **Step 7: Rewrite `Template/config/settings.php`** — trim to the max-subtasks field + an AI Connector link:
+- [ ] **Step 8: Rewrite `SubtaskGenerator/Template/config/settings.php`** — trim to the max-subtasks field + an AI Connector link (show() no longer passes provider/model/key vars, so the old template would emit undefined-var warnings):
 
 ```php
 <div class="page-header">
@@ -2193,9 +2077,146 @@ Remove the old `use` for `AccessForbiddenException`? No — keep it. Remove the 
 </form>
 ```
 
-- [ ] **Step 8: Trim `Assets/js/subtask-generator.js`** — delete the two trailing settings-page handlers (the `#sg-test-btn` click listener + `runTestConnection` and the `#sg_provider` change auto-fill listener); keep everything through the generate/create modal logic. Those settings controls no longer exist in SubtaskGenerator.
+- [ ] **Step 9: Trim `SubtaskGenerator/Assets/js/subtask-generator.js`** — delete the two trailing settings-page handlers: the `#sg-test-btn` click listener + `runTestConnection()` function, and the `#sg_provider` `change` auto-fill listener. Those settings controls no longer exist. Keep everything through the generate/create modal logic (the modal is unchanged in this task).
 
-- [ ] **Step 9: Update `SubtaskGenerator/plugin.json`:**
+- [ ] **Step 10: Update the sidebar-link comment** — in `SubtaskGenerator/Template/generator/sidebar_link.php`, change the comment referencing `ProviderFactory::isAiReady()` to `AiGate::isReady()` (comment-only; the `$ai_enabled` guard code is unchanged).
+
+- [ ] **Step 11: Delete the obsolete files**
+
+```bash
+git rm SubtaskGenerator/Model/ProviderFactory.php SubtaskGenerator/composer.json SubtaskGenerator/composer.lock
+git rm -r SubtaskGenerator/vendor
+```
+
+- [ ] **Step 12: Fix the remaining SubtaskGenerator tests** — remove every `use CarmeloSantana\PHPAgents\...` and `use ...\ProviderFactory;` from `SettingsTest.php`, `GeneratorTest.php`, `PluginTest.php`. 
+  - `PluginTest`: **keep** the version assertion at `'1.0.1'` (Task 6 bumps it); **delete** `testVendorAutoloadExists`, `testProviderClassesResolve`, and the `ProviderFactory`-based gate tests (`testIsAiEnabledReturnsFalseWithNoProviderConfigured`, `testIsAiEnabledReturnsTrueWithProviderConfigured` as written); replace the gate coverage with `AiGate::isReady(...)` tests using the `$connectorPresent`/`$phpVersionId` overrides, e.g.:
+    ```php
+    public function testAiGateFalseBelowPhp84(): void
+    {
+        $this->assertFalse(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80399, true));
+    }
+    public function testAiGateFalseWhenConnectorAbsent(): void
+    {
+        $this->assertFalse(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80400, false));
+    }
+    ```
+  - `SettingsTest`: keep the `sg_max_subtasks` save/persist + admin-gate (show/save non-admin) cases and the CSRF-in-template check; **delete** all ProviderFactory build/resolution/testConnection/provider-map cases and the `setUpBeforeClass()` vendor load. Update `testSettingsTemplateDoesNotEchoApiKeyValue` → replace with a check that the template no longer has an `sg_api_key` field (`assertStringNotContainsString('name="sg_api_key"', ...)`).
+  - `GeneratorTest`: keep the show/generate gate + 404 + modal-render cases (they use `isAiEnabled()` anonymous-subclass overrides — unaffected). Remove any `ProviderFactory` import; the `testAiReadyReturnsFalseWhenNoProviderConfigured` test (ProviderFactory-based) → **delete** (superseded by AiGate tests in PluginTest).
+  - `CreateSubtaskTest`: no ProviderFactory/php-agents references — leave as-is.
+
+- [ ] **Step 13: Run to verify it passes**
+
+Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
+Expected: PASS (all green at version 1.0.1). Then confirm no stale refs:
+```bash
+grep -rn "ProviderFactory\|CarmeloSantana" SubtaskGenerator --include=*.php
+```
+Expected: no matches (vendor is gone).
+
+- [ ] **Step 14: Commit**
+
+```bash
+git add -A SubtaskGenerator
+git commit -m "refactor(SubtaskGenerator): swap provider backend to AiConnector ProviderRegistry (drop ProviderFactory + vendored php-agents)"
+```
+
+---
+
+## Task 6: SubtaskGenerator — point-of-use profile dropdown + hard requires + v1.1.0
+
+**Files:**
+- Modify: `SubtaskGenerator/Controller/GeneratorController.php` (pass profiles to modal; read + validate `sg_profile`)
+- Modify: `SubtaskGenerator/Template/generator/modal.php` (add `sg_profile` select when ≥2 profiles)
+- Modify: `SubtaskGenerator/plugin.json` (hard `requires`, version 1.1.0)
+- Modify: `SubtaskGenerator/Plugin.php` (version 1.1.0; description wording)
+- Modify: `SubtaskGenerator/Test/GeneratorTest.php`, `PluginTest.php`
+
+**Interfaces:**
+- Consumes: `ProviderRegistry::listProfiles()`, `ProviderRegistry::getDefaultProfileId()`, `SubtaskGeneratorModel::generate($prompt, $profileId)`.
+- Produces: modal renders `<select name="sg_profile">` **only when ≥2 profiles**; `generate()` reads `sg_profile`, validates it against `listProfiles()` ids (unknown/empty → null), passes it to the model.
+
+- [ ] **Step 1: Update the tests first** — in `GeneratorTest.php` add:
+
+```php
+    public function testModalOmitsProfileDropdownWithZeroOrOneProfile(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [],
+            'default_profile_id' => '',
+        ]);
+        $this->assertStringNotContainsString('name="sg_profile"', $html);
+    }
+
+    public function testModalShowsProfileDropdownWithTwoProfiles(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [
+                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
+                ['id' => 'b', 'label' => 'B', 'provider' => 'openai', 'model' => 'm'],
+            ],
+            'default_profile_id' => 'b',
+        ]);
+        $this->assertStringContainsString('name="sg_profile"', $html);
+        $this->assertStringContainsString('value="b"', $html);
+    }
+```
+
+In `PluginTest.php` change the version assertion from `'1.0.1'` to `'1.1.0'`.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
+Expected: FAIL — modal has no `sg_profile`; version assertion mismatch (Plugin.php still 1.0.1).
+
+- [ ] **Step 3: Update `GeneratorController::show()`** — pass profiles into the modal render:
+
+```php
+        $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
+        $this->response->html($this->template->render('SubtaskGenerator:generator/modal', [
+            'task'               => $task,
+            'sg_prompt'          => $sg_prompt,
+            'profiles'           => $registry->listProfiles(),
+            'default_profile_id' => $registry->getDefaultProfileId(),
+        ]));
+```
+
+- [ ] **Step 4: Update `GeneratorController::generate()`** — read + validate the profile and pass it to the model. Replace `$subtasks = $model->generate($prompt);` with:
+
+```php
+            // Resolve the chosen profile (validate against known ids).
+            $profileId = trim($this->request->getStringParam('sg_profile', ''));
+            if ($profileId !== '') {
+                $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
+                $known = array_column($registry->listProfiles(), 'id');
+                if (! in_array($profileId, $known, true)) {
+                    $profileId = '';
+                }
+            }
+            $subtasks = $model->generate($prompt, $profileId !== '' ? $profileId : null);
+```
+
+- [ ] **Step 5: Update `Template/generator/modal.php`** — add, right after the opening `<form ...>` + `$this->form->csrf()` + the hidden `task_id` input (before the prompt `form-group`):
+
+```php
+    <?php if (isset($profiles) && count($profiles) >= 2): ?>
+    <div class="form-group">
+        <?= $this->form->label(t('AI provider'), 'sg_profile') ?>
+        <select name="sg_profile" id="sg_profile" class="form-select">
+            <?php foreach ($profiles as $p): ?>
+                <option value="<?= $this->text->e($p['id']) ?>" <?= ($p['id'] === ($default_profile_id ?? '')) ? 'selected' : '' ?>>
+                    <?= $this->text->e($p['label']) ?>
+                </option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <?php endif ?>
+```
+
+- [ ] **Step 6: Update `SubtaskGenerator/plugin.json`:**
 
 ```json
 {
@@ -2213,18 +2234,20 @@ Remove the old `use` for `AccessForbiddenException`? No — keep it. Remove the 
 }
 ```
 
-- [ ] **Step 10: Run to verify it passes**
+- [ ] **Step 7: Update `SubtaskGenerator/Plugin.php`** — set `getPluginVersion()` to `'1.1.0'`; update `getPluginDescription()` to `t('Generate subtasks from a task description using AI (provider backend supplied by the AiConnector plugin).')`.
+
+- [ ] **Step 8: Run to verify it passes**
 
 Run: `./testing/run-plugin-tests.sh SubtaskGenerator`
 Expected: PASS. Then re-run AiConnector to confirm no regression:
 Run: `./testing/run-plugin-tests.sh AiConnector`
 Expected: PASS.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add -A SubtaskGenerator
-git commit -m "feat(SubtaskGenerator): point-of-use profile dropdown, AiGate, settings trim, hard requires on AiConnector (v1.1.0)"
+git commit -m "feat(SubtaskGenerator): point-of-use provider dropdown + hard requires on AiConnector (v1.1.0)"
 ```
 
 ---
