@@ -2,6 +2,15 @@
 
 All notable changes to SubtaskGenerator will be documented here.
 
+## [1.1.0] — 2026-07-10
+
+### Changed (breaking)
+- **Provider configuration moved to the new AiConnector plugin.** SubtaskGenerator no longer bundles php-agents or stores provider/model/API-key settings; it now **requires** AiConnector (declared via `requires` in `plugin.json`).
+- Existing `sg_provider` / `sg_model` / `sg_api_key` settings are ignored — **reconfigure providers in Settings → AI Connector** (no automatic migration).
+
+### Added
+- **Point-of-use provider dropdown** in the Generate-subtasks modal, shown when ≥2 AiConnector profiles exist (with one profile the default is used silently).
+
 ## [1.0.1] — 2026-07-03
 
 ### Fixed
