@@ -10,9 +10,13 @@ OpenAI, OpenAI Responses, Grok, Gemini, Mistral, or Ollama).
 - Kanboard >= 1.2.47
 - PHP >= 8.4
 - **[AiConnector](../AiConnector/README.md) >= 1.0.0**, installed and active,
-  with at least one provider profile configured and ready (declared as a hard
-  `requires` in `plugin.json` — Kanboard will refuse to activate
-  SubtaskGenerator without it)
+  with at least one provider profile configured and ready. This is declared as a
+  hard `requires` in `plugin.json`. Kanboard core does not itself parse
+  `requires`, so it will not block activation; the dependency is *enforced* by the
+  [ModMenu](../ModMenu/README.md) plugin manager (install/enable/disable gates).
+  Without ModMenu, SubtaskGenerator still degrades gracefully at runtime: if
+  AiConnector is absent or has no ready profile, the AI features stay hidden and
+  the routes return 403 (no fatal).
 
 ## Installation
 

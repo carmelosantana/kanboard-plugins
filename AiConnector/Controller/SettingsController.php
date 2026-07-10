@@ -206,7 +206,7 @@ class SettingsController extends BaseController
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /** Deterministic unique id (no random() — keeps the harness reproducible). */
+    /** Mint a unique profile id from the label + current count + microtime. */
     private function mintId(string $label, int $count): string
     {
         return 'p_' . substr(hash('sha256', $label . '|' . $count . '|' . microtime()), 0, 8);
