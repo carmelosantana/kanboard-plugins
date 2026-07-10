@@ -2,85 +2,48 @@
 
 require_once 'tests/units/Base.php';
 
-use CarmeloSantana\PHPAgents\Contract\ProviderInterface;
-use CarmeloSantana\PHPAgents\Config\ModelDefinition;
-use CarmeloSantana\PHPAgents\Provider\Response;
-use CarmeloSantana\PHPAgents\Enum\ProviderFinishReason;
+use Kanboard\Plugin\AiConnector\Model\ProviderRegistry;
 use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Plugin\SubtaskGenerator\Controller\GeneratorController;
-use Kanboard\Plugin\SubtaskGenerator\Model\ProviderFactory;
 use Kanboard\Plugin\SubtaskGenerator\Model\SubtaskGeneratorModel;
 use KanboardTests\units\Base;
 
 /**
- * Unit tests for SubtaskGenerator Task 04: generate endpoint + normalization.
+ * Unit tests for SubtaskGenerator Task 04/05: generate endpoint + normalization.
  *
- * All tests use a MOCK/STUB provider — NO network calls are ever made.
+ * All tests drive through a FAKE ProviderRegistry (an anonymous subclass whose
+ * structured() returns/throws a canned value) — NO network calls, and NO
+ * php-agents class is ever touched.
  *
  * Covers:
- *  (a) Canned valid JSON → generate() returns normalized/deduped/clamped titles.
- *  (b) Malformed model output (bad JSON / missing subtasks / non-string titles)
- *      → graceful (returns empty or [], NOT a fatal).
+ *  (a) Canned valid array → generate() returns normalized/deduped/clamped titles.
+ *  (b) Malformed model output (missing subtasks / non-string titles)
+ *      → graceful (returns empty [], NOT a fatal).
  *  (c) Clamp to sg_max_subtasks.
  *  (d) generate() endpoint rejects non-admin / bad-CSRF.
- *  (e) Provider throwing → controller returns a clean JSON error, not a 500.
+ *  (e) Registry throwing → controller returns a clean JSON error, not a 500.
  */
 class SubtaskGeneratorModelTest extends Base
 {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Load vendor so provider classes are available. */
-    public static function setUpBeforeClass(): void
+    /** A registry stub whose structured() returns/throws a canned value — no network. */
+    private function fakeRegistry(mixed $return, ?\Throwable $throw = null): ProviderRegistry
     {
-        parent::setUpBeforeClass();
-
-        $autoload = dirname(__DIR__) . '/vendor/autoload.php';
-        if (file_exists($autoload)) {
-            require_once $autoload;
-        }
+        return new class($this->container, $return, $throw) extends ProviderRegistry {
+            public function __construct($c, private mixed $r, private ?\Throwable $t) { parent::__construct($c); }
+            public function structured(array $messages, string $schema, ?string $profileId = null): array {
+                if ($this->t !== null) { throw $this->t; }
+                return is_array($this->r) ? $this->r : [];
+            }
+        };
     }
 
-    /**
-     * Build a SubtaskGeneratorModel with the given mock provider injected.
-     */
-    private function makeModel(ProviderInterface $provider): SubtaskGeneratorModel
+    private function makeModel(mixed $return, ?\Throwable $throw = null): SubtaskGeneratorModel
     {
         $model = new SubtaskGeneratorModel($this->container);
-        $model->setProvider($provider);
+        $model->setRegistry($this->fakeRegistry($return, $throw));
         return $model;
-    }
-
-    /**
-     * Make a mock ProviderInterface whose structured() returns the given value.
-     *
-     * @param  mixed $returnValue   What structured() will return.
-     */
-    private function mockProvider(mixed $returnValue): ProviderInterface
-    {
-        $mock = $this->createMock(ProviderInterface::class);
-        $mock->method('structured')->willReturn($returnValue);
-        return $mock;
-    }
-
-    /**
-     * Make a mock ProviderInterface whose structured() throws the given exception.
-     */
-    private function throwingProvider(\Throwable $exception): ProviderInterface
-    {
-        $mock = $this->createMock(ProviderInterface::class);
-        $mock->method('structured')->willThrowException($exception);
-        return $mock;
-    }
-
-    /**
-     * Build a Response object (OpenAI/Grok path) with content as a JSON string.
-     */
-    private function makeResponse(string $jsonContent): Response
-    {
-        return new Response(
-            content: $jsonContent,
-            finishReason: ProviderFinishReason::Stop,
-        );
     }
 
     /**
@@ -126,7 +89,7 @@ class SubtaskGeneratorModelTest extends Base
     // ── (a) Canned valid output — normalized, deduped, clamped ───────────────
 
     /**
-     * Anthropic path: structured() returns a PHP array directly.
+     * structured() returns a decoded PHP array directly.
      * generate() must return clean string titles.
      */
     public function testGenerateWithAnthropicStyleArrayResult(): void
@@ -139,36 +102,13 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('Build a new feature');
 
         $this->assertSame(
             ['Set up the database schema', 'Write unit tests', 'Deploy to staging'],
             $result,
             'Should return trimmed titles from an already-decoded PHP array'
-        );
-    }
-
-    /**
-     * OpenAI/Grok path: structured() returns a Response with a JSON string.
-     * generate() must decode the JSON and return clean titles.
-     */
-    public function testGenerateWithOpenAIStyleResponseResult(): void
-    {
-        $json = json_encode([
-            'subtasks' => [
-                ['title' => 'Create API endpoint'],
-                ['title' => 'Write integration test'],
-            ],
-        ]);
-
-        $model  = $this->makeModel($this->mockProvider($this->makeResponse($json)));
-        $result = $model->generate('Build REST API');
-
-        $this->assertSame(
-            ['Create API endpoint', 'Write integration test'],
-            $result,
-            'Should decode the JSON string in Response->content'
         );
     }
 
@@ -187,7 +127,7 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('Ship the feature');
 
         $this->assertSame(
@@ -210,7 +150,7 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('A task');
 
         $this->assertSame(['Valid title'], $result, 'Blank/whitespace-only titles must be dropped');
@@ -219,34 +159,23 @@ class SubtaskGeneratorModelTest extends Base
     // ── (b) Malformed output — graceful, no fatal ─────────────────────────────
 
     /**
-     * structured() returns null — generate() must return [] gracefully.
+     * structured() returns null (via mockProvider(null) equivalent) — generate() must return [] gracefully.
      */
     public function testGenerateReturnsEmptyOnNullResult(): void
     {
-        $model  = $this->makeModel($this->mockProvider(null));
+        $model  = $this->makeModel(null);
         $result = $model->generate('A task');
 
         $this->assertSame([], $result, 'null result must produce an empty array, not a fatal');
     }
 
     /**
-     * structured() returns a Response with invalid JSON — generate() must return [].
-     */
-    public function testGenerateReturnsEmptyOnInvalidJson(): void
-    {
-        $model  = $this->makeModel($this->mockProvider($this->makeResponse('NOT_JSON{{{')));
-        $result = $model->generate('A task');
-
-        $this->assertSame([], $result, 'Invalid JSON in Response must produce empty array');
-    }
-
-    /**
-     * structured() returns a valid JSON but no 'subtasks' key — generate() returns [].
+     * structured() returns a valid array but no 'subtasks' key — generate() returns [].
      */
     public function testGenerateReturnsEmptyWhenSubtasksKeyMissing(): void
     {
-        $json = json_encode(['wrong_key' => [['title' => 'Ignored']]]);
-        $model  = $this->makeModel($this->mockProvider($this->makeResponse($json)));
+        $cannedArray = ['wrong_key' => [['title' => 'Ignored']]];
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('A task');
 
         $this->assertSame([], $result, 'Missing subtasks key must produce empty array');
@@ -259,7 +188,7 @@ class SubtaskGeneratorModelTest extends Base
     {
         $cannedArray = ['subtasks' => 'this should be an array'];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('A task');
 
         $this->assertSame([], $result, 'Non-array subtasks must produce empty array');
@@ -279,19 +208,19 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('A task');
 
         $this->assertSame(['Good title'], $result, 'Non-string titles must be skipped gracefully');
     }
 
     /**
-     * structured() returns a Response with JSON containing no subtasks array.
+     * structured() returns an array with an empty subtasks array.
      */
     public function testGenerateReturnsEmptyOnEmptySubtasksArray(): void
     {
-        $json = json_encode(['subtasks' => []]);
-        $model  = $this->makeModel($this->mockProvider($this->makeResponse($json)));
+        $cannedArray = ['subtasks' => []];
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('A task');
 
         $this->assertSame([], $result, 'Empty subtasks array must produce empty result');
@@ -317,7 +246,7 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('Big task');
 
         $this->assertCount(3, $result, 'Result must be clamped to sg_max_subtasks = 3');
@@ -338,7 +267,7 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('Tiny task');
 
         $this->assertSame(['Only first'], $result, 'Clamp to 1 must keep only the first title');
@@ -358,7 +287,7 @@ class SubtaskGeneratorModelTest extends Base
             ],
         ];
 
-        $model  = $this->makeModel($this->mockProvider($cannedArray));
+        $model  = $this->makeModel($cannedArray);
         $result = $model->generate('Short task');
 
         $this->assertCount(2, $result, 'All titles returned when under the cap');
@@ -410,7 +339,7 @@ class SubtaskGeneratorModelTest extends Base
         );
     }
 
-    // ── (e) Provider throwing → clean JSON error, not 500 ────────────────────
+    // ── (e) Registry throwing → clean JSON error, not 500 ────────────────────
 
     /**
      * STRUCTURE-CHECK (not a behavior test): verifies the catch block is present and
@@ -418,7 +347,7 @@ class SubtaskGeneratorModelTest extends Base
      * testModelGeneratePropagatesProviderException which confirms the model lets the
      * exception propagate so the controller's catch block is reached.
      *
-     * When the provider throws, the controller must return a clean JSON error
+     * When the registry throws, the controller must return a clean JSON error
      * without leaking the exception details to the client.
      */
     public function testControllerSourceCatchesProviderExceptionAndReturnsJsonError(): void
@@ -444,14 +373,14 @@ class SubtaskGeneratorModelTest extends Base
     /**
      * Model::generate() propagates the exception so the controller can catch it.
      *
-     * We verify that generate() does NOT silently swallow provider exceptions —
+     * We verify that generate() does NOT silently swallow registry exceptions —
      * it must re-throw (or let it propagate naturally) so the controller can
      * return a clean JSON error rather than a 500.
      */
     public function testModelGeneratePropagatesProviderException(): void
     {
         $exception = new \RuntimeException('Provider network timeout');
-        $model     = $this->makeModel($this->throwingProvider($exception));
+        $model     = $this->makeModel(null, $exception);
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Provider network timeout');
@@ -473,63 +402,5 @@ class SubtaskGeneratorModelTest extends Base
             'Controller generate() must have a try block wrapping the model call');
         $this->assertStringContainsString('$model->generate(', $src,
             'Controller must call $model->generate()');
-    }
-
-    // ── structured() return-type documentation test ───────────────────────────
-
-    /**
-     * Verify source-level that AnthropicProvider::structured() can return an array
-     * (the tool_use block['input'] path) — not just a Response object.
-     *
-     * This guards against a regression where someone changes generate() to always
-     * call $res->content without checking the type.
-     */
-    public function testAnthropicProviderStructuredReturnsArrayOrResponse(): void
-    {
-        // STRUCTURE-CHECK: reads the vendored AnthropicProvider source to verify the
-        // return-type contract. Guard with markTestSkipped() so a fresh checkout
-        // (before `composer install`) does not produce a fatal file_get_contents error.
-        $vendorFile = dirname(__DIR__) . '/vendor/carmelosantana/php-agents/src/Provider/AnthropicProvider.php';
-        if (! file_exists($vendorFile)) {
-            $this->markTestSkipped('vendor/carmelosantana/php-agents not present — run composer install inside SubtaskGenerator/');
-        }
-
-        // Read the AnthropicProvider source from the vendored copy.
-        $src = file_get_contents($vendorFile);
-
-        // The method must return $block['input'] ?? [] (PHP array) in the happy path.
-        $this->assertStringContainsString(
-            "return \$block['input'] ?? []",
-            $src,
-            'AnthropicProvider::structured() must return the tool_use block[input] directly as a PHP array'
-        );
-
-        // It must also have a fallback that may return a Response.
-        $this->assertStringContainsString(
-            'parseResponse',
-            $src,
-            'AnthropicProvider::structured() must have a Response fallback path'
-        );
-    }
-
-    /**
-     * Verify that SubtaskGeneratorModel::normaliseStructuredResult handles both shapes
-     * by reading the source.
-     */
-    public function testModelHandlesBothReturnShapes(): void
-    {
-        $src = file_get_contents(dirname(__DIR__) . '/Model/SubtaskGeneratorModel.php');
-
-        // Must check for array.
-        $this->assertStringContainsString('is_array($raw)', $src,
-            'Model must handle PHP array return (Anthropic tool_use path)');
-
-        // Must check for Response instance.
-        $this->assertStringContainsString('instanceof Response', $src,
-            'Model must handle Response object return (OpenAI/Grok path)');
-
-        // Must json_decode the ->content when it is a Response.
-        $this->assertStringContainsString('json_decode($raw->content', $src,
-            'Model must json_decode the Response->content for the OpenAI/Grok path');
     }
 }

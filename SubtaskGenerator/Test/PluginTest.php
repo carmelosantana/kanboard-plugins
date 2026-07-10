@@ -53,57 +53,49 @@ class PluginTest extends Base
         $this->assertFalse($plugin->isPhpCompatible(70400));
     }
 
-    public function testVendorAutoloadExists(): void
+    // ── AiGate coverage ─────────────────────────────────────────────────────────
+    //
+    // AiGate::isReady() is the single source of truth for "is AI subtask
+    // generation available?" — PHP >= 8.4 AND AiConnector present AND
+    // ProviderRegistry::isReady(). Both Plugin::initialize() and
+    // GeneratorController::isAiEnabled() delegate to it (see GeneratorTest for
+    // controller-level gate-parity coverage).
+
+    public function testAiGateFalseBelowPhp84(): void
     {
-        $autoload = dirname(__DIR__) . '/vendor/autoload.php';
-        $this->assertFileExists(
-            $autoload,
-            'vendor/autoload.php must exist — run composer install inside SubtaskGenerator/'
-        );
+        $this->assertFalse(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80399, true));
     }
 
-    public function testIsAiEnabledReturnsFalseWithNoProviderConfigured(): void
+    public function testAiGateFalseWhenConnectorAbsent(): void
     {
-        // Unset any provider env vars so the test is deterministic regardless of host config.
-        $originalAnthropicKey = getenv('ANTHROPIC_API_KEY');
-        $originalOpenaiKey    = getenv('OPENAI_API_KEY');
-        $originalXaiKey       = getenv('XAI_API_KEY');
-
-        putenv('ANTHROPIC_API_KEY=');
-        putenv('OPENAI_API_KEY=');
-        putenv('XAI_API_KEY=');
-
-        try {
-            $plugin = new Plugin($this->container);
-            $plugin->initialize();
-
-            // PHP 8.4 + vendor present BUT no provider configured → isAiEnabled() must
-            // return false. The gate now requires all three conditions:
-            // PHP >= 8.4 AND vendor/autoload.php present AND a provider API key resolvable.
-            $this->assertFalse(
-                $plugin->isAiEnabled(),
-                'isAiEnabled() must return false when no provider API key is configured — ' .
-                'even on PHP 8.4 with vendor loaded. Gate-parity with the hidden sidebar link.'
-            );
-        } finally {
-            if ($originalAnthropicKey !== false) {
-                putenv("ANTHROPIC_API_KEY={$originalAnthropicKey}");
-            }
-            if ($originalOpenaiKey !== false) {
-                putenv("OPENAI_API_KEY={$originalOpenaiKey}");
-            }
-            if ($originalXaiKey !== false) {
-                putenv("XAI_API_KEY={$originalXaiKey}");
-            }
-        }
+        $this->assertFalse(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80400, false));
     }
 
-    public function testIsAiEnabledReturnsTrueWithProviderConfigured(): void
+    public function testAiGateFalseWhenNoProfileConfigured(): void
     {
-        // Configure a provider key so the full gate passes on PHP 8.4.
+        // PHP ok, connector present, but no AiConnector profile stored → registry isReady() is false.
+        $this->assertFalse(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80400, true));
+    }
+
+    public function testAiGateTrueWhenProfileConfigured(): void
+    {
         $this->container['configModel']->save([
-            'sg_provider' => 'anthropic',
-            'sg_api_key'  => 'sk-test-fake-key-for-gate-test',
+            'aiconnector_profiles' => json_encode([
+                ['id' => 'p1', 'label' => 'Test', 'provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514'],
+            ]),
+            'aiconnector_key_p1' => 'sk-test-fake-key-for-gate-test',
+        ]);
+
+        $this->assertTrue(\Kanboard\Plugin\SubtaskGenerator\Model\AiGate::isReady($this->container, 80400, true));
+    }
+
+    public function testPluginInitializeUsesAiGate(): void
+    {
+        $this->container['configModel']->save([
+            'aiconnector_profiles' => json_encode([
+                ['id' => 'p1', 'label' => 'Test', 'provider' => 'anthropic', 'model' => 'claude-sonnet-4-20250514'],
+            ]),
+            'aiconnector_key_p1' => 'sk-test-fake-key-for-gate-test',
         ]);
 
         $plugin = new Plugin($this->container);
@@ -111,34 +103,7 @@ class PluginTest extends Base
 
         $this->assertTrue(
             $plugin->isAiEnabled(),
-            'isAiEnabled() must return true on PHP 8.4 when vendor is loaded and a provider API key is set'
-        );
-    }
-
-    public function testProviderClassesResolve(): void
-    {
-        // Ensure vendor/autoload.php is loaded (plugin initialize() does this at runtime;
-        // in unit tests we load it explicitly so the classes are available).
-        $autoload = dirname(__DIR__) . '/vendor/autoload.php';
-        if (file_exists($autoload)) {
-            require_once $autoload;
-        }
-
-        $this->assertTrue(
-            class_exists('CarmeloSantana\\PHPAgents\\Provider\\AnthropicProvider'),
-            'AnthropicProvider must resolve after loading plugin vendor/autoload.php'
-        );
-        $this->assertTrue(
-            class_exists('CarmeloSantana\\PHPAgents\\Provider\\OpenAIResponsesProvider'),
-            'OpenAIResponsesProvider must resolve'
-        );
-        $this->assertTrue(
-            class_exists('CarmeloSantana\\PHPAgents\\Provider\\OpenAICompatibleProvider'),
-            'OpenAICompatibleProvider must resolve'
-        );
-        $this->assertTrue(
-            class_exists('CarmeloSantana\\PHPAgents\\Provider\\XAIProvider'),
-            'XAIProvider must resolve'
+            'isAiEnabled() must return true on PHP 8.4 when AiConnector is present and a provider profile is configured'
         );
     }
 }

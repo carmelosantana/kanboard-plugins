@@ -2,33 +2,24 @@
 
 namespace Kanboard\Plugin\SubtaskGenerator\Model;
 
-use CarmeloSantana\PHPAgents\Contract\ProviderInterface;
-use CarmeloSantana\PHPAgents\Message\SystemMessage;
-use CarmeloSantana\PHPAgents\Message\UserMessage;
-use CarmeloSantana\PHPAgents\Provider\Response;
 use Kanboard\Core\Base;
+use Kanboard\Plugin\AiConnector\Model\ProviderRegistry;
 
 /**
  * SubtaskGeneratorModel
  *
- * Calls the configured LLM provider's structured() with a simple
- * {subtasks:[{title}]} schema and returns a normalised/deduped/clamped
- * array of string titles.
- *
- * structured() return-type contract (verified in source):
- *  - AnthropicProvider: returns the tool_use block's $block['input']
- *    directly as an already-decoded PHP array, e.g. ['subtasks'=>[...]].
- *    Falls back to a Response object if no tool_use block is found.
- *  - OpenAICompatibleProvider / XAIProvider: calls chat() internally
- *    and returns a Response object whose ->content is a JSON string.
- *
- * This model handles both shapes via normaliseStructuredResult().
+ * Asks AiConnector's ProviderRegistry for a structured() result against a
+ * {subtasks:[{title}]} schema, then normalises/dedupes/clamps to string titles.
+ * All provider selection, key handling, and php-agents coupling live in
+ * AiConnector — this model references no vendored provider SDK class directly.
  *
  * @package Kanboard\Plugin\SubtaskGenerator\Model
  * @author  Carmelo Santana
  */
 class SubtaskGeneratorModel extends Base
 {
+    public const DEFAULT_MAX_SUBTASKS = 8;
+
     /** JSON schema passed to structured(). Name matches the tool name. */
     private const SCHEMA = [
         'name'   => 'subtasks',
@@ -39,10 +30,8 @@ class SubtaskGeneratorModel extends Base
                     'type'  => 'array',
                     'items' => [
                         'type'       => 'object',
-                        'properties' => [
-                            'title' => ['type' => 'string'],
-                        ],
-                        'required' => ['title'],
+                        'properties' => ['title' => ['type' => 'string']],
+                        'required'   => ['title'],
                     ],
                 ],
             ],
@@ -50,47 +39,35 @@ class SubtaskGeneratorModel extends Base
         ],
     ];
 
-    /** System prompt sent with every structured() call. */
     private const SYSTEM_PROMPT = 'Break the task into concrete, actionable subtasks.';
 
-    /**
-     * Optional provider override — injected in tests; null → built from config.
-     */
-    private ?ProviderInterface $injectedProvider = null;
+    /** Optional registry override — injected in tests; null → built from container. */
+    private ?ProviderRegistry $injectedRegistry = null;
 
-    /**
-     * Inject a provider instance, bypassing ProviderFactory::buildFromConfig().
-     *
-     * Used in unit tests so no network call is ever made.
-     */
-    public function setProvider(ProviderInterface $provider): void
+    /** Inject a registry (with a fake provider) so unit tests make no network call. */
+    public function setRegistry(ProviderRegistry $registry): void
     {
-        $this->injectedProvider = $provider;
+        $this->injectedRegistry = $registry;
     }
 
     /**
      * Generate candidate subtask titles for the given prompt.
      *
-     * @param  string $prompt   Free-text prompt (task title + description).
-     * @return string[]         Normalised, deduped, clamped array of titles.
+     * @param  string      $prompt    Free-text prompt (task title + description).
+     * @param  string|null $profileId AiConnector profile id (null → default).
+     * @return string[]               Normalised, deduped, clamped titles.
      * @throws \RuntimeException on provider error (caller must catch).
      */
-    public function generate(string $prompt): array
+    public function generate(string $prompt, ?string $profileId = null): array
     {
-        $provider = $this->injectedProvider
-            ?? ProviderFactory::buildFromConfig($this->configModel);
+        $registry = $this->injectedRegistry ?? new ProviderRegistry($this->container);
 
         $messages = [
-            new SystemMessage(self::SYSTEM_PROMPT),
-            new UserMessage($prompt),
+            ['role' => 'system', 'content' => self::SYSTEM_PROMPT],
+            ['role' => 'user',   'content' => $prompt],
         ];
 
-        $schema = json_encode(self::SCHEMA);
-
-        // structured() returns mixed — see class docblock for the two shapes.
-        $raw = $provider->structured($messages, $schema);
-
-        $decoded = $this->normaliseStructuredResult($raw);
+        $decoded = $registry->structured($messages, json_encode(self::SCHEMA), $profileId);
 
         return $this->normalise($decoded);
     }
@@ -98,45 +75,9 @@ class SubtaskGeneratorModel extends Base
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Decode the raw structured() return value to a plain PHP array.
-     *
-     * Handles two shapes:
-     *  1. Already a PHP array (AnthropicProvider tool_use path) — use as-is.
-     *  2. A Response object whose ->content is a JSON string (OpenAI/Grok path).
-     *
-     * Any other shape (null, unexpected object…) returns [].
-     *
-     * @param  mixed $raw
-     * @return array<string, mixed>
-     */
-    private function normaliseStructuredResult(mixed $raw): array
-    {
-        // Shape 1: AnthropicProvider returns the tool_use block['input'] directly
-        // as an already-decoded PHP array — e.g. ['subtasks' => [...]].
-        if (is_array($raw)) {
-            return $raw;
-        }
-
-        // Shape 2: OpenAI / Grok providers call chat() internally and return a
-        // Response object whose ->content property holds a JSON string.
-        if ($raw instanceof Response) {
-            $decoded = json_decode($raw->content, true);
-            return is_array($decoded) ? $decoded : [];
-        }
-
-        // Unknown shape — return empty so the caller gets an empty list rather
-        // than a fatal.
-        return [];
-    }
-
-    /**
-     * Validate and normalise the decoded array into clean string titles.
-     *
-     * Steps:
-     *  1. Extract subtasks array.
-     *  2. Collect non-empty string titles (trim; skip blank; skip non-string).
-     *  3. Deduplicate (case-insensitive, preserving original casing of first seen).
-     *  4. Clamp to sg_max_subtasks.
+     * Validate + normalise the decoded array into clean string titles:
+     * extract subtasks → trim → drop blanks/non-strings → case-insensitive dedupe
+     * → clamp to sg_max_subtasks.
      *
      * @param  array<string, mixed> $data
      * @return string[]
@@ -144,58 +85,42 @@ class SubtaskGeneratorModel extends Base
     private function normalise(array $data): array
     {
         $rawItems = $data['subtasks'] ?? [];
-
         if (! is_array($rawItems)) {
             return [];
         }
 
-        $max = (int) $this->configModel->get(
-            'sg_max_subtasks',
-            (string) ProviderFactory::DEFAULT_MAX_SUBTASKS
-        );
+        $max = (int) $this->configModel->get('sg_max_subtasks', (string) self::DEFAULT_MAX_SUBTASKS);
         if ($max < 1) {
-            $max = ProviderFactory::DEFAULT_MAX_SUBTASKS;
+            $max = self::DEFAULT_MAX_SUBTASKS;
         }
 
         $titles = [];
-        $seen   = [];          // lowercase → dedupe index
+        $seen   = [];
 
         foreach ($rawItems as $item) {
-            // Each item should be ['title' => '...'] but be defensive.
             if (! is_array($item)) {
-                // Some providers may return a flat list of strings.
                 if (is_string($item)) {
                     $title = trim($item);
-                    if ($title === '') {
-                        continue;
-                    }
+                    if ($title === '') { continue; }
                     $lower = mb_strtolower($title);
-                    if (isset($seen[$lower])) {
-                        continue;
-                    }
+                    if (isset($seen[$lower])) { continue; }
                     $seen[$lower] = true;
-                    $titles[]     = $title;
+                    $titles[] = $title;
                 }
                 continue;
             }
 
             $raw = $item['title'] ?? null;
-            if (! is_string($raw)) {
-                continue;
-            }
+            if (! is_string($raw)) { continue; }
 
             $title = trim($raw);
-            if ($title === '') {
-                continue;
-            }
+            if ($title === '') { continue; }
 
             $lower = mb_strtolower($title);
-            if (isset($seen[$lower])) {
-                continue;                    // dedupe
-            }
+            if (isset($seen[$lower])) { continue; }
 
             $seen[$lower] = true;
-            $titles[]     = $title;
+            $titles[] = $title;
         }
 
         return array_slice($titles, 0, $max);

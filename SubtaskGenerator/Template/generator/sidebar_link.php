@@ -1,6 +1,6 @@
 <?php
-// Guard 1: AI features must be enabled (PHP >= 8.4 + vendor loaded + provider configured).
-// $ai_enabled is set by Plugin::initialize() via ProviderFactory::isAiReady() — the same
+// Guard 1: AI features must be enabled (PHP >= 8.4 + AiConnector present + provider configured).
+// $ai_enabled is set by Plugin::initialize() via AiGate::isReady() — the same
 // gate that GeneratorController::isAiEnabled() uses — so the link is visible if and only
 // if the controller will honour the request.
 if (empty($ai_enabled)) {
