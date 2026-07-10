@@ -4,6 +4,19 @@ namespace Kanboard\Plugin\AiConnector\Model;
 
 use Kanboard\Core\Base;
 
+use CarmeloSantana\PHPAgents\Contract\ProviderInterface;
+use CarmeloSantana\PHPAgents\Message\SystemMessage;
+use CarmeloSantana\PHPAgents\Message\UserMessage;
+use CarmeloSantana\PHPAgents\Message\AssistantMessage;
+use CarmeloSantana\PHPAgents\Provider\Response;
+use CarmeloSantana\PHPAgents\Provider\AnthropicProvider;
+use CarmeloSantana\PHPAgents\Provider\OpenAICompatibleProvider;
+use CarmeloSantana\PHPAgents\Provider\OpenAIResponsesProvider;
+use CarmeloSantana\PHPAgents\Provider\XAIProvider;
+use CarmeloSantana\PHPAgents\Provider\GeminiProvider;
+use CarmeloSantana\PHPAgents\Provider\MistralProvider;
+use CarmeloSantana\PHPAgents\Provider\OllamaProvider;
+
 /**
  * ProviderRegistry — the public PHP API other plugins consume for AI provider access.
  *
@@ -196,5 +209,143 @@ class ProviderRegistry extends Base
             }
         }
         return '';
+    }
+
+    // ── Provider building + structured calls ────────────────────────────────────
+
+    /** Test seam — when set, buildProvider()/structured() use this instead of config. */
+    private ?ProviderInterface $injectedProvider = null;
+
+    /** Inject a provider for tests so no network call is made. */
+    public function setProviderForTesting(ProviderInterface $provider): void
+    {
+        $this->injectedProvider = $provider;
+    }
+
+    /**
+     * Build a configured php-agents provider for $profileId (null → the default).
+     *
+     * @throws \RuntimeException on missing/unknown profile or unsupported provider
+     *         type. The message NEVER contains an API key.
+     */
+    public function buildProvider(?string $profileId = null): ProviderInterface
+    {
+        if ($this->injectedProvider !== null) {
+            return $this->injectedProvider;
+        }
+
+        $id = $profileId ?? $this->getDefaultProfileId();
+        if ($id === '') {
+            throw new \RuntimeException('[AiConnector] No AI provider profile is configured. Add one in Settings → AI Connector.');
+        }
+
+        $profile = $this->findProfile($id);
+        if ($profile === null) {
+            throw new \RuntimeException(sprintf('[AiConnector] Unknown provider profile "%s".', $id));
+        }
+
+        $type    = $profile['provider'];
+        $model   = $profile['model'] !== '' ? $profile['model'] : (self::DEFAULT_MODELS[$type] ?? '');
+        $baseUrl = $profile['base_url'];
+        $stored  = (string) $this->configModel->get(self::KEY_PREFIX . $id, '');
+        $key     = $this->resolveKey($type, $stored);
+
+        return match ($type) {
+            self::PROVIDER_ANTHROPIC => new AnthropicProvider(model: $model, apiKey: $key),
+            self::PROVIDER_OPENAI => new OpenAICompatibleProvider(
+                model: $model,
+                baseUrl: $baseUrl !== '' ? $baseUrl : self::DEFAULT_BASE_URLS[self::PROVIDER_OPENAI],
+                apiKey: $key,
+            ),
+            self::PROVIDER_OPENAI_RESPONSES => $baseUrl !== ''
+                ? new OpenAIResponsesProvider(model: $model, baseUrl: $baseUrl, apiKey: $key)
+                : new OpenAIResponsesProvider(model: $model, apiKey: $key),
+            self::PROVIDER_GROK    => new XAIProvider(model: $model, apiKey: $key),
+            self::PROVIDER_GEMINI  => new GeminiProvider(model: $model, apiKey: $key),
+            self::PROVIDER_MISTRAL => new MistralProvider(model: $model, apiKey: $key),
+            self::PROVIDER_OLLAMA  => new OllamaProvider(
+                model: $model,
+                baseUrl: $this->resolveOllamaBaseUrl($baseUrl),
+            ),
+            default => throw new \RuntimeException(sprintf(
+                '[AiConnector] Unsupported provider type "%s". Supported: %s',
+                $type,
+                implode(', ', array_keys(self::PROVIDERS))
+            )),
+        };
+    }
+
+    /**
+     * Provider-agnostic structured call. Maps $messages to php-agents messages,
+     * calls the provider's structured(), and normalizes BOTH return shapes
+     * (decoded array | Response with JSON ->content) to a decoded PHP array.
+     *
+     * @param array<int, array{role:string, content:string}> $messages
+     * @throws \RuntimeException from buildProvider() (no key in message).
+     */
+    public function structured(array $messages, string $schema, ?string $profileId = null): array
+    {
+        $provider = $this->buildProvider($profileId);
+        $mapped   = $this->mapMessages($messages);
+        $raw      = $provider->structured($mapped, $schema);
+        return $this->normalizeStructuredResult($raw);
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Map [['role'=>..,'content'=>..], ...] to php-agents message objects.
+     * Unknown roles fall back to UserMessage (defensive).
+     *
+     * @param array<int, array{role:string, content:string}> $messages
+     * @return array<int, object>
+     */
+    private function mapMessages(array $messages): array
+    {
+        $out = [];
+        foreach ($messages as $m) {
+            $role    = is_array($m) ? (string) ($m['role'] ?? 'user') : 'user';
+            $content = is_array($m) ? (string) ($m['content'] ?? '') : (string) $m;
+            $out[] = match ($role) {
+                'system'    => new SystemMessage($content),
+                'assistant' => new AssistantMessage($content),
+                default     => new UserMessage($content),
+            };
+        }
+        return $out;
+    }
+
+    /**
+     * Normalize php-agents structured() return to a decoded PHP array.
+     *  1. array (Anthropic tool_use / OpenAIResponses) → use as-is.
+     *  2. Response (openai/grok/gemini/mistral/ollama) → json_decode(->content).
+     *  3. anything else → [].
+     */
+    private function normalizeStructuredResult(mixed $raw): array
+    {
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if ($raw instanceof Response) {
+            $decoded = json_decode($raw->content, true);
+            return is_array($decoded) ? $decoded : [];
+        }
+        return [];
+    }
+
+    /**
+     * Ollama base URL: profile override → OLLAMA_HOST (+ /v1) → php-agents default.
+     * php-agents' OllamaProvider strips /v1 internally for its native endpoints.
+     */
+    private function resolveOllamaBaseUrl(string $baseUrl): string
+    {
+        if ($baseUrl !== '') {
+            return $baseUrl;
+        }
+        $host = getenv('OLLAMA_HOST');
+        if ($host !== false && $host !== '') {
+            return rtrim($host, '/') . '/v1';
+        }
+        return self::DEFAULT_BASE_URLS[self::PROVIDER_OLLAMA];
     }
 }
