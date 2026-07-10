@@ -28,7 +28,18 @@ class Plugin extends Base
             error_log('[AiConnector] vendor/autoload.php not found — run composer install inside the plugin directory.');
         }
 
-        // Routes + hooks are registered in later tasks (settings UI, test connection).
+        // ── Settings sidebar link ─────────────────────────────────────────────
+        $this->hook->on('template:config:sidebar', [
+            'template' => 'AiConnector:config/sidebar',
+        ]);
+
+        // ── Settings routes ───────────────────────────────────────────────────
+        $this->route->addRoute('ai-connector/settings', 'SettingsController', 'show');
+        $this->route->addRoute('ai-connector/save',     'SettingsController', 'save');
+        $this->route->addRoute('ai-connector/delete',   'SettingsController', 'delete');
+        $this->route->addRoute('ai-connector/default',  'SettingsController', 'setDefault');
+
+        // Test-connection route is registered in Task 4.
     }
 
     public function getPluginName(): string
