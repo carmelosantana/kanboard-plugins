@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-05 (updated 2026-07-07)
 - **Status:** Planning reference (each plugin still gets its own brainstorm → spec → plan → SDD cycle)
-- **Repo:** `kanboard-plugins` (Kanboard v1.2.47, PHP ≥ 8.4, buildless, MIT). Dev stack: `testing/docker-compose.dev.yml` on `:8081` (admin/admin), all plugins bind-mounted.
+- **Repos (2026-07-10):** each plugin now lives in its own repo, `github.com/carmelosantana/kanboard-<slug>`, with build-on-tag CI. This `kanboard-plugins` repo is demoted to the shared dev harness (`testing/`, `scripts/`) + docs; plugin dirs stay here as their own gitignored checkouts. Dev stack: `testing/docker-compose.dev.yml` on `:8081` (admin/admin), all plugins bind-mounted. Kanboard v1.2.47, PHP ≥ 8.4, buildless, MIT.
 - **Directory:** `../kanboard-modmenu-directory/plugins.json` → releases consumed by ModMenu.
 
 ## Shipped so far
@@ -76,7 +76,7 @@ Candidate scope:
 2. `superpowers:writing-plans` → task plan in `docs/superpowers/plans/`.
 3. `superpowers:subagent-driven-development` → implement task-by-task with two-stage review + whole-branch review.
 4. `superpowers:finishing-a-development-branch` → merge; **confirm before pushing/releasing**.
-5. Release: `scripts/package.sh <Plugin> <out>` → `gh release create <Plugin>-vX.Y.Z` → bump `plugins.json` in the directory repo.
+5. Release: in the plugin's own repo, push a `vX.Y.Z` tag (matching `plugin.json`) → build-on-tag CI (`.github/workflows/release.yml`) zips the plugin (single `<PluginName>/` top folder, `Test/` excluded) and publishes the GitHub release → bump `plugins.json` in the directory repo (homepage/download/version, `requires`/`recommends`). `scripts/package.sh` remains for local packaging.
 
 ## Live-E2E gotchas (must honor — see memory `kanboard-plugin-live-gotchas`)
 
