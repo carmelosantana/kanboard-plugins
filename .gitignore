@@ -5,7 +5,18 @@ testing/*.snapshot
 testing/.env
 # Kanboard source tree for host-side PHPUnit (large, not our code)
 testing/kanboard-src/
-# Hello Harmozi demo plugin — has its own git repo, pushed separately (never mounted in dev suite)
+# Plugins now live in their own repos (github.com/carmelosantana/kanboard-<slug>).
+# This repo keeps only the shared dev harness (testing/, scripts/) + docs. Each
+# plugin is checked out here as its own git repo and ignored by this one.
+/AiConnector/
+/BulkProjectDelete/
+/CalendarPlugin/
+/DependencyPlugin/
+/FeatureSync/
 /HelloHarmozi/
+/ModMenu/
+/SchedulerPlugin/
+/ShadcnTheme/
+/SubtaskGenerator/
 # local-only: symlink to npx playwright cache for E2E scripts
 /node_modules
