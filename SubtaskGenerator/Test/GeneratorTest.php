@@ -324,4 +324,45 @@ class GeneratorTest extends Base
         $this->assertStringNotContainsString('Fatal error', $html,
             'No PHP fatal errors in the modal output');
     }
+
+    // ── Point-of-use profile dropdown ────────────────────────────────────────
+
+    public function testModalOmitsProfileDropdownWithZeroOrOneProfile(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [],
+            'default_profile_id' => '',
+        ]);
+        $this->assertStringNotContainsString('name="sg_profile"', $html);
+    }
+
+    public function testModalOmitsProfileDropdownWithExactlyOneProfile(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [
+                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
+            ],
+            'default_profile_id' => 'a',
+        ]);
+        $this->assertStringNotContainsString('name="sg_profile"', $html);
+    }
+
+    public function testModalShowsProfileDropdownWithTwoProfiles(): void
+    {
+        $html = $this->container['template']->render('SubtaskGenerator:generator/modal', [
+            'task'      => ['id' => 1, 'project_id' => 1, 'title' => 'T', 'description' => ''],
+            'sg_prompt' => 'T',
+            'profiles'  => [
+                ['id' => 'a', 'label' => 'A', 'provider' => 'anthropic', 'model' => 'm'],
+                ['id' => 'b', 'label' => 'B', 'provider' => 'openai', 'model' => 'm'],
+            ],
+            'default_profile_id' => 'b',
+        ]);
+        $this->assertStringContainsString('name="sg_profile"', $html);
+        $this->assertStringContainsString('value="b"', $html);
+    }
 }

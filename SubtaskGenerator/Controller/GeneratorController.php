@@ -50,9 +50,12 @@ class GeneratorController extends BaseController
         // Build the prefilled prompt: title + (optional) description.
         $sg_prompt = $this->buildPrompt($task);
 
+        $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
         $this->response->html($this->template->render('SubtaskGenerator:generator/modal', [
-            'task'      => $task,
-            'sg_prompt' => $sg_prompt,
+            'task'               => $task,
+            'sg_prompt'          => $sg_prompt,
+            'profiles'           => $registry->listProfiles(),
+            'default_profile_id' => $registry->getDefaultProfileId(),
         ]));
     }
 
@@ -189,9 +192,19 @@ class GeneratorController extends BaseController
 
         // ── 6. Call the model ─────────────────────────────────────────────────
         try {
+            // Resolve the chosen profile (validate against known ids).
+            $profileId = trim($this->request->getStringParam('sg_profile', ''));
+            if ($profileId !== '') {
+                $registry = new \Kanboard\Plugin\AiConnector\Model\ProviderRegistry($this->container);
+                $known = array_column($registry->listProfiles(), 'id');
+                if (! in_array($profileId, $known, true)) {
+                    $profileId = '';
+                }
+            }
+
             /** @var SubtaskGeneratorModel $model */
             $model    = $this->getGeneratorModel();
-            $subtasks = $model->generate($prompt);
+            $subtasks = $model->generate($prompt, $profileId !== '' ? $profileId : null);
 
             $this->response->json(['subtasks' => $subtasks]);
         } catch (\Throwable $e) {

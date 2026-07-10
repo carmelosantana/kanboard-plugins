@@ -114,7 +114,7 @@ class Plugin extends Base
 
     public function getPluginDescription(): string
     {
-        return t('Generate subtasks from a task description using an AI provider (Anthropic, OpenAI, or Grok).');
+        return t('Generate subtasks from a task description using AI (provider backend supplied by the AiConnector plugin).');
     }
 
     public function getPluginAuthor(): string
@@ -124,7 +124,7 @@ class Plugin extends Base
 
     public function getPluginVersion(): string
     {
-        return '1.0.1';
+        return '1.1.0';
     }
 
     public function getPluginHomepage(): string
