@@ -31,7 +31,7 @@ CONFIG="${KB_SRC}/tests/units.sqlite.xml"
 # ── Validate argument ──────────────────────────────────────────────────────────
 if [[ -z "$PLUGIN_NAME" ]]; then
   echo "Usage: $0 <PluginName>"
-  echo "Available plugins: AiConnector  BulkProjectDelete  CalendarPlugin  DependencyPlugin  FeatureSync  ModMenu  SchedulerPlugin  ShadcnTheme  SubtaskGenerator"
+  echo "Available plugins: AiConnector  BulkProjectDelete  CalendarPlugin  DependencyPlugin  FeatureSync  Kensho  ModMenu  SchedulerPlugin  ShadcnTheme  SubtaskGenerator  TimeBlock"
   exit 1
 fi
 
@@ -75,7 +75,7 @@ if (is_dir($pluginsDir)) {
 BOOTSTRAP_EOF
 
 # ── Ensure plugin symlinks exist ───────────────────────────────────────────────
-for p in AiConnector BulkProjectDelete CalendarPlugin DependencyPlugin FeatureSync ModMenu SchedulerPlugin ShadcnTheme SubtaskGenerator; do
+for p in AiConnector BulkProjectDelete CalendarPlugin DependencyPlugin FeatureSync Kensho ModMenu SchedulerPlugin ShadcnTheme SubtaskGenerator TimeBlock; do
   if [[ ! -e "${PLUGINS_DIR}/${p}" ]]; then
     ln -s "${REPO_ROOT}/${p}" "${PLUGINS_DIR}/${p}"
     echo "Created symlink: testing/kanboard-src/plugins/${p} -> ../../${p}"

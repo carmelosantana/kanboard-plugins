@@ -9,7 +9,12 @@ services:
     restart: unless-stopped
     ports:
       - "8081:80"
+    # Dev entrypoint that skips the upstream `chown -R nginx:nginx
+    # /var/www/app/plugins`, so the bind-mounted host git repos below keep host
+    # ownership (uid 1001) across restarts. See entrypoint-dev.sh.
+    entrypoint: ["/bin/bash", "/usr/local/bin/entrypoint-dev.sh"]
     volumes:
+      - ./entrypoint-dev.sh:/usr/local/bin/entrypoint-dev.sh:ro
       - kb-suite-data:/var/www/app/data
       - ../AiConnector:/var/www/app/plugins/AiConnector
       - ../BulkProjectDelete:/var/www/app/plugins/BulkProjectDelete
@@ -20,6 +25,8 @@ services:
       - ../CalendarPlugin:/var/www/app/plugins/CalendarPlugin
       - ../DependencyPlugin:/var/www/app/plugins/DependencyPlugin
       - ../SchedulerPlugin:/var/www/app/plugins/SchedulerPlugin
+      - ../TimeBlock:/var/www/app/plugins/TimeBlock
+      - ../Kensho:/var/www/app/plugins/Kensho
 
 volumes:
   kb-suite-data:
