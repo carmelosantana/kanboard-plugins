@@ -27,6 +27,7 @@ services:
       - ../SchedulerPlugin:/var/www/app/plugins/SchedulerPlugin
       - ../TimeBlock:/var/www/app/plugins/TimeBlock
       - ../Kensho:/var/www/app/plugins/Kensho
+      - ../TimeReport:/var/www/app/plugins/TimeReport
 
 volumes:
   kb-suite-data:
