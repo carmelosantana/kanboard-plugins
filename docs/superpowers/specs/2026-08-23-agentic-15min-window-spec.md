@@ -154,13 +154,87 @@ An app conforms to Spec 1 v1 if it:
   and a separate product (the Activity Tracker).
 - Multi-profile / multi-machine, reporting, macOS packaging.
 
-## Research backlog (to be enriched)
+## Research backlog (evidence-based, for Spec 1 v2 triage)
 
-A parallel deep-research pass is gathering evidence on the next ideals to bake in
-(optimal focus/break ratios for knowledge work, microbreak science, flow vs
-interruption cost, enforcement-UX that builds habit vs backfires, aggregate
-healthy-use protocols, and human–AI supervision cadence). Findings will be
-appended here and triaged into a possible Spec 1 v2 before the pipeline work.
+From a deep-research pass (2026-08-23). These inform a **possible v2** — v1 stays
+minimal core. Items flagged **⚑v1?** tension with a v1 decision and are worth
+deciding now (see the review note at the end).
+
+**Cadence & timing**
+- **⚑v1? Trigger breaks at natural task/subtask boundaries, not a hard clock.**
+  Interrupting at coarse task boundaries costs ~nothing; mid-subtask spikes
+  resumption time. A strict 15:00 cut is the "fine breakpoint" the research says
+  to avoid → add a **grace/extension window** to reach the next boundary.
+  ([SAGE](https://journals.sagepub.com/doi/10.1177/00187208211009010),
+  [Frontiers](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2024.1465323/full))
+- **⚑v1? Protect the first ~15–25 min — flow takes that long to establish.** A
+  rigid 15-min boundary can end a sprint just as flow forms. Consider a generous
+  early-session grace / "protect sprint #1."
+  ([Gloria Mark research summary](https://tctecinnovation.com/blogs/daily-blog/every-distraction-costs-you-23-minutes))
+- **Adaptive/task-typed sprint length, not a fixed 15.** No ratio is empirically
+  superior (52/17 was vendor log-mining, drifted to 75/33 → 112/26). Keep 15 as
+  default; expose per-project length + an opt-in ~50–90 min deep-work mode.
+  ([DeskTime](https://desktime.com/blog/52-17-updated/))
+- **Flowtime variant: scale break length to the sprint just completed** — a
+  middle ground between rigid Pomodoro and pure self-regulation.
+  ([Behavioral Sciences RCT / PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC12292963/))
+
+**Break design**
+- **Match break length to cognitive demand of the finished task;** only breaks
+  ≳10 min moved *performance* (vs wellbeing) in the largest meta-analysis, and
+  mainly for clerical/creative work.
+  ([PLOS ONE](https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0272460))
+- **Prescribe break *content* (walk/stretch/nature), not just duration;** passive
+  screen breaks recover worse. Hedges eye-strain goals too. (same meta-analysis)
+- **20-20-20 as a default nudge, not "proven."** Ubiquitous advice, weak
+  peer-reviewed support — include as cheap best-practice, don't oversell.
+  ([PubMed](https://pubmed.ncbi.nlm.nih.gov/36473088/))
+- **Add an hourly/daily aggregate layer (OSHA-style ~5 min/hour)** separate from
+  the micro-cadence, targeting musculoskeletal risk. (candidate v2 protocol)
+  ([OSHA](https://www.osha.gov/etools/computer-workstations/additional-information))
+
+**Enforcement & habit**
+- **⚑v1? Enforcement should escalate (soft → shrinking snooze → lockout), keyed
+  to session/streak state — never binary.** Forced lockout cuts screen time more
+  but raises reactance; users prefer monitoring even knowing it's less effective.
+  ([Stretchly](https://github.com/hovancik/stretchly),
+  [Zimmermann & Sobolev](https://cdn.prod.website-files.com/5f340a9c3a168c42579d818b/5ffd48267e1b89297ed74d15_Digital%20Nudges%20for%20Screen%20Time%20Reduction%20(Zimmermann%20and%20Sobolev,%202020).pdf))
+- **Fade the scaffolding** — reminder-dependency can *prevent* habit automaticity;
+  after N compliant days, reduce intrusiveness / graduate to lighter-touch.
+  ([Frontiers](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2020.00167/full))
+
+**The agentic angle (most novel)**
+- **Let a running agent task *be* the break trigger.** Dev workflows already have
+  idle-wait (~43 min/day on builds); firing the break exactly when a delegated
+  agent is working makes it truly free.
+  ([DX](https://newsletter.getdx.com/p/build-times-and-developer-productivity))
+- **Agent "re-entry briefing" at break end** (diff/status summary) to pay down the
+  11–23 min resumption tax.
+  ([CMU ACT-R](http://act-r.psy.cmu.edu/wordpress/wp-content/uploads/2012/12/830interruptions.pdf))
+- **Keep a "ready queue" of pre-scoped delegable tasks** so starting a break is
+  picking from a menu, not composing a prompt under time pressure (specification
+  cost undermines guilt-free breaks).
+  ([arXiv](https://arxiv.org/html/2606.05391v1))
+- **Do NOT build a live "watch the agent" view for the break** — real-time
+  monitoring is rare in practice and excess oversight *reduces* safety; save
+  status for the re-entry briefing.
+  ([arXiv](https://arxiv.org/html/2606.05391v1))
+
+**Contrarian findings that qualify our hypothesis**
+- Systematic (Pomodoro) breaks are **not** clearly better than self-regulated
+  ones; an RCT found no productivity/flow difference and Pomodoro's rigid breaks
+  raised fatigue *faster*. → validates keeping `soft`/escapable modes.
+- Microbreaks reliably help **wellbeing** but the **overall performance** effect
+  was non-significant — a 15/short design may improve morale without moving
+  output. Name this as a known gap.
+- Forced enforcement is more effective at cutting screen time **but** higher
+  reactance — treat "enforced-escapable" as an explicit trade-off, not a win-win.
+
+**Review note (decide before/at v1 approval):** the three **⚑v1?** items —
+(1) a boundary **grace/extension window** instead of a hard 15:00 cut,
+(2) **protecting early-session flow**, and (3) **escalating** enforcement rather
+than a flat enforced/soft toggle — are cheap to state in the contract and touch
+the core loop. Pulling them into v1 is optional; everything else is v2.
 
 ## Superseded work
 
