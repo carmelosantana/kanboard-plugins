@@ -1,7 +1,7 @@
 # Spec 1 — The Agentic 15-Minute Window
 
 - **Date:** 2026-08-23
-- **Status:** Draft (v1 = minimal core), pending review
+- **Status:** Draft (v1 = minimal core + grace & early-flow from research), pending review
 - **Type:** Portable contract (spec-driven; apps conform to this, the spec does not conform to any app)
 - **Author:** Carmelo Santana (with Claude)
 - **Companion spec:** Spec 2 — Data Collection Pipeline (forthcoming, separate document)
@@ -51,38 +51,51 @@ app exists to find out whether this is true in daily practice.
 
 - **Sprint** — one bounded stretch of human computer focus. Default 15 min.
 - **Boundary** — the moment a sprint reaches its planned duration.
-- **Break** — a bounded rest after a boundary. Default 3 min.
+- **Grace window** — a short allowance *after* the boundary to reach a natural
+  stopping point before the break begins (default 2 min; longer on the first
+  sprint of a streak — see "protect early flow"). Applies in `enforced` mode.
+- **Break** — a bounded rest after the grace window. Default 5 min.
 - **Enforcement mode** — how the boundary is presented and how hard the break is
   pushed: `enforced` (escapable) or `soft`.
+- **Streak** — consecutive sprint→break cycles since leaving cold `idle`; the
+  first sprint of a streak gets a longer grace to protect forming flow.
 - **Cadence** — the ongoing sequence of sprints and breaks.
 
 ## State model (normative)
 
 ```
-      start                 boundary reached
-idle ────────▶ focus ──────────────────────────▶ (enforced) break
-  ▲              │  │                                  │
-  │              │  └── boundary reached (soft) ──▶ nudge; stays focus
-  │              │        │ user chooses break ──────▶ break
-  │  stop        │ stop                                │ complete / skip
-  └──────────────┴─────────────────────────────────────┘
+      start           boundary        grace elapses / "Break now"
+idle ───────▶ focus ───────────▶ grace ───────────────────────────▶ break (enforced)
+  ▲             │ │                │                                    │
+  │             │ └─ boundary (soft) ─▶ nudge; stays focus             │
+  │             │      │ user chooses break ─────────────────────────▶ break
+  │  stop       │ stop │                                               │ complete / skip
+  └─────────────┴──────┴────────────────────────────────────────────────┘
 ```
 
 - `idle → focus`: user starts a sprint.
-- `focus → break`: **enforced** mode auto-starts the break at the boundary;
-  **soft** mode emits a nudge and remains in `focus` until the user chooses to
-  break (or stops).
+- `focus → grace` (**enforced**): at the boundary the sprint enters a **grace
+  window** (still focus, flagged "overtime") for `effective_grace_s` — the longer
+  `early_grace_s` on the first sprint of a streak, otherwise `grace_s`. The app
+  SHOULD show a gentle "wrap up" cue, not the break card yet.
+- `grace → break` (**enforced**): the break auto-starts when grace elapses, or
+  immediately if the user hits "Break now" (their manual "I'm at a stopping
+  point," since v1 cannot detect real task boundaries).
+- `focus → nudge` (**soft**): at the boundary the app emits a notification and
+  stays in `focus`; no grace, no forced break. The user breaks manually.
 - `break → idle`: the break completes or is skipped. The app returns to `idle`
   (awaiting a conscious start of the next sprint). It MAY offer one-tap "start
   next sprint," but MUST NOT auto-chain sprints in v1.
-- `focus/break → idle`: the user stops.
+- `focus/grace/break → idle`: the user stops.
 
 ## Parameters & defaults (normative)
 
 | Parameter | Default | Bounds | Notes |
 |---|---|---|---|
 | `sprint_duration_s` | 900 (15 min) | 60–3600 | configurable |
-| `break_duration_s` | 180 (3 min) | 30–1800 | configurable |
+| `break_duration_s` | 300 (5 min) | 30–1800 | configurable |
+| `grace_s` | 120 (2 min) | 0–600 | enforced-mode wrap-up allowance after the boundary |
+| `early_grace_s` | 300 (5 min) | 0–900 | grace used on the first sprint of a streak (protect forming flow) |
 | `enforcement_mode` | `enforced` | `enforced` \| `soft` | configurable |
 
 ## Boundary enforcement (normative)
@@ -90,12 +103,15 @@ idle ────────▶ focus ─────────────�
 Two modes, differing in **how hard** the break is pushed and **how** it is
 presented:
 
-- **`enforced` (escapable)** — at the boundary a break **starts automatically**
-  and counts down, presented as an **assertive card/overlay**. The user MAY skip,
-  but the default action is that the break happens. Repeated skips SHOULD escalate
-  (e.g. a firmer prompt); escalation specifics are app-defined in v1.
+- **`enforced` (escapable)** — at the boundary a **grace window** opens
+  (`effective_grace_s`, with a gentle "wrap up" cue). When grace elapses — or the
+  user hits **"Break now"** — a break **starts automatically** and counts down,
+  presented as an **assertive card/overlay**. The user MAY skip the break, but the
+  default action is that it happens. Escalation on repeated skips is **v2**; v1
+  keeps a single flat enforced behavior.
 - **`soft`** — at the boundary the app emits an **OS notification** nudge and
-  stays in focus. The user breaks manually. Never blocks.
+  stays in focus (no grace window, no forced break). The user breaks manually.
+  Never blocks.
 
 **Do-Not-Disturb / Focus awareness (SHOULD):**
 - DND/Focus **active** → suppress the card; degrade to an OS notification (marked
@@ -121,7 +137,9 @@ Common envelope: `{ event, ts, sprint_id, ... }` (`ts` = unix seconds; `sprint_i
 |---|---|---|
 | `sprint_started` | `planned_s`, `enforcement_mode` | a sprint (focus) begins |
 | `boundary_reached` | — | the sprint hits `planned_s` |
-| `break_started` | `break_id`, `planned_s` | a break begins (auto in enforced, manual in soft) |
+| `grace_started` | `grace_s`, `streak_index` | enforced mode enters the grace window at the boundary |
+| `grace_ended` | `actual_grace_s`, `ended_by` (`user`\|`timeout`) | grace ends (user hit "Break now", or it elapsed) |
+| `break_started` | `break_id`, `planned_s` | a break begins (after grace in enforced, manual in soft) |
 | `break_completed` | `break_id`, `actual_s` | the break ran to its planned end |
 | `break_skipped` | `break_id?`, `after_s` | user skipped/ended the break early, or dismissed the nudge and kept working |
 | `sprint_ended` | `actual_focus_s`, `over_run_s` | user stops focusing (`over_run_s` = focus time past the boundary, if any) |
@@ -134,14 +152,17 @@ signals that tell us whether the concept is working.
 
 An app conforms to Spec 1 v1 if it:
 
-1. **MUST** implement the `idle / focus / break` state model and the boundary
-   behavior for the configured enforcement mode.
-2. **MUST** support **both** enforcement modes (`enforced` card/overlay, `soft`
+1. **MUST** implement the `idle / focus / grace / break` state model and the
+   boundary behavior for the configured enforcement mode.
+2. **MUST**, in `enforced` mode, apply the **grace window** after the boundary
+   (using `early_grace_s` on the first sprint of a streak, else `grace_s`) before
+   starting the break, and honor a user **"Break now"** action that ends grace early.
+3. **MUST** support **both** enforcement modes (`enforced` card/overlay, `soft`
    notification) and the parameters/defaults above.
-3. **MUST** emit the full event vocabulary locally.
-4. **MUST NOT** require any network or Kanboard connection (v1 is standalone).
-5. **MUST NOT** auto-chain sprints (intentional cadence).
-6. **SHOULD** be DND/Focus-aware per the fallback rules above.
+4. **MUST** emit the full event vocabulary locally.
+5. **MUST NOT** require any network or Kanboard connection (v1 is standalone).
+6. **MUST NOT** auto-chain sprints (intentional cadence).
+7. **SHOULD** be DND/Focus-aware per the fallback rules above.
 
 ## Out of scope for v1 (deferred)
 
@@ -161,15 +182,15 @@ minimal core. Items flagged **⚑v1?** tension with a v1 decision and are worth
 deciding now (see the review note at the end).
 
 **Cadence & timing**
-- **⚑v1? Trigger breaks at natural task/subtask boundaries, not a hard clock.**
+- **✅ ADOPTED v1 — Grace/extension window instead of a hard clock.**
   Interrupting at coarse task boundaries costs ~nothing; mid-subtask spikes
   resumption time. A strict 15:00 cut is the "fine breakpoint" the research says
-  to avoid → add a **grace/extension window** to reach the next boundary.
+  to avoid → `grace_s` (default 2 min) added in v1.
   ([SAGE](https://journals.sagepub.com/doi/10.1177/00187208211009010),
   [Frontiers](https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2024.1465323/full))
-- **⚑v1? Protect the first ~15–25 min — flow takes that long to establish.** A
-  rigid 15-min boundary can end a sprint just as flow forms. Consider a generous
-  early-session grace / "protect sprint #1."
+- **✅ ADOPTED v1 — Protect the first ~15–25 min of forming flow.** A rigid
+  boundary can end a sprint just as flow forms → `early_grace_s` (default 5 min)
+  on the first sprint of a streak. (v2 could make this adaptive/detected.)
   ([Gloria Mark research summary](https://tctecinnovation.com/blogs/daily-blog/every-distraction-costs-you-23-minutes))
 - **Adaptive/task-typed sprint length, not a fixed 15.** No ratio is empirically
   superior (52/17 was vendor log-mining, drifted to 75/33 → 112/26). Keep 15 as
@@ -194,9 +215,10 @@ deciding now (see the review note at the end).
   ([OSHA](https://www.osha.gov/etools/computer-workstations/additional-information))
 
 **Enforcement & habit**
-- **⚑v1? Enforcement should escalate (soft → shrinking snooze → lockout), keyed
+- **↦ v2 — Enforcement should escalate (soft → shrinking snooze → lockout), keyed
   to session/streak state — never binary.** Forced lockout cuts screen time more
   but raises reactance; users prefer monitoring even knowing it's less effective.
+  *(Deferred: v1 keeps a flat enforced/soft toggle.)*
   ([Stretchly](https://github.com/hovancik/stretchly),
   [Zimmermann & Sobolev](https://cdn.prod.website-files.com/5f340a9c3a168c42579d818b/5ffd48267e1b89297ed74d15_Digital%20Nudges%20for%20Screen%20Time%20Reduction%20(Zimmermann%20and%20Sobolev,%202020).pdf))
 - **Fade the scaffolding** — reminder-dependency can *prevent* habit automaticity;
@@ -230,11 +252,12 @@ deciding now (see the review note at the end).
 - Forced enforcement is more effective at cutting screen time **but** higher
   reactance — treat "enforced-escapable" as an explicit trade-off, not a win-win.
 
-**Review note (decide before/at v1 approval):** the three **⚑v1?** items —
-(1) a boundary **grace/extension window** instead of a hard 15:00 cut,
-(2) **protecting early-session flow**, and (3) **escalating** enforcement rather
-than a flat enforced/soft toggle — are cheap to state in the contract and touch
-the core loop. Pulling them into v1 is optional; everything else is v2.
+**v1 decisions (2026-08-23, from this research):** ADOPTED into v1 — a boundary
+**grace/extension window** (`grace_s`, default 2 min) and **early-flow
+protection** (`early_grace_s`, default 5 min, on the first sprint of a streak);
+the **break default was raised to 5 min**. DEFERRED to v2 — **escalating**
+enforcement (v1 keeps a flat enforced/soft toggle). Everything else above is v2
+backlog, to be triaged before the pipeline (Spec 2) work.
 
 ## Superseded work
 
