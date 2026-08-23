@@ -28,6 +28,7 @@ services:
       - ../TimeBlock:/var/www/app/plugins/TimeBlock
       - ../Kensho:/var/www/app/plugins/Kensho
       - ../TimeReport:/var/www/app/plugins/TimeReport
+      - ../TimeInvoice:/var/www/app/plugins/TimeInvoice
 
 volumes:
   kb-suite-data:
