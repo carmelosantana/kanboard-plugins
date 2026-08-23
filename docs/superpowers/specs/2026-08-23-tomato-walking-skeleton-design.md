@@ -1,5 +1,13 @@
 # Tomato — Walking Skeleton Design
 
+> **⚠️ SUPERSEDED (2026-08-23).** This walking-skeleton coupled the timer and
+> Kanboard ingest (A+B) into one slice. The project has been re-scoped into two
+> spec-driven products — an agentic timer (**Tomato**) and an activity tracker —
+> each conforming to its own portable spec, built and validated independently.
+> See **Spec 1 — The Agentic 15-Minute Window**
+> (`2026-08-23-agentic-15min-window-spec.md`). Kept for history; do not implement
+> from this document.
+
 - **Date:** 2026-08-23
 - **Status:** Approved (brainstorm), pending implementation plan
 - **Author:** Carmelo Santana (with Claude)

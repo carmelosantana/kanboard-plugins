@@ -1,5 +1,11 @@
 # Tomato Walking Skeleton Implementation Plan
 
+> **⚠️ SUPERSEDED (2026-08-23).** The project was re-scoped into two spec-driven
+> products (agentic timer + activity tracker), decoupling the timer from Kanboard
+> ingest. Do not execute this plan. See **Spec 1 — The Agentic 15-Minute Window**
+> (`../specs/2026-08-23-agentic-15min-window-spec.md`); a new plan for the
+> standalone Linux timer will follow once Spec 1 is approved.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the thinnest end-to-end slice of Tomato — a Tauri menu-bar timer that runs a 15-minute focus window, nudges you to break (DND-aware), and logs each completed work session to a Kanboard plugin, attributed to a real Kanboard user.
