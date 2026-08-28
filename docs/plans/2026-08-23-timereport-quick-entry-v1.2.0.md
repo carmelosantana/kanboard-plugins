@@ -8,7 +8,7 @@
 
 **Tech Stack:** Buildless Kanboard plugin — PHP ≥ 8.4, PicoDb (untouched), plain PHP templates, CSP-safe. PHPUnit against Kanboard v1.2.47 core.
 
-**Repo:** Plugin repo `/home/carmelo/Projects/Kanboard/kanboard-plugins/TimeReport` (branch `main`, currently at v1.1.0). Edits host-side. Spec: `docs/superpowers/specs/2026-08-23-timereport-quick-entry-v1.2.0-design.md`.
+**Repo:** Plugin repo `/home/carmelo/Projects/Kanboard/kanboard-plugins/TimeReport` (branch `main`, currently at v1.1.0). Edits host-side. Spec: `docs/specs/2026-08-23-timereport-quick-entry-v1.2.0-design.md`.
 
 **Run the tests** (from monorepo root `/home/carmelo/Projects/Kanboard/kanboard-plugins`):
 

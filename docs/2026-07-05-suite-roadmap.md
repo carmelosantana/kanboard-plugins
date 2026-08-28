@@ -17,7 +17,7 @@
 | **CalendarPlugin** | **1.1.0** | Drag-and-drop calendar (global + per-project). Polish M1–M13 + generic `calendarEventDecorators` hook. |
 | **DependencyPlugin** | **1.0.0** | Task dependencies on core links: blocked/blocker badges (board, calendar, task page) + cycle guard. |
 
-The four-plugin design suite was: **CalendarPlugin → DependencyPlugin → SchedulerPlugin → EnhancedTaskPlugin.** CalendarPlugin is the flagship visual surface the later plugins decorate. See `docs/superpowers/specs/2026-07-04-calendarplugin-design.md` §11.
+The four-plugin design suite was: **CalendarPlugin → DependencyPlugin → SchedulerPlugin → EnhancedTaskPlugin.** CalendarPlugin is the flagship visual surface the later plugins decorate. See `docs/specs/2026-07-04-calendarplugin-design.md` §11.
 
 **Progress:** CalendarPlugin ✅ shipped (v1.1.0) · DependencyPlugin ✅ shipped (v1.0.0) · SchedulerPlugin ✅ shipped (v1.0.0). **EnhancedTaskPlugin is next.**
 
@@ -50,7 +50,7 @@ Task dependencies built on Kanboard's core task links. Delivered:
 
 ### 2. SchedulerPlugin ✅ SHIPPED (v1.0.0, 2026-07-07)
 
-Automated overdue-task rescheduling. See `docs/superpowers/specs/2026-07-07-schedulerplugin-design.md` + `docs/superpowers/plans/2026-07-07-schedulerplugin.md`. Delivered:
+Automated overdue-task rescheduling. See `docs/specs/2026-07-07-schedulerplugin-design.md` + `docs/plans/2026-07-07-schedulerplugin.md`. Delivered:
 - **Daily sweep** per opt-in project; policy pipeline: skip-blocked (via `DependencyModel::getProjectBlockedMap()`) → snap-to-today → working-days → de-clump (max N/day).
 - **Three triggers** wrapping one `SchedulerRunner`: lazy web-cron (guarded once/day), admin Run-now with dry-run preview, and `./cli scheduler:run`.
 - **Audit log** (`scheduler_runs` + `scheduler_moves` tables + admin log page) and a per-run **activity-stream summary**.
@@ -72,8 +72,8 @@ Candidate scope:
 
 ## Per-plugin process (every plugin)
 
-1. `superpowers:brainstorming` → design spec in `docs/superpowers/specs/`.
-2. `superpowers:writing-plans` → task plan in `docs/superpowers/plans/`.
+1. `superpowers:brainstorming` → design spec in `docs/specs/`.
+2. `superpowers:writing-plans` → task plan in `docs/plans/`.
 3. `superpowers:subagent-driven-development` → implement task-by-task with two-stage review + whole-branch review.
 4. `superpowers:finishing-a-development-branch` → merge; **confirm before pushing/releasing**.
 5. Release: in the plugin's own repo, push a `vX.Y.Z` tag (matching `plugin.json`) → build-on-tag CI (`.github/workflows/release.yml`) zips the plugin (single `<PluginName>/` top folder, `Test/` excluded) and publishes the GitHub release → bump `plugins.json` in the directory repo (homepage/download/version, `requires`/`recommends`). `scripts/package.sh` remains for local packaging.

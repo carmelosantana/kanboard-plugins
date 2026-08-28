@@ -1,7 +1,7 @@
 # Kanboard Plugin Suite — Dev Harness & Docs
 
 This repository holds the **shared development harness** (Docker test stack, host-side PHPUnit
-runner, packaging scripts) and the **design docs** (`docs/superpowers/` specs, plans, roadmap) for a
+runner, packaging scripts) and the **design docs** (`docs/` specs, plans, roadmap) for a
 suite of Kanboard v1.2.47 plugins (buildless: plain JS/CSS + jQuery + global `KB`; PHP >= 8.4; MIT).
 
 > **The plugins themselves now live in their own repositories** — one repo per plugin, each with
@@ -36,4 +36,4 @@ docker compose -f docker-compose.dev.yml up -d   # http://localhost:8081  (admin
 ```
 
 `testing/run-plugin-tests.sh <PluginName>` runs a plugin's PHPUnit suite against Kanboard v1.2.47.
-Specs, plans, and the roadmap live in `docs/superpowers/`.
+Specs, plans, and the roadmap live in `docs/`.

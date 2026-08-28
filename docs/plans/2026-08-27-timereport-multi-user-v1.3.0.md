@@ -8,7 +8,7 @@
 
 **Tech Stack:** PHP 8.4, Kanboard plugin API, PHPUnit. Buildless: plain PHP templates, no bundler, no new dependency.
 
-**Spec:** `docs/superpowers/specs/2026-08-27-timereport-multi-user-v1.3.0-design.md`
+**Spec:** `docs/specs/2026-08-27-timereport-multi-user-v1.3.0-design.md`
 
 ## Global Constraints
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** PHP ≥ 8.4, Kanboard v1.2.47 plugin API (buildless), php-agents (`carmelosantana/php-agents:dev-main` via Composer path repo), PHPUnit via `testing/run-plugin-tests.sh` (in-memory SQLite core), Docker suite on `:8081`.
 
-**Design spec:** `docs/superpowers/specs/2026-07-10-aiconnector-design.md` (read it — every §N reference below points there).
+**Design spec:** `docs/specs/2026-07-10-aiconnector-design.md` (read it — every §N reference below points there).
 
 ## Global Constraints
 
@@ -138,7 +138,7 @@ use Kanboard\Core\Plugin\Base;
  *
  * Owns php-agents (bundled in vendor/) and all provider configuration; exposes
  * the ProviderRegistry PHP API that other plugins consume. See
- * docs/superpowers/specs/2026-07-10-aiconnector-design.md.
+ * docs/specs/2026-07-10-aiconnector-design.md.
  *
  * php-agents load-order rule (HARD): this initialize() require_once's the
  * plugin-local vendor/autoload.php. No CarmeloSantana\PHPAgents\* class is ever

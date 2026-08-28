@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-_From the spec `docs/superpowers/specs/2026-08-21-timereport-untracked-subtask-warning-design.md`. Every task implicitly includes these._
+_From the spec `docs/specs/2026-08-21-timereport-untracked-subtask-warning-design.md`. Every task implicitly includes these._
 
 - Read-only, **stateless**: no persisted state, no settings page, no DB migration, no change to Kanboard editing behavior.
 - Buildless / CSP: plain PHP ≥ 8.4, no inline `<script>`, no inline `on*=` handlers, no new JS.

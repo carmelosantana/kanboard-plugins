@@ -21,7 +21,7 @@ no new dependency. Buildless as always (plain PHP ≥ 8.4; CSP-safe).
 This is one of a three-part roadmap; only Part 1 is in this spec:
 - **v1.2.0 (this spec):** quick entry — items 1 + 2.
 - v1.3.0 (later): all-projects aggregate + charts (items 4 + 3), informed by
-  `docs/superpowers/research/2026-08-22-time-tracking-reporting-patterns.md`.
+  `docs/research/2026-08-22-time-tracking-reporting-patterns.md`.
 - Invoicing plugin (later): separate repo, TimeReport as dependency (captured as a chip).
 
 ## Design

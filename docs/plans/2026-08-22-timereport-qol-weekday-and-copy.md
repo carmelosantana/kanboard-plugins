@@ -8,7 +8,7 @@
 
 **Tech Stack:** Buildless Kanboard plugin — PHP ≥ 8.4, PicoDb (untouched here), vanilla delegated JS + jQuery/`KB` globals, plain CSS. PHPUnit against Kanboard v1.2.47 core.
 
-**Repo:** The plugin is its own git repo at `/home/carmelo/Projects/Kanboard/kanboard-plugins/TimeReport` (branch `main`). All edits are host-side. This plan's spec lives in the monorepo at `docs/superpowers/specs/2026-08-22-timereport-qol-weekday-and-copy-design.md`.
+**Repo:** The plugin is its own git repo at `/home/carmelo/Projects/Kanboard/kanboard-plugins/TimeReport` (branch `main`). All edits are host-side. This plan's spec lives in the monorepo at `docs/specs/2026-08-22-timereport-qol-weekday-and-copy-design.md`.
 
 **Run the tests** (from the monorepo root `/home/carmelo/Projects/Kanboard/kanboard-plugins`):
 
