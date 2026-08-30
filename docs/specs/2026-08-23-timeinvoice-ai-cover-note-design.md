@@ -1,10 +1,12 @@
 # TimeInvoice — AI Cover Note — Design Spec
 
-**Date:** 2026-08-23
-**Status:** Approved (brainstorm complete)
+**Date:** 2026-08-23 (rev. 2026-08-30 — reconciled to shipped AiConnector 1.1.0 + TimeReport 1.4.2)
+**Status:** Approved design; spec revised for current ecosystem — pending re-approval
 **Plugin:** TimeInvoice (own repo `github.com/carmelosantana/kanboard-time-invoice`, currently v1.0.0)
 **Target release:** TimeInvoice **v1.1.0** (additive minor)
-**Depends on (new, soft):** AiConnector introspection release (see [Dependency & sequencing](#dependency--sequencing))
+**Dependencies:**
+- **`requires` TimeReport `1.3.0`** (raised from 1.1.0 — see [TimeReport data source](#timereport-data-source-current))
+- **`recommends` AiConnector `1.1.0`** (soft — the release that shipped `ModelCatalog`)
 
 ## Purpose
 
@@ -22,8 +24,8 @@ field). Invoicing never depends on AI.
 demand, editable, regenerate-able.
 
 **Out of scope / fast-follow:** AI-polished per-line-item descriptions;
-per-invoice tone selection; multi-note/templated sections. (Line-item
-descriptions were explicitly deferred during brainstorming.)
+per-invoice tone selection; multi-note/templated sections; team/multi-user
+invoices (see [Multi-user scope](#multi-user-scope)).
 
 ## Suite constraints (non-negotiable)
 
@@ -39,16 +41,14 @@ descriptions were explicitly deferred during brainstorming.)
 - **Tests:** `./testing/run-plugin-tests.sh TimeInvoice` from the monorepo root
   (sqlite `:memory:`; tests extend `KanboardTests\units\Base`).
 
-## Dependency & sequencing
-
-### Transport — AiConnector `ProviderRegistry`
+## AiConnector integration (SHIPPED — concrete contract)
 
 All model access goes through AiConnector's public PHP API (never a bespoke HTTP
-client in TimeInvoice). The consumed surface (from `Model/ProviderRegistry.php`,
-instantiated as `new ProviderRegistry($this->container)`):
+client in TimeInvoice). AiConnector **1.1.0** shipped the introspection layer, so
+these signatures are real, not planned:
 
-- `isReady(): bool` — no network; true when ≥1 provider profile is usable. The
-  degrade gate.
+### `Model\ProviderRegistry` (v1.0.0, unchanged) — `new ProviderRegistry($this->container)`
+- `isReady(): bool` — no network; true when ≥1 provider profile is usable.
 - `listProfiles(): array<{id,label,provider,model}>` — populates the profile
   picker (no secrets, no base_url).
 - `getDefaultProfileId(): string` — preselected picker value.
@@ -56,50 +56,75 @@ instantiated as `new ProviderRegistry($this->container)`):
   provider-agnostic structured call; returns a decoded PHP array. TimeInvoice
   passes a `{"cover_note":"string"}` JSON schema and reads `['cover_note']`.
 
-Because the call is provider-agnostic, **direct-Ollama vs. the metamodels proxy
-vs. a frontier API is only a matter of which AiConnector profile the picker
-selects** — TimeInvoice needs zero code change to switch backends.
-
-### New AiConnector capability consumed (context budgeting)
-
-Auto-discovering the model's context window is an **AiConnector** capability
-(it owns provider/model config and vendors php-agents). It is being built
-separately (own work chip, `kanboard-plugin-suite` methodology). TimeInvoice
-codes against this agreed interface:
-
+### `Model\ModelCatalog` (NEW in 1.1.0) — `new ModelCatalog($this->container)`
 - `getContextWindow(?string $profileId = null): int` — model's max context length
-  in tokens (live discovery where cheap, e.g. Ollama `/api/show`; curated
-  fallback table; conservative default otherwise).
+  in tokens. **Never throws** (returns `8192` GLOBAL_DEFAULT for a missing/dangling
+  profile). Resolution: in-request memo → 24h config cache → Ollama `/api/show`
+  live discovery (Ollama only) → curated `ModelContextTable` → 8192.
 - `countTokens(string $text, ?string $profileId = null): int` — provider-aware
-  token estimate.
+  heuristic token estimate. **Never throws.**
+- `getInputBudget(?string $profileId = null, int $reserveOutputTokens = 1024): int`
+  — `max(0, window − reserve)`, reserve clamped to ≤ half the window. TimeInvoice
+  uses this to size the prompt.
 
-**Method names/return types above are the integration contract.** If the
-AiConnector chip finalizes different signatures, this spec's consuming code is
-updated to match before implementation of the budgeting path.
+Because `structured()` is provider-agnostic, **direct-Ollama vs. the metamodels
+proxy vs. a frontier API is only a matter of which AiConnector profile the picker
+selects** — TimeInvoice needs zero code change to switch backends. The metamodels
+proxy is registered in AiConnector as an OpenAI-compatible (or Ollama) profile.
 
 ### Dependency declaration & degradation
 
-- Add **`recommends`** (soft) AiConnector — array-of-objects, **bare** semver — to
+- **`recommends`** (soft) AiConnector — array-of-objects, **bare** semver — in
   **both** `plugin.json` and `Plugin.php` metadata:
-  `[{ "plugin": "AiConnector", "min_version": "<introspection release>", "reason": "..." }]`.
-  `min_version` is pinned to the AiConnector version that ships
-  `getContextWindow()`/`countTokens()` (finalized when that release lands).
-- TimeReport remains a hard **`requires`** `1.1.0` (unchanged).
-- **Gate (`AiGate`-style, mirrors TimeReport):**
-  `aiReady()` ≡ `class_exists(\Kanboard\Plugin\AiConnector\Model\ProviderRegistry)`
+  `[{ "plugin": "AiConnector", "min_version": "1.1.0", "reason": "Optional AI cover-note generation via ProviderRegistry + ModelCatalog." }]`.
+- **Gate (`AiGate`-style, mirrors TimeReport).** `ModelCatalog` exists only in
+  AiConnector ≥ 1.1.0, and `recommends` is soft (not version-enforced), so the
+  gate must check **both** classes:
+  `aiReady()` ≡
+  `class_exists(\Kanboard\Plugin\AiConnector\Model\ProviderRegistry)`
+  **&&** `class_exists(\Kanboard\Plugin\AiConnector\Model\ModelCatalog)`
   **&&** `(new ProviderRegistry($this->container))->isReady()`.
-  When false: the Generate button and profile picker are **not rendered**; the
-  notes field is a normal manual textarea; the `generateCoverNote` route no-ops
-  with a clear "needs AiConnector" message. No fatals, no partial UI.
+  When false: the Generate button + profile picker are **not rendered**; the notes
+  field is a plain manual textarea; the `generateCoverNote` route no-ops with a
+  clear "needs AiConnector 1.1.0+" message. No fatals, no partial UI. This
+  gracefully handles a user on AiConnector 1.0.0 (ProviderRegistry present,
+  ModelCatalog absent → feature hidden).
 
-### Build/ship ordering
+## TimeReport data source (current)
 
-The auto-discover budget requires the AiConnector introspection release. The
-pure context/assembly and UI are built and unit-tested against the interface
-immediately (with an injected fake). Live through-Ollama and through-proxy E2E
-run once AiConnector's release is installed in the dev stack. As a soft
-`recommends`, TimeInvoice v1.1.0 can ship independently; the AI path activates
-only when AiConnector is present and configured.
+TimeInvoice's hours come only from TimeReport's `report()` aggregate (never
+re-mined). TimeReport is now **v1.4.2**; the relevant facts:
+
+- **Call (unchanged, 6-arg positional — still correct and forward-compatible):**
+  ```php
+  $this->timeReportModel->report($projectId, $start, $end, $granularity, true, $userId);
+  // includeDetail=true; subjectUserIds defaults null, allUsers defaults false
+  ```
+  The first six params are frozen by TimeReport's contract. Two optional
+  multi-user params (`?array $subjectUserIds = null`, `bool $allUsers = false`)
+  were appended; TimeInvoice does not pass them (solo scope).
+- **`breakdown[]` row shape (current):**
+  `{ key:string, label:string, hours:float, task_count:int, task_ids:int[] }`.
+  **`task_ids` is new (since ~v1.3.0) and is the key enabler for this feature** —
+  it gives the exact billed task ids per line item, so the cover-note context can
+  be gathered without re-deriving task membership. Line-item math is unchanged:
+  sum `breakdown[].hours × rate`.
+- **Correctness floor → `requires` TimeReport `1.3.0`.** v1.3.0 fixed a
+  misattribution/double-count bug: suppression of the completed-task `time_spent`
+  fallback now runs across **all users and all periods** before the subject
+  filter, so a task with tracked subtask time never also adds its task-level
+  fallback. On 1.1.0/1.2.0 the same data can **over-bill**. An invoicing plugin
+  must bill the corrected hours, so the hard `requires` floor is raised
+  1.1.0 → **1.3.0**. (Plan-time verification: confirm `task_ids` is present in
+  `breakdown[]` at the pinned tag; bump the floor if it landed later than 1.3.0.)
+
+### Multi-user scope
+
+`report()`'s default subject set (both optional params unset) is the requesting
+user alone — identical effective scope to the existing invoice hours. The
+cover-note context is gathered under the **same requester-only scope** as the
+invoice it describes. Team-wide invoicing (`allUsers = true`, permission-gated,
+`scope_denied` handling) is explicitly out of scope for v1.1.0.
 
 ## Component map (additions to TimeInvoice)
 
@@ -109,8 +134,7 @@ TimeInvoice/
 │   ├── CoverNoteContext.php     # NEW — PURE: priority-tiered, budget-trimmed context payload
 │   └── CoverNoteGenerator.php   # NEW — orchestrates gather → budget → assemble → structured()
 ├── Controller/
-│   └── InvoiceController.php     # +generateCoverNote (POST, CSRF, access-scoped, JSON {note})
-├── Controller/
+│   ├── InvoiceController.php     # +generateCoverNote (POST, CSRF, access-scoped, JSON {note})
 │   └── SettingsController.php    # +style-instructions field (admin-gated, existing pattern)
 ├── Template/invoice/
 │   ├── form.php                  # +Generate button + profile <select> (rendered only when aiReady())
@@ -134,7 +158,7 @@ no network; the core unit-tested unit.
 - Per-billed-task records: `[{ title, description, subtasks:[{title,done}],
   comments:[{text}] }]`.
 - `int $budgetTokens` — total context budget available for the payload.
-- `callable $countTokens` — `fn(string): int` (wraps AiConnector `countTokens`).
+- `callable $countTokens` — `fn(string): int` (wraps `ModelCatalog::countTokens`).
 
 **Priority tiers (highest → lowest):**
 1. **Skeleton** — header facts + line items + totals. Always included, even if it
@@ -158,14 +182,21 @@ budget ≤ skeleton size → skeleton only.
 
 Responsibilities (all deps injectable for tests):
 1. **Gate:** if not `aiReady()` → return `null` (caller renders nothing / no-ops).
-2. **Gather:** for the invoice's billed task ids (from the same TimeReport
-   `report()` breakdown TimeInvoice already uses), fetch description, subtasks,
-   and comments via Kanboard's `TaskFinderModel`/`SubtaskModel`/`CommentModel`,
-   scoped to the invoice's project and the current user's access.
-3. **Budget:** `window = registry.getContextWindow($profileId)`;
-   `budget = window − OUTPUT_RESERVE − countTokens(systemPrompt)`
-   (OUTPUT_RESERVE a small named constant, e.g. 512 tokens).
-4. **Assemble:** `CoverNoteContext` trims to `budget`.
+2. **Gather:** collect the billed task-id set as the **union of
+   `report()['breakdown'][].task_ids`** (the invoice's own date range /
+   granularity / rate context). For each task id, fetch its description, subtasks
+   (title + done-state), and comments via Kanboard's
+   `TaskFinderModel` / `SubtaskModel` / `CommentModel`, scoped to the invoice's
+   project and the current user's access. (TimeReport's `detail[]` now also
+   carries `description`/`subtasks[]`, but only for completed-in-range tasks;
+   gathering by `breakdown[].task_ids` is the complete, uniform path. Comments are
+   never in `detail[]` and always come from `CommentModel`.)
+3. **Budget:** `$budget = $modelCatalog->getInputBudget($profileId, OUTPUT_RESERVE)
+   − $modelCatalog->countTokens($systemPrompt)` (OUTPUT_RESERVE a small named
+   constant, e.g. 512). `getInputBudget` already subtracts the output reserve from
+   the discovered window; subtracting the system-prompt tokens leaves the payload
+   budget. Floor at 0.
+4. **Assemble:** `CoverNoteContext` trims to `$budget`.
 5. **Prompt:**
    - **System:** role ("You write concise, professional invoice cover notes for
      a solo consultant.") + **style instructions from settings** + hard rules
@@ -184,10 +215,10 @@ hands to the client for the editable field.
 
 - **`InvoiceController::generateCoverNote`** — **POST**, `checkCSRFForm()`,
   project-access-scoped (reuse existing access assertion). Inputs: project id,
-  date range, granularity, rate/line-item context needed to identify billed
-  tasks, and the chosen `profile_id`. Returns `JSON { "note": "..." }` on success;
-  a JSON error payload (HTTP 4xx/5xx with a message) when not ready or on provider
-  failure. Never leaks provider keys.
+  date range, granularity, rate, and the chosen `profile_id`. Recomputes
+  `report()` to obtain `breakdown[].task_ids`, runs `CoverNoteGenerator`, returns
+  `JSON { "note": "..." }` on success; a JSON error payload (HTTP 4xx/5xx with a
+  message) when not ready or on provider failure. Never leaks provider keys.
 - Route registered in `Plugin.php` alongside the existing invoice routes.
 
 ## Settings
@@ -218,38 +249,48 @@ hands to the client for the editable field.
   descriptions; empty records → skeleton only; oversized single unit handled;
   truncation flags correct. (No DB, no network.)
 - **CoverNoteGenerator:** injected fake `ProviderRegistry`
-  (`structured()` returns canned `{cover_note}`, `getContextWindow()`/
-  `countTokens()` return fixtures) + injected fake finders; asserts gather →
-  budget → assemble → structured wiring and that the gate returns `null` when not
-  ready. No live provider call.
+  (`structured()` returns canned `{cover_note}`) + injected fake `ModelCatalog`
+  (`getInputBudget()`/`countTokens()` return fixtures) + injected fake finders;
+  asserts the billed task-id set is the **union of `breakdown[].task_ids`**,
+  gather → budget → assemble → structured wiring, and that the gate returns `null`
+  when not ready. No live provider call.
 - **Controller `generateCoverNote`:** route wiring; CSRF required; access
   control; JSON `{note}` shape; not-ready path returns the error payload, not a
   fatal.
-- **PluginMeta:** `recommends` AiConnector present in **both** `plugin.json` and
-  `Plugin.php`, array-of-objects with bare semver; version bump to `1.1.0`
-  aligned across `plugin.json` and `getPluginVersion()`.
+- **PluginMeta:** `requires` TimeReport bumped to `1.3.0` and `recommends`
+  AiConnector `1.1.0` — both present in **both** `plugin.json` and `Plugin.php`,
+  array-of-objects with bare semver; version bump to `1.1.0` aligned across
+  `plugin.json` and `getPluginVersion()`.
 - **TemplateAssets:** Generate button + profile select referenced; no inline JS
   handlers; single-arg `t()` calls have no unescaped `%`.
 
 ## Release & directory
 
-1. Bump TimeInvoice to **v1.1.0** (`plugin.json` + `Plugin.php`).
+1. Bump TimeInvoice to **v1.1.0** (`plugin.json` + `Plugin.php`); set
+   `requires` TimeReport `1.3.0` + `recommends` AiConnector `1.1.0` in both files.
 2. Zip-on-tag CI (verbatim); verify the published asset downloads 200 with a
    clean single-folder layout, `Test/` excluded.
-3. Update the **kanboard-modmenu-directory** entry to add the
-   `recommends AiConnector` array (bare-version, object shape) alongside the
-   existing `requires TimeReport`.
+3. Update the **kanboard-modmenu-directory** entry: `requires` TimeReport
+   `1.3.0` (bumped) + add `recommends` AiConnector `1.1.0` (bare-version, object
+   shape).
 
-## Design decisions (settled in brainstorm)
+## Design decisions (settled in brainstorm; reconciled to shipped ecosystem)
 
 - **Cover note only** in v1.1.0; line-item descriptions deferred.
 - Context ceiling is **descriptions + subtasks + comments**, but **budgeted to the
-  model's context window** (auto-discovered), tiered so small local models get
-  titles/descriptions/subtasks and drop comments first.
-- **Via AiConnector** (`structured()`), **not** a self-contained client.
-- **Auto-discover** the context window via AiConnector's new introspection API.
+  model's context window** via `ModelCatalog::getInputBudget()`, tiered so small
+  local models get titles/descriptions/subtasks and drop comments first.
+- **Via AiConnector** (`ProviderRegistry::structured()` + `ModelCatalog`), **not**
+  a self-contained client. Integration contract is concrete against shipped
+  AiConnector **1.1.0**.
+- **Auto-discover** the context window via `ModelCatalog::getContextWindow()`
+  (Ollama live discovery + curated fallback table, both non-throwing).
 - **Generate button on the draft form** (not auto-on-save), filling an editable
   field, regenerate-able.
 - **Profile picker on the button** — per-generation backend switch (enables the
   direct-Ollama vs. metamodels-proxy two-app E2E).
 - **Settings-level style instructions** (not per-invoice tone).
+- **Billed-task context sourced from `breakdown[].task_ids`** (new in
+  TimeReport ≥ 1.3.0), enriched via Kanboard models — no re-mining.
+- **`requires` TimeReport raised 1.1.0 → 1.3.0** for billing correctness (dedup
+  fix) and `task_ids` availability.
