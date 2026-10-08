@@ -37,7 +37,7 @@ Battle Lobby wants a board to feel like a shared MMO lobby, where you can see yo
 Presence/
   Plugin.php                     hooks, routes, API middleware, onStartup recorder, asset includes
   plugin.json                    name, version 1.0.0, MIT, kanboard_version >=1.2.47, php_version >=8.4,
-                                 requires [], recommends [Agents >=0.4.0]
+                                 requires [], recommends [Agents >= the release carrying agentIds()]
   Schema/Sqlite.php, Mysql.php, Postgres.php   version_1: presence table
   Model/PresenceModel.php        touch(), lineup(), state(), constants for thresholds
   Model/PresenceSettings.php     isEnabled() (app config), isHidden(user) / setHidden (user metadata)
@@ -82,7 +82,7 @@ Presence/
 - On pages with a project, the response lineup updates the strip and fires `presence:update`. Otherwise it only pings.
 - The admin switch off, or the viewer hidden: no assets and no strip are rendered.
 
-### `Agents/`: one addition (minor bump, 0.4.0)
+### `Agents/`: one addition (delivered by Kanboard #5732; that effort picks the version)
 
 `Model/AgentTable::agentIds(array $userIds): array` returns the subset of `$userIds` that are on the roster, using one `IN (…)` query (an empty input returns `[]` without a query). It's covered by `AgentTableTest`. The README notes that Presence uses it.
 
@@ -108,7 +108,7 @@ Add a `kanboard-modmenu-directory` entry for Presence with `recommends: Agents`,
 
 ## Sequencing
 
-1. **Agents `agentIds()`** (TDD) and release Agents 0.4.0. Nothing else depends on its internals.
+1. **Agents `agentIds()`** lands through Kanboard #5732 (separate effort). Presence Task 1 only confirms it.
 2. **Presence skeleton:** `Plugin.php`, `plugin.json`, schema for all three DBs, PluginVersionTest.
 3. **PresenceModel:** `touch()` throttles, `state()` thresholds, and `lineup()` (members, groups, ordering, hidden, bots through a stubbed detector). Pure PHPUnit.
 4. **Settings:** admin switch and per-user hidden flag; `touch()` and `lineup()` respect both.
