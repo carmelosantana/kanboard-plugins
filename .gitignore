@@ -9,6 +9,7 @@ testing/kanboard-src/
 # This repo keeps only the shared dev harness (testing/, scripts/) + docs. Each
 # plugin is checked out here as its own git repo and ignored by this one.
 /AiConnector/
+/BattleLobby/
 /BulkProjectDelete/
 /CalendarPlugin/
 /DependencyPlugin/
