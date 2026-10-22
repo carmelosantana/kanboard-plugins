@@ -97,7 +97,27 @@ Prints:
 - On-disk `data/files/` listing (one copy per task directory — Kanboard does **not** dedup files; the same content uploaded to two tasks produces two separate on-disk copies, one in each task's directory)
 - Installed plugin directories
 
-### 6. Tear down
+### 6. Import a production board (read-only)
+
+Copies a production project into the harness as real fixture data (used by Chicane):
+
+```bash
+bash testing/import-board.sh <prod_project_id> [window_days=30]
+# Example — Beige Bullet:
+bash testing/import-board.sh 155 30
+# imported project_id=25 tasks=703 subtasks=294 comments=2152 blocked=136
+```
+
+- **Production is only read**, through `~/MCP/kanboard-mcp/bin/kb-lib.sh` `req` (`get*` methods only;
+  anything else is refused). Local writes use `API_TOKEN` from `testing/.env`.
+- Imports the open tasks plus tasks closed in the last `window_days`, with columns, swimlanes,
+  in-column order, subtasks (with status), comments (by their author), tags, `is blocked by` links
+  between imported tasks, closed state, and reopen events found in `getProjectActivity` (last 50 events).
+- Each production user becomes a local `imp.<username>` (display name kept, random password never printed).
+- Creates `<prod name> (import)`, removing a previous project of exactly that name first, so re-runs are safe.
+- Not copied: creation/move/completion dates (they are the import time), files, time tracking.
+
+### 7. Tear down
 
 Keep data volume:
 
