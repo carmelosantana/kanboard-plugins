@@ -115,7 +115,9 @@ bash testing/import-board.sh 155 30
   between imported tasks, closed state, and reopen events found in `getProjectActivity` (last 50 events).
 - Each production user becomes a local `imp.<username>` (display name kept, random password never printed).
 - Creates `<prod name> (import)`, removing a previous project of exactly that name first, so re-runs are safe.
-- Not copied: creation/move/completion dates (they are the import time), files, time tracking.
+- Production timestamps (task creation/modification/moved/completed, comment creation/modification) are
+  restored afterwards with one PDO transaction inside `kb-suite` (override with `KB_CONTAINER`).
+- Not copied: files, time tracking.
 
 ### 7. Tear down
 

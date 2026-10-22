@@ -79,7 +79,8 @@ preq getProjectActivity "{\"project_id\":$P}" | jq -c '[.[]|select(.event_name==
 jq -s -c 'add|map({id:(.id|tostring), title, description:(.description // ""), color_id:(.color_id // ""),
     open:((.is_active|tostring)=="1"), column_id:(.column_id|tostring), swimlane_id:(.swimlane_id|tostring),
     owner_id:(.owner_id|tostring), creator_id:(.creator_id|tostring), position:(.position|tonumber? // 0),
-    score:(.score|tonumber? // 0), time_estimated:(.time_estimated|tonumber? // 0)})' "$T/open" "$T/closed" > "$T/tasks"
+    score:(.score|tonumber? // 0), time_estimated:(.time_estimated|tonumber? // 0),
+    dates:{date_creation, date_modification, date_moved, date_completed}})' "$T/open" "$T/closed" > "$T/tasks"
 
 one(){ # per-task detail read (production, read-only)
   # shellcheck source=/dev/null
@@ -93,7 +94,8 @@ one(){ # per-task detail read (production, read-only)
   jq -c -n --arg id "$id" --argjson s "$subs" --argjson c "$coms" --argjson g "$tags" --argjson l "$links" '{id:$id,
     subtasks:([$s[]?|{title, status:(.status|tonumber? // 0), user_id:(.user_id|tostring), username:(.username // null), name:(.name // null),
       position:(.position|tonumber? // 0), time_estimated:(.time_estimated|tonumber? // 0), time_spent:(.time_spent|tonumber? // 0)}]|sort_by(.position)),
-    comments:([$c[]?|{id:(.id|tonumber), user_id:(.user_id|tostring), username:(.username // null), name:(.name // null), content:(.comment // "")}]|sort_by(.id)),
+    comments:([$c[]?|{id:(.id|tonumber), user_id:(.user_id|tostring), username:(.username // null), name:(.name // null), content:(.comment // ""),
+      date_creation, date_modification}]|sort_by(.id)),
     tags:[($g|values[]?)],
     blocked_by:[$l[]?|select(.label=="is blocked by")|(.task_id|tostring)]}' > "$T/d.$id.tmp" && mv "$T/d.$id.tmp" "$T/d.$id"
 }
@@ -214,7 +216,7 @@ jq -c --slurpfile tm "$T/tmap.json" --slurpfile um "$T/umap.json" '.[]|. as $d|$
 jq -c --argjson p "$L" --slurpfile tm "$T/tmap.json" '.[]|select(.tags|length>0)
   | {method:"setTaskTags",params:{project_id:$p, task_id:$tm[0][.id], tags}}' "$T/details" > "$T/calls.tags"
 lbatch "$T/calls.sub"  > /dev/null || die "createSubtask batch"
-lbatch "$T/calls.com"  > /dev/null || die "createComment batch"
+lbatch "$T/calls.com"  > "$T/comments.created" || die "createComment batch"
 lbatch "$T/calls.tags" > /dev/null || die "setTaskTags batch"
 
 # ---------- "is blocked by" links between imported tasks ----------
@@ -230,5 +232,30 @@ jq -c --slurpfile tm "$T/tmap.json" '.[]|select($tm[0][.] != null)|$tm[0][.] as 
 lbatch "$T/calls.reopen" > /dev/null || die "reopen batch"
 jq -c --slurpfile tm "$T/tmap.json" '.[]|select(.open|not)|{method:"closeTask",params:{task_id:$tm[0][.id]}}' "$T/plan" > "$T/calls.close"
 lbatch "$T/calls.close" > /dev/null || die "closeTask batch"
+
+# ---------- restore production timestamps (JSON-RPC cannot set them) ----------
+# One PDO transaction in the container (same mechanism as seed.sh's db_write). Only ids and dates
+# reach SQL, as bound integer parameters; jq refuses anything that is not a non-negative integer.
+jq -c -n --slurpfile plan "$T/plan" --slurpfile tm "$T/tmap.json" --slurpfile d "$T/details" --slurpfile cl "$T/comments.created" '
+  def n: if . == null or . == "" then null elif (tostring|test("^[0-9]+$")) then tonumber else error("non-numeric value: \(.)") end;
+  { tasks: [ $plan[0][] | [($tm[0][.id]|n), (.dates.date_creation|n), (.dates.date_modification|n), (.dates.date_moved|n), (.dates.date_completed|n)] ],
+    comments: ( [ $d[0][] | .comments[] | [(.date_creation|n), (.date_modification|n)] ] as $pd
+                | [ range(0; $cl|length) as $i | [($cl[$i]|n)] + $pd[$i] ] ) }' > "$T/dates.json" || die "dates payload"
+[ "$(jq '.comments|length' "$T/dates.json")" = "$(wc -l < "$T/calls.com")" ] || die "comment id/date count mismatch"
+restored=$(docker exec -i "${KB_CONTAINER:-kb-suite}" php -r '
+$d = json_decode(stream_get_contents(STDIN), true);
+$db = new PDO("sqlite:/var/www/app/data/db.sqlite");
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$i = function ($v) { if ($v === null) return null; if (!is_int($v) || $v < 0) throw new Exception("bad value"); return $v; };
+$db->beginTransaction();
+$t = $db->prepare("UPDATE tasks SET date_creation=?, date_modification=?, date_moved=?, date_completed=? WHERE id=?");
+$c = $db->prepare("UPDATE comments SET date_creation=?, date_modification=? WHERE id=?");
+$nt = 0; $nc = 0;
+foreach ($d["tasks"] as $r) { $t->execute([$i($r[1]) ?? 0, $i($r[2]) ?? 0, $i($r[3]) ?? 0, $i($r[4]), $i($r[0])]); $nt += $t->rowCount(); }
+foreach ($d["comments"] as $r) { $c->execute([$i($r[1]) ?? 0, $i($r[2]) ?? 0, $i($r[0])]); $nc += $c->rowCount(); }
+$db->commit();
+echo "$nt $nc";
+' < "$T/dates.json") || die "timestamp restore failed"
+[ "$restored" = "$n_tasks $(wc -l < "$T/calls.com")" ] || die "timestamp restore updated $restored rows"
 
 echo "imported project_id=$L tasks=$n_tasks subtasks=$(wc -l < "$T/calls.sub") comments=$(wc -l < "$T/calls.com") blocked=$(wc -l < "$T/calls.links")"
