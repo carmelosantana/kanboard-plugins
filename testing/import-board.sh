@@ -8,7 +8,7 @@
 set -uo pipefail
 
 die(){ echo "import-board: $*" >&2; exit 1; }
-[ $# -ge 1 ] && [[ "$1" =~ ^[0-9]+$ ]] || die "usage: bash testing/import-board.sh <prod_project_id> [window_days=30]"
+if [ $# -lt 1 ] || ! [[ "$1" =~ ^[0-9]+$ ]]; then die "usage: bash testing/import-board.sh <prod_project_id> [window_days=30]"; fi
 P=$1; WIN=${2:-30}
 [[ "$WIN" =~ ^[0-9]+$ ]] || die "window_days must be a number"
 
@@ -43,7 +43,7 @@ lpost(){ # body on stdin -> response; token travels on a pipe, not argv
   curl -sS --max-time 300 -K <(printf 'user = "jsonrpc:%s"\n' "$API_TOKEN") \
     -H 'Content-Type: application/json' --data-binary @- "$LEP"
 }
-lreq(){ # method params -> .result; dies on error
+lreq(){ # method params -> .result; dies on error (inside $(...) only the subshell exits: add `|| exit 1`)
   local out
   out=$(jq -c -n --arg m "$1" --argjson p "$2" '{jsonrpc:"2.0",id:1,method:$m,params:$p}' | lpost) || die "local $1: curl failed"
   jq -e 'has("error")|not' <<<"$out" >/dev/null 2>&1 || die "local $1: $(jq -c '.error' <<<"$out" 2>/dev/null || echo "$out")"
@@ -120,13 +120,13 @@ jq -c -n --slurpfile pu "$T/pusers" --slurpfile t "$T/tasks" --slurpfile d "$T/d
 : > "$T/umap"
 while IFS= read -r u; do
   uname=$(jq -r '.username' <<<"$u"); name=$(jq -r '.name' <<<"$u"); pid=$(jq -r '.id' <<<"$u")
-  existing=$(lreq getUserByName "$(jq -c -n --arg u "$uname" '{username:$u}')")
+  existing=$(lreq getUserByName "$(jq -c -n --arg u "$uname" '{username:$u}')") || exit 1
   if [ "$existing" != "false" ] && [ "$existing" != "null" ]; then
     lid=$(jq -r '.id' <<<"$existing")
     lreq updateUser "$(jq -c -n --argjson i "$lid" --arg n "$name" '{id:$i,name:$n}')" >/dev/null
   else
     pw=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
-    lid=$(lreq createUser "$(jq -c -n --arg u "$uname" --arg p "$pw" --arg n "$name" '{username:$u,password:$p,name:$n}')")
+    lid=$(lreq createUser "$(jq -c -n --arg u "$uname" --arg p "$pw" --arg n "$name" '{username:$u,password:$p,name:$n}')") || exit 1
     unset pw
     [[ "$lid" =~ ^[0-9]+$ ]] || die "createUser $uname returned $lid"
   fi
@@ -137,19 +137,21 @@ jq -s -c 'add // {}' "$T/umap" > "$T/umap.json"
 # ---------- local project (replace previous import) ----------
 lname="$pname (import)"
 while :; do
-  old=$(lreq getProjectByName "$(jq -c -n --arg n "$lname" '{name:$n}')")
+  old=$(lreq getProjectByName "$(jq -c -n --arg n "$lname" '{name:$n}')") || exit 1
   [ "$old" = "false" ] || [ "$old" = "null" ] && break
   [ "$(jq -r '.name' <<<"$old")" = "$lname" ] || die "getProjectByName returned a different project"
   lreq removeProject "{\"project_id\":$(jq -r '.id' <<<"$old")}" >/dev/null
 done
-L=$(lreq createProject "$(jq -c -n --arg n "$lname" '{name:$n,owner_id:1}')")
+L=$(lreq createProject "$(jq -c -n --arg n "$lname" '{name:$n,owner_id:1}')") || exit 1
 [[ "$L" =~ ^[0-9]+$ ]] || die "createProject returned $L"
-jq -r '.[]' "$T/umap.json" | while read -r lid; do
+while read -r lid; do
+  [[ "$lid" =~ ^[0-9]+$ ]] || die "bad local user id '$lid'"
   lreq addProjectUser "{\"project_id\":$L,\"user_id\":$lid,\"role\":\"project-member\"}" >/dev/null
-done
+done < <(jq -r '.[]' "$T/umap.json")
 
 # columns: match production by position (rename, add, remove surplus)
-lreq getColumns "{\"project_id\":$L}" | jq -c 'sort_by(.position|tonumber)|map(.id|tonumber)' > "$T/lcols"
+lreq getColumns "{\"project_id\":$L}" | jq -c 'sort_by(.position|tonumber)|map(.id|tonumber)' > "$T/lcols" || exit 1
+jq -e 'length > 0' "$T/lcols" >/dev/null || die "local project $L has no columns"
 : > "$T/cmap"
 n_pc=$(jq length "$T/cols"); n_lc=$(jq length "$T/lcols")
 for ((i=0; i<n_pc; i++)); do
@@ -158,7 +160,8 @@ for ((i=0; i<n_pc; i++)); do
     lid=$(jq -r ".[$i]" "$T/lcols")
     lreq updateColumn "$(jq -c --argjson i "$lid" '{column_id:$i,title,task_limit,description}' <<<"$c")" >/dev/null
   else
-    lid=$(lreq addColumn "$(jq -c --argjson p "$L" '{project_id:$p,title,task_limit,description}' <<<"$c")")
+    lid=$(lreq addColumn "$(jq -c --argjson p "$L" '{project_id:$p,title,task_limit,description}' <<<"$c")") || exit 1
+    [[ "$lid" =~ ^[0-9]+$ ]] || die "addColumn returned '$lid'"
   fi
   jq -c --argjson l "$lid" '{(.id):$l}' <<<"$c" >> "$T/cmap"
 done
@@ -166,7 +169,8 @@ for ((i=n_pc; i<n_lc; i++)); do lreq removeColumn "{\"column_id\":$(jq -r ".[$i]
 jq -s -c 'add // {}' "$T/cmap" > "$T/cmap.json"
 
 # swimlanes: rename the local default to the first production lane, add the rest in order
-first_lane=$(lreq getAllSwimlanes "{\"project_id\":$L}" | jq -r 'sort_by(.position|tonumber)|.[0].id')
+first_lane=$(lreq getAllSwimlanes "{\"project_id\":$L}" | jq -r 'sort_by(.position|tonumber)|.[0].id') || exit 1
+[[ "$first_lane" =~ ^[0-9]+$ ]] || die "local project $L has no swimlane ('$first_lane')"
 : > "$T/smap"
 n_pl=$(jq length "$T/lanes")
 for ((i=0; i<n_pl; i++)); do
@@ -175,7 +179,8 @@ for ((i=0; i<n_pl; i++)); do
     lreq updateSwimlane "$(jq -c --argjson p "$L" --argjson i "$first_lane" '{project_id:$p,swimlane_id:$i,name,description}' <<<"$s")" >/dev/null
     lid=$first_lane
   else
-    lid=$(lreq addSwimlane "$(jq -c --argjson p "$L" '{project_id:$p,name,description}' <<<"$s")")
+    lid=$(lreq addSwimlane "$(jq -c --argjson p "$L" '{project_id:$p,name,description}' <<<"$s")") || exit 1
+    [[ "$lid" =~ ^[0-9]+$ ]] || die "addSwimlane returned '$lid'"
   fi
   jq -c --argjson l "$lid" '{(.id):$l}' <<<"$s" >> "$T/smap"
 done
@@ -220,7 +225,7 @@ lbatch "$T/calls.com"  > "$T/comments.created" || die "createComment batch"
 lbatch "$T/calls.tags" > /dev/null || die "setTaskTags batch"
 
 # ---------- "is blocked by" links between imported tasks ----------
-blk=$(lreq getAllLinks '{}' | jq -r '.[]|select(.label=="is blocked by")|.id')
+blk=$(lreq getAllLinks '{}' | jq -r '.[]|select(.label=="is blocked by")|.id') || exit 1
 [[ "$blk" =~ ^[0-9]+$ ]] || die "no local 'is blocked by' link type"
 jq -c --argjson k "$blk" --slurpfile tm "$T/tmap.json" '[.[]|.id as $a|.blocked_by[]|select($tm[0][.] != null)|[$a,.]]|unique|.[]
   | {method:"createTaskLink",params:{task_id:$tm[0][.[0]], opposite_task_id:$tm[0][.[1]], link_id:$k}}' "$T/details" > "$T/calls.links"
