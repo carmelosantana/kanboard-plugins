@@ -1,0 +1,9 @@
+# Mounts the Chicane plugin (its own repo, gitignored here) into the suite harness.
+# Paths resolve relative to testing/ (the first -f file). Bring up with:
+#   docker compose -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml up -d
+# Do not add ChicanePrototype/tools/compose-overlay.yml alongside it: the prototype's
+# ChicaneController shares Kanboard's controller-name ACL namespace.
+services:
+  kanboard:
+    volumes:
+      - ../Chicane:/var/www/app/plugins/Chicane

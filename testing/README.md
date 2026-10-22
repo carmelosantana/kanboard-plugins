@@ -40,6 +40,15 @@ docker compose -f testing/docker-compose.dev.yml up -d
 
 Kanboard is now at **http://localhost:8081** (login `admin` / `admin`).
 
+**Chicane** is mounted by its own overlay (kept out of `docker-compose.dev.yml`). Bring the
+stack up with it like this:
+
+```bash
+docker compose -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml up -d
+```
+
+The old `ChicanePrototype/tools/compose-overlay.yml` is no longer part of the harness: leave it off the command.
+
 The four plugins are bind-mounted at `/var/www/app/plugins/`:
 
 | Plugin dir         | Status   |
