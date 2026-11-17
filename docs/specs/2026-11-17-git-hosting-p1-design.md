@@ -138,9 +138,11 @@ decides whether to extend ForwardAuth to cookie sessions.
 - **JSON-RPC:** `getGitCredential(task_id)` → `{username, token, expires_at, repos[]}`; callable
   only by a project member assigned to or working that task, task open.
   `getProjectRepositories(project_id)`, `createProjectRepository(project_id, name)`.
-- **Events:** project user/group membership changes, group membership changes, task close/move to
-  Done, user disable → call broker `sync` / `DELETE /tokens`. Failures are logged and left to the
-  reconcile sweep; they never block the Kanboard action.
+- **Events:** task close → broker `DELETE /tokens`. Kanboard 1.2.47 dispatches no events on
+  project/group membership changes or user disable (verified in core models), so team state is
+  pushed by (a) a JSON-RPC middleware that nudges `sync` after the membership API methods and
+  (b) the broker pulling `githost/state` every 30 s. Disabled users are denied by the live
+  check. Failures are logged and left to the next pull; they never block the Kanboard action.
 - **Authz route:** HMAC-only, returns `{allow: bool}` for `(user_id, project_id, access)` from
   Kanboard's project permission model (role ≥ viewer for read, ≥ member for write; disabled users
   denied).
