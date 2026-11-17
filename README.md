@@ -36,4 +36,6 @@ docker compose -f docker-compose.dev.yml up -d   # http://localhost:8081  (admin
 ```
 
 `testing/run-plugin-tests.sh <PluginName>` runs a plugin's PHPUnit suite against Kanboard v1.2.47.
+Screenshots for the ModMenu directory come from `scripts/screenshots/` (see its README).
+
 Specs, plans, and the roadmap live in `docs/`.

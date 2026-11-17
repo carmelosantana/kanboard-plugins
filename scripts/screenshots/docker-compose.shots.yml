@@ -1,0 +1,44 @@
+# Clean, throwaway Kanboard for directory screenshots (http://localhost:8082, admin/admin).
+# A fresh named volume: no imported production data, so nothing private can reach a public image.
+# Plugins are bind-mounted read-only; ShadcnTheme is added by docker-compose.shots-shadcn.yml.
+#   docker compose -f scripts/screenshots/docker-compose.shots.yml up -d
+#   docker compose -f scripts/screenshots/docker-compose.shots.yml down -v   # when done
+name: kb-shots
+
+services:
+  kanboard:
+    image: kanboard/kanboard:latest
+    container_name: kb-shots
+    ports:
+      - "8082:80"
+    entrypoint: ["/bin/bash", "/usr/local/bin/entrypoint-dev.sh"]
+    # fake-ai.mjs runs on the host; AiConnector reaches it as host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # A writable, empty plugins dir (so ModMenu shows its normal state); plugins mount into it.
+    tmpfs:
+      - /var/www/app/plugins:mode=0777
+    volumes:
+      - ../../testing/entrypoint-dev.sh:/usr/local/bin/entrypoint-dev.sh:ro
+      - ../../testing/overlays/jsonrpc/ProcedureHandler.php:/var/www/app/libs/jsonrpc/src/JsonRPC/ProcedureHandler.php:ro
+      - kb-shots-data:/var/www/app/data
+      - ../../Agents:/var/www/app/plugins/Agents:ro
+      - ../../AiConnector:/var/www/app/plugins/AiConnector:ro
+      - ../../BulkProjectDelete:/var/www/app/plugins/BulkProjectDelete:ro
+      - ../../CalendarPlugin:/var/www/app/plugins/CalendarPlugin:ro
+      - ../../Chicane:/var/www/app/plugins/Chicane:ro
+      - ../../DependencyPlugin:/var/www/app/plugins/DependencyPlugin:ro
+      - ../../FeatureSync:/var/www/app/plugins/FeatureSync:ro
+      - ../../HelloHarmozi:/var/www/app/plugins/HelloHarmozi:ro
+      - ../../Kensho:/var/www/app/plugins/Kensho:ro
+      - ../../ModMenu:/var/www/app/plugins/ModMenu:ro
+      - ../../ModMenuUpdater:/var/www/app/plugins/ModMenuUpdater:ro
+      - ../../Presence:/var/www/app/plugins/Presence:ro
+      - ../../SchedulerPlugin:/var/www/app/plugins/SchedulerPlugin:ro
+      - ../../SubtaskGenerator:/var/www/app/plugins/SubtaskGenerator:ro
+      - ../../TimeBlock:/var/www/app/plugins/TimeBlock:ro
+      - ../../TimeInvoice:/var/www/app/plugins/TimeInvoice:ro
+      - ../../TimeReport:/var/www/app/plugins/TimeReport:ro
+
+volumes:
+  kb-shots-data:
