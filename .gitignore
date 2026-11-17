@@ -30,3 +30,5 @@ testing/kanboard-src/
 /TimeReport/
 # local-only: symlink to npx playwright cache for E2E scripts
 /node_modules
+# Screenshot capture output (review copies; the real ones go to the directory repo)
+/scripts/screenshots/out/

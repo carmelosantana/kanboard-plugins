@@ -1,0 +1,6 @@
+# Adds ShadcnTheme to the screenshot stack (recreate the container to switch themes):
+#   docker compose -f scripts/screenshots/docker-compose.shots.yml -f scripts/screenshots/docker-compose.shots-shadcn.yml up -d
+services:
+  kanboard:
+    volumes:
+      - ../../ShadcnTheme:/var/www/app/plugins/ShadcnTheme:ro
