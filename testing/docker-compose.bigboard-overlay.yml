@@ -1,0 +1,8 @@
+# Mounts the BigBoard fork (its own repo, gitignored here) into the suite harness.
+# Add it to the compose set already in use, e.g.:
+#   docker compose -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml \
+#     -f testing/docker-compose.chicane-overlay.yml -f testing/docker-compose.bigboard-overlay.yml up -d
+services:
+  kanboard:
+    volumes:
+      - ../Bigboard:/var/www/app/plugins/Bigboard
