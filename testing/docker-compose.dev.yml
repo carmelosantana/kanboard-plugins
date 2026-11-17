@@ -1,10 +1,11 @@
-# Unified dev harness for all four Kanboard plugins (Linux/SQLite)
+# Unified dev harness for the Kanboard plugin suite (Linux/SQLite), pinned to the
+# Kanboard release the suite targets. Chicane and Bigboard mount via their overlays.
 # Usage: docker compose -f testing/docker-compose.dev.yml up -d
 name: kanboard-suite
 
 services:
   kanboard:
-    image: kanboard/kanboard:latest
+    image: kanboard/kanboard:v1.2.47
     container_name: kb-suite
     restart: unless-stopped
     ports:
@@ -31,6 +32,10 @@ services:
       - ../TimeInvoice:/var/www/app/plugins/TimeInvoice
       - ../Agents:/var/www/app/plugins/Agents
       - ../HelloHarmozi:/var/www/app/plugins/HelloHarmozi
+      - ../BattleLobby:/var/www/app/plugins/BattleLobby
+      - ../Presence:/var/www/app/plugins/Presence
+      - ../RpcGuard:/var/www/app/plugins/RpcGuard
+      - ../ModMenuUpdater:/var/www/app/plugins/ModMenuUpdater
 
 volumes:
   kb-suite-data:

@@ -1,6 +1,7 @@
 # Kanboard Plugin Suite — Docker Test Harness
 
-One Docker stack that mounts all four plugins for local development and testing.
+One Docker stack (Kanboard v1.2.47) that mounts the suite's plugins for local development, plus
+the host-side PHPUnit runner that tests them.
 
 ## Prerequisites
 
@@ -8,7 +9,7 @@ One Docker stack that mounts all four plugins for local development and testing.
 - `python3` on the host (used by `seed.sh` / `snapshot.sh` for safe SQL quoting and JSON parsing)
 - Port **8081** free on the host
 
-> **Note:** The `kanboard/kanboard:latest` Alpine image does **not** ship the `sqlite3` CLI.
+> **Note:** The `kanboard/kanboard` Alpine image does **not** ship the `sqlite3` CLI.
 > The scripts talk to the DB through PHP PDO (`php -r "new PDO('sqlite:...')"`) executed inside the container.
 
 ---
@@ -22,17 +23,10 @@ All commands run from the **repo root** (`kanboard-plugins/`).
 The container web user (`nginx`) needs read/execute access to the bind-mounted plugin dirs:
 
 ```bash
-chmod -R o+rX BulkProjectDelete ShadcnTheme FeatureSync SubtaskGenerator
+for d in */plugin.json; do chmod -R o+rX "$(dirname "$d")"; done
 ```
 
-### 2. Tear down the old single-plugin container (if running)
-
-```bash
-docker rm -f kb-theme-shadcn 2>/dev/null || true
-# or: docker compose -p kanboard-theme-test down
-```
-
-### 3. Bring the stack up
+### 2. Bring the stack up
 
 ```bash
 docker compose -f testing/docker-compose.dev.yml up -d
@@ -40,7 +34,11 @@ docker compose -f testing/docker-compose.dev.yml up -d
 
 Kanboard is now at **http://localhost:8081** (login `admin` / `admin`).
 
-**Chicane** is mounted by its own overlay (kept out of `docker-compose.dev.yml`). Bring the
+The image is pinned to `kanboard/kanboard:v1.2.47`, the release the suite targets. A data volume
+first created by a newer image (the harness used `:latest`, v1.2.52, until 2026-11-17) carries a newer
+schema; if Kanboard errors after the switch, start fresh with `down -v`.
+
+**Chicane** and **Bigboard** are mounted by their own overlays (kept out of `docker-compose.dev.yml`). Bring the
 stack up with it like this:
 
 ```bash
@@ -49,14 +47,10 @@ docker compose -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonr
 
 The old `ChicanePrototype/tools/compose-overlay.yml` is no longer part of the harness: leave it off the command.
 
-The four plugins are bind-mounted at `/var/www/app/plugins/`:
+Add `-f testing/docker-compose.bigboard-overlay.yml` for Bigboard.
 
-| Plugin dir         | Status   |
-|--------------------|----------|
-| BulkProjectDelete  | placeholder (real code in later tasks) |
-| ShadcnTheme        | **active** — real code present |
-| FeatureSync        | placeholder |
-| SubtaskGenerator   | placeholder |
+`docker-compose.dev.yml` bind-mounts every other plugin checkout at `/var/www/app/plugins/`. When you
+add a plugin checkout, add its mount there too (the test runner needs no edit).
 
 Verify mounts:
 
@@ -64,7 +58,7 @@ Verify mounts:
 docker compose -f testing/docker-compose.dev.yml exec kanboard ls /var/www/app/plugins/
 ```
 
-### 4. Seed test data
+### 3. Seed test data
 
 The seed script creates 5 projects, each with 3 tasks, 2 subtasks per task, 2 comments per task,
 a per-task file, a shared file on tasks 1–2, and a project-level file.
@@ -92,7 +86,7 @@ echo "API_TOKEN=<your-token>" > testing/.env
 ./testing/seed.sh
 ```
 
-### 5. Snapshot (before / after a plugin action)
+### 4. Snapshot (before / after a plugin action)
 
 ```bash
 ./testing/snapshot.sh <project_id> [project_id ...]
@@ -106,7 +100,7 @@ Prints:
 - On-disk `data/files/` listing (one copy per task directory — Kanboard does **not** dedup files; the same content uploaded to two tasks produces two separate on-disk copies, one in each task's directory)
 - Installed plugin directories
 
-### 6. Import a production board (read-only)
+### 5. Import a production board (read-only)
 
 Copies a production project into the harness as real fixture data (used by Chicane):
 
@@ -128,7 +122,7 @@ bash testing/import-board.sh 155 30
   restored afterwards with one PDO transaction inside `kb-suite` (override with `KB_CONTAINER`).
 - Not copied: files, time tracking.
 
-### 7. Tear down
+### 6. Tear down
 
 Keep data volume:
 
@@ -171,7 +165,7 @@ curl -u "jsonrpc:$API_TOKEN" http://localhost:8081/jsonrpc.php \
 | Compose name   | `kanboard-suite` |
 | Container name | `kb-suite`      |
 | Port           | `8081`          |
-| Image          | `kanboard/kanboard:latest` |
+| Image          | `kanboard/kanboard:v1.2.47` |
 | Data volume    | `kanboard-suite_kb-suite-data` |
 
 ---
@@ -198,18 +192,24 @@ Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically b
 
 ```bash
 # From repo root:
-./testing/run-plugin-tests.sh <PluginName>
-
-# Example:
-./testing/run-plugin-tests.sh ShadcnTheme
+./testing/run-plugin-tests.sh ShadcnTheme   # one suite, PHPUnit output as-is
+./testing/run-plugin-tests.sh --all         # every suite, then a pass/fail table
+./testing/run-plugin-tests.sh --list        # the plugins it found
 ```
 
 The script:
-1. Verifies `kanboard-src/` and `vendor/bin/phpunit` are present.
-2. Creates symlinks for all four plugins inside `kanboard-src/plugins/` if missing.
-3. Prints a clear message if the plugin has no `Test/` directory yet.
-4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/units.sqlite.xml` (in-memory SQLite)
-   and a bootstrap that registers all plugin PSR-4 namespaces.
+1. Finds the plugins: every directory beside `testing/` that holds a `plugin.json`.
+2. Verifies `vendor/bin/phpunit` is present in `kanboard-src/`.
+3. Symlinks each plugin into `kanboard-src/plugins/` if missing, and writes a bootstrap that
+   registers every plugin's PSR-4 namespace.
+4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/units.sqlite.xml` (in-memory SQLite).
+
+`--all` runs every suite to completion even when one fails, writes one log per plugin to
+`testing/kanboard-src/test-logs/`, prints a Markdown table (plugin, PASS/FAIL/SKIP, PHPUnit's
+summary line, time) and exits 1 if any suite failed.
+
+`PLUGINS_ROOT`, `KB_SRC` and `LOG_DIR` override the locations; the reusable CI workflow uses them to
+run the same script against a fresh Kanboard checkout.
 
 ### Plugin test conventions
 
