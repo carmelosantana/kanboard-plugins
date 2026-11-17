@@ -8,18 +8,25 @@ testing/kanboard-src/
 # Plugins now live in their own repos (github.com/carmelosantana/kanboard-<slug>).
 # This repo keeps only the shared dev harness (testing/, scripts/) + docs. Each
 # plugin is checked out here as its own git repo and ignored by this one.
+/Agents/
 /AiConnector/
 /BattleLobby/
 /BulkProjectDelete/
 /CalendarPlugin/
 /Chicane/
-/ChicanePrototype/
 /DependencyPlugin/
 /FeatureSync/
 /HelloHarmozi/
+/Kensho/
 /ModMenu/
+/ModMenuUpdater/
+/Presence/
+/RpcGuard/
 /SchedulerPlugin/
 /ShadcnTheme/
 /SubtaskGenerator/
+/TimeBlock/
+/TimeInvoice/
+/TimeReport/
 # local-only: symlink to npx playwright cache for E2E scripts
 /node_modules

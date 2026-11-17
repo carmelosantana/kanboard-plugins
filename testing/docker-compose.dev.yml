@@ -29,6 +29,8 @@ services:
       - ../Kensho:/var/www/app/plugins/Kensho
       - ../TimeReport:/var/www/app/plugins/TimeReport
       - ../TimeInvoice:/var/www/app/plugins/TimeInvoice
+      - ../Agents:/var/www/app/plugins/Agents
+      - ../HelloHarmozi:/var/www/app/plugins/HelloHarmozi
 
 volumes:
   kb-suite-data:
