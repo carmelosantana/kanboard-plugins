@@ -1,0 +1,97 @@
+# Reusable: run a suite plugin's PHPUnit tests against a fresh Kanboard checkout.
+#
+# Called from a plugin repo (see templates/workflows/test.yml):
+#   jobs:
+#     test:
+#       uses: carmelosantana/kanboard-plugins/.github/workflows/plugin-test.yml@<harness-sha>
+#
+# The plugin's directory name comes from its Plugin.php namespace. Plugins in its
+# plugin.json `requires` are checked out at the release the ModMenu directory lists.
+# The test runner is testing/run-plugin-tests.sh from this repo, at the same commit as
+# this workflow, so local runs and CI share one script.
+name: plugin-test
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        type: string
+        default: '8.4'
+      kanboard-ref:
+        type: string
+        default: 'v1.2.47'
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: self
+          persist-credentials: false
+
+      # job.workflow_* name this reusable workflow's own repo and commit, so the runner
+      # script below is the one pinned alongside it, never a moving branch.
+      - name: Resolve harness commit
+        env:
+          HARNESS_REPO: ${{ job.workflow_repository }}
+          HARNESS_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ -z "$HARNESS_REPO" ] || [ -z "$HARNESS_SHA" ]; then
+            echo "::error::job.workflow_repository/job.workflow_sha are empty on this runner"; exit 1
+          fi
+          echo "harness: $HARNESS_REPO@$HARNESS_SHA"
+
+      - name: Check out harness
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: harness
+          persist-credentials: false
+
+      - name: Check out Kanboard
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: kanboard/kanboard
+          ref: ${{ inputs.kanboard-ref }}
+          path: kanboard
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: pdo_sqlite, gd, mbstring, zip, intl
+          coverage: none
+          tools: composer
+
+      - name: Install Kanboard dev dependencies
+        run: composer install -d kanboard --no-interaction --no-progress --prefer-dist
+
+      - name: Lay out plugins
+        id: layout
+        run: |
+          NAME=$(sed -nE 's/^namespace Kanboard\\Plugin\\([A-Za-z0-9_]+);.*/\1/p' self/Plugin.php | head -1)
+          if [ -z "$NAME" ]; then echo "::error::no 'namespace Kanboard\\Plugin\\X;' in Plugin.php"; exit 1; fi
+          mkdir plugins
+          mv self "plugins/$NAME"
+          php harness/testing/ci-requires.php "plugins/$NAME/plugin.json" > requires.txt
+          while read -r dep repo tag; do
+            echo "requires: $dep $tag"
+            git clone --quiet --depth 1 --branch "$tag" "$repo" "plugins/$dep"
+          done < requires.txt
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: PHPUnit
+        env:
+          PLUGINS_ROOT: plugins
+          KB_SRC: kanboard
+          PLUGIN: ${{ steps.layout.outputs.name }}
+        run: |
+          KB_SRC="$PWD/$KB_SRC" harness/testing/run-plugin-tests.sh "$PLUGIN"

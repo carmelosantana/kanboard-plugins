@@ -1,57 +1,68 @@
 #!/usr/bin/env bash
-# run-plugin-tests.sh — Run PHPUnit tests for a single plugin against Kanboard v1.2.47 core.
+# run-plugin-tests.sh — Run plugin PHPUnit suites against Kanboard v1.2.47 core.
 #
 # Usage (from repo root):
-#   ./testing/run-plugin-tests.sh <PluginName>
+#   ./testing/run-plugin-tests.sh <PluginName>   # one suite, PHPUnit output as-is
+#   ./testing/run-plugin-tests.sh --all          # every suite to completion, then a
+#                                                # pass/fail table; exit 1 if any failed
+#   ./testing/run-plugin-tests.sh --list         # print the discovered plugin names
 #
-# Example:
-#   ./testing/run-plugin-tests.sh ShadcnTheme
+# A plugin is any directory under PLUGINS_ROOT that holds a plugin.json — there is no
+# hand-kept list. Each one is symlinked into kanboard-src/plugins/ and its namespace is
+# registered by the generated PHPUnit bootstrap.
 #
-# Prerequisites (one-time setup):
-#   1. kanboard-src must be present:
-#      git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git testing/kanboard-src
-#   2. Dev dependencies must be installed:
-#      composer install -d testing/kanboard-src
-#   3. Plugin symlinks must exist inside testing/kanboard-src/plugins/ — they are created
-#      automatically by this script on first run if missing.
+# Environment overrides (CI uses these; locally the defaults are right):
+#   PLUGINS_ROOT  where plugin checkouts live   (default: the repo root)
+#   KB_SRC        the Kanboard source checkout  (default: testing/kanboard-src)
+#   LOG_DIR       --all writes one log per suite here (default: $KB_SRC/test-logs)
 #
-# The script runs from the Kanboard root (testing/kanboard-src/) so all require_once paths
-# and DB_FILENAME=:memory: work exactly as documented in the plugin-plans.
+# One-time local setup:
+#   git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git testing/kanboard-src
+#   composer install -d testing/kanboard-src
 
 set -euo pipefail
 
-PLUGIN_NAME="${1:-}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-KB_SRC="${REPO_ROOT}/testing/kanboard-src"
+PLUGINS_ROOT="$(cd "${PLUGINS_ROOT:-$REPO_ROOT}" && pwd)"
+KB_SRC="${KB_SRC:-${REPO_ROOT}/testing/kanboard-src}"
 PLUGINS_DIR="${KB_SRC}/plugins"
 BOOTSTRAP="${KB_SRC}/tests/plugin-bootstrap.php"
 PHPUNIT="${KB_SRC}/vendor/bin/phpunit"
 CONFIG="${KB_SRC}/tests/units.sqlite.xml"
+LOG_DIR="${LOG_DIR:-${KB_SRC}/test-logs}"
 
-# ── Validate argument ──────────────────────────────────────────────────────────
-if [[ -z "$PLUGIN_NAME" ]]; then
-  echo "Usage: $0 <PluginName>"
-  echo "Available plugins: AiConnector  BattleLobby  BulkProjectDelete  CalendarPlugin  DependencyPlugin  FeatureSync  Kensho  ModMenu  SchedulerPlugin  ShadcnTheme  SubtaskGenerator  TimeBlock  TimeReport  TimeInvoice  RpcGuard  Presence  Agents  Chicane"
-  exit 1
-fi
+discover_plugins() {
+  local f
+  for f in "${PLUGINS_ROOT}"/*/plugin.json; do
+    [[ -f "$f" ]] || continue
+    basename "$(dirname "$f")"
+  done
+}
+
+mapfile -t PLUGINS < <(discover_plugins)
+
+usage() {
+  echo "Usage: $0 <PluginName> | --all | --list"
+  echo "Plugins found under ${PLUGINS_ROOT}: ${PLUGINS[*]:-none}"
+}
+
+ARG="${1:-}"
+case "$ARG" in
+  "" | -h | --help) usage; [[ -z "$ARG" ]] && exit 1; exit 0 ;;
+  --list) printf '%s\n' "${PLUGINS[@]}"; exit 0 ;;
+esac
 
 # ── Check kanboard-src is present ─────────────────────────────────────────────
-if [[ ! -d "$KB_SRC" ]]; then
-  echo "ERROR: testing/kanboard-src/ not found."
-  echo "Run once:"
-  echo "  git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git testing/kanboard-src"
-  echo "  composer install -d testing/kanboard-src"
-  exit 1
-fi
-
 if [[ ! -f "$PHPUNIT" ]]; then
-  echo "ERROR: vendor/bin/phpunit not found in testing/kanboard-src/."
-  echo "Run: composer install -d testing/kanboard-src"
+  echo "ERROR: ${PHPUNIT} not found."
+  echo "Run once:"
+  echo "  git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git ${KB_SRC}"
+  echo "  composer install -d ${KB_SRC}"
   exit 1
 fi
 
 # ── Write bootstrap (registers all plugin PSR-4 namespaces) ──────────────────
-# This file lives inside the gitignored kanboard-src/ and is regenerated each run.
+# This file lives inside kanboard-src/ (gitignored) and is regenerated each run.
 cat > "${BOOTSTRAP}" << 'BOOTSTRAP_EOF'
 <?php
 /**
@@ -75,37 +86,71 @@ if (is_dir($pluginsDir)) {
 BOOTSTRAP_EOF
 
 # ── Ensure plugin symlinks exist ───────────────────────────────────────────────
-for p in AiConnector BattleLobby BulkProjectDelete CalendarPlugin DependencyPlugin FeatureSync Kensho ModMenu SchedulerPlugin ShadcnTheme SubtaskGenerator TimeBlock TimeReport TimeInvoice RpcGuard Presence Agents Chicane; do
+mkdir -p "$PLUGINS_DIR"
+for p in "${PLUGINS[@]}"; do
   if [[ ! -e "${PLUGINS_DIR}/${p}" ]]; then
-    ln -s "${REPO_ROOT}/${p}" "${PLUGINS_DIR}/${p}"
-    echo "Created symlink: testing/kanboard-src/plugins/${p} -> ../../${p}"
+    ln -s "${PLUGINS_ROOT}/${p}" "${PLUGINS_DIR}/${p}"
+    echo "Created symlink: ${PLUGINS_DIR}/${p} -> ${PLUGINS_ROOT}/${p}"
   fi
 done
 
-# ── Check the plugin exists in the repo ───────────────────────────────────────
-PLUGIN_SRC="${REPO_ROOT}/${PLUGIN_NAME}"
-if [[ ! -d "$PLUGIN_SRC" ]]; then
-  echo "ERROR: Plugin directory not found: ${PLUGIN_SRC}"
+run_suite() {
+  ( cd "$KB_SRC" && "$PHPUNIT" --bootstrap "$BOOTSTRAP" -c "$CONFIG" \
+      "plugins/$1/Test/" --no-coverage )
+}
+
+# ── Single plugin ──────────────────────────────────────────────────────────────
+if [[ "$ARG" != "--all" ]]; then
+  if [[ ! -f "${PLUGINS_ROOT}/${ARG}/plugin.json" ]]; then
+    echo "ERROR: no plugin.json under ${PLUGINS_ROOT}/${ARG}"
+    usage
+    exit 1
+  fi
+  if [[ ! -d "${PLUGINS_DIR}/${ARG}/Test" ]]; then
+    echo "No Test/ directory for plugin '${ARG}' — nothing to run."
+    exit 0
+  fi
+  echo "Running tests for plugin: ${ARG}"
+  echo "  Kanboard root : ${KB_SRC}"
+  echo ""
+  run_suite "$ARG"
+  exit $?
+fi
+
+# ── --all: every suite to completion, then a table ────────────────────────────
+mkdir -p "$LOG_DIR"
+failed=0
+rows=()
+for p in "${PLUGINS[@]}"; do
+  log="${LOG_DIR}/${p}.log"
+  if [[ ! -d "${PLUGINS_DIR}/${p}/Test" ]]; then
+    rows+=("${p}|SKIP|no Test/ dir|-")
+    continue
+  fi
+  printf 'Running %-20s ' "$p"
+  start=$SECONDS
+  if run_suite "$p" > "$log" 2>&1; then status=PASS; else status=FAIL; failed=1; fi
+  secs=$((SECONDS - start))
+  # PHPUnit's last summary line: "OK (12 tests, 34 assertions)" or
+  # "Tests: 12, Assertions: 34, Failures: 1." (possibly with warnings/notices).
+  summary="$(grep -E '^(OK|Tests:|No tests executed)' "$log" | tail -1 || true)"
+  [[ -n "$summary" ]] || summary="no PHPUnit summary — see ${log}"
+  echo "${status} (${secs}s)"
+  rows+=("${p}|${status}|${summary}|${secs}s")
+done
+
+echo ""
+printf '| %-20s | %-6s | %-60s | %6s |\n' Plugin Result Summary Time
+printf '|%s|%s|%s|%s|\n' "$(printf -- '-%.0s' {1..22})" "$(printf -- '-%.0s' {1..8})" \
+  "$(printf -- '-%.0s' {1..62})" "$(printf -- '-%.0s' {1..8})"
+for r in "${rows[@]}"; do
+  IFS='|' read -r name status summary secs <<< "$r"
+  printf '| %-20s | %-6s | %-60s | %6s |\n' "$name" "$status" "$summary" "$secs"
+done
+echo ""
+echo "Logs: ${LOG_DIR}"
+if [[ $failed -ne 0 ]]; then
+  echo "FAILED: at least one suite failed."
   exit 1
 fi
-
-# ── Check the plugin has a Test/ directory ────────────────────────────────────
-TEST_DIR="${PLUGINS_DIR}/${PLUGIN_NAME}/Test"
-if [[ ! -d "$TEST_DIR" ]]; then
-  echo "No Test/ directory found for plugin '${PLUGIN_NAME}' — nothing to run."
-  echo "(Expected: ${PLUGIN_NAME}/Test/)"
-  exit 0
-fi
-
-# ── Run PHPUnit from the Kanboard root ────────────────────────────────────────
-echo "Running tests for plugin: ${PLUGIN_NAME}"
-echo "  Kanboard root : ${KB_SRC}"
-echo "  Test dir      : ${TEST_DIR}"
-echo ""
-
-cd "$KB_SRC"
-exec "$PHPUNIT" \
-  --bootstrap "${BOOTSTRAP}" \
-  -c "${CONFIG}" \
-  "plugins/${PLUGIN_NAME}/Test/" \
-  --no-coverage
+echo "All suites passed."
