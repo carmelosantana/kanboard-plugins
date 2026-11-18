@@ -40,7 +40,7 @@ Carmelo's team keeps client credentials in KeePassXC files and passes them aroun
 | 7 | **KeePassXC support means import and export, not live sync.** Both run in the browser, and the round trip doesn't have to be 1:1, but nothing may be locked in. Export writes KDBX 4.0 and is verified in CI by two independent readers. There is no plaintext CSV. If verification can't pass, export slips to v1.1 instead of shipping unverified. |
 | 8 | **Hardware-key unlock (WebAuthn PRF) is in v1** as a cryptographic second factor. It's opt-in per user, an admin can make it mandatory, and **two keys must be enrolled.** |
 | 9 | **The UI looks like KeePassXC:** a groups tree, an entry list, a detail pane, copy-to-clipboard and a password generator. |
-| 10 | **Human grants have two levels, Read and Edit [pending Carmelo].** Edit means editing an entry and adding entries to a shared group. Only an object's owner can share it onward or revoke. An entry added to a shared group is owned by the **group owner**. |
+| 10 | **Human grants have two levels, Read and Edit** (Carmelo, 2026-11-18). Edit means editing an entry and adding entries to a shared group. Only an object's owner can share it onward or revoke. An entry added to a shared group is owned by the **group owner**. |
 
 ## Approaches considered
 
@@ -571,4 +571,5 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | Gap: attachments and entry size | builder | No attachments in v1, entries capped at 256 KB, `LONGTEXT` on MySQL. |
 | Gap: an agent enrolled before its owner | builder | Refused until the owner has a vault. |
 | Gap: `gc_maxlifetime` caps the idle timeout | builder | The effective cap is shown on the admin page. |
-| Open: human grant permissions; the MCP client; whether production runs behind a proxy | builder | **[pending Carmelo]** |
+| Human grant permissions | builder | Carmelo: Read + Edit (decision 10). |
+| Open: the MCP client; whether production runs behind a proxy | builder | **[pending Carmelo]** |
