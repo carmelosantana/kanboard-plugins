@@ -99,31 +99,81 @@ A **principal** is a human user or an agent that has enrolled in the vault. Each
   - `vault_grants` holds one row per *source*: `(subject_type entry|group, subject_id, grantee_id, permission read|edit, granted_by, expires_at)`, unique on `(subject_type, subject_id, grantee_id)`.
   - `vault_keys` holds at most one *effective* sealed DEK per `(object_type, object_id, principal_id)`, tagged with its `key_epoch`.
 - **Effective recipients** of an object are the owner, plus the grantees of every unexpired direct grant, plus the grantees of every unexpired grant on any ancestor group. The effective permission is the highest one among those live sources. A recompute runs on every grant change, every move between groups, and every expiry.
-- **Read path, in one transaction** (`BEGIN IMMEDIATE` on SQLite; `SELECT … FOR UPDATE` on the object row elsewhere):
-  1. Re-check that the caller is an effective recipient, using the live grants.
-  2. Load the key row, and require that its `key_epoch` equals the object's.
-  3. Decrypt.
+- **The vault lock (one serialisation domain).** Every operation that changes authorisation or ciphertext takes the vault lock **exclusively**. That covers grant, revoke, move, delete, expiry handling, re-key, rotation, entry and group edits, and agent re-enrolment. Every read that decrypts takes it **shared**. Vault is a team-scale store, so one install-wide lock is simpler than per-object lock ordering, and it's fast enough.
+  - **MySQL and Postgres:** the lock is the singleton `vault_meta` row, taken with `SELECT … FOR UPDATE` (exclusive) or `FOR SHARE` (shared).
+  - **SQLite:** writers issue a raw `BEGIN IMMEDIATE`, not PicoDB's `beginTransaction()`, which is deferred. Readers use one deferred read transaction, which gives a consistent WAL snapshot.
+
+  All checks and all crypto for a write run **inside** the lock, against current rows. Nothing is prepared ahead of time, so no stale snapshot can be committed.
+- **The read path** runs in one shared-locked transaction:
+  1. Compute the effective recipients from live grants and the current ancestry.
+  2. Check that the caller is one of them.
+  3. Load the key row, and require that its `key_epoch` equals the object's.
+  4. Decrypt.
 
   A key row on its own never grants access.
-- **Adding a recipient** (a grant, a grant on a parent group, or an entry moved into a shared group) seals the current DEK to that principal's public key. This works while the grantee is offline.
-- **Revocation by the owner, while unlocked:**
-  1. Outside the transaction, prepare a new DEK, the re-encrypted payload with `key_epoch + 1`, and the new sealed DEKs for the remaining recipients.
-  2. Inside one transaction, locking the object row first and then child objects in id order, swap them all in and delete the old grant and key rows.
+- **Adding a recipient** seals the current DEK to that principal's current public key, or to both keys while the principal is rotating (see *Key rotation*). A recipient is added by a grant, a grant on a parent group, or an entry moved into a shared group. Sealing works while the grantee is offline.
+- **Moves** happen under the exclusive lock as one authorisation change over the whole moved subtree:
+  1. Compute the old and new effective recipients for every object in the subtree.
+  2. Seal keys for the recipients being added.
+  3. Delete the key rows of the recipients being removed.
+  4. Enqueue the affected objects for re-key.
+  5. Change `parent_id`.
 
-  The swap is recursive for a group (its entries and nested groups). Afterwards, the UI suggests rotating the secrets themselves.
-- **Removals while nobody is unlocked** cover an expired grant, a deleted grantee, a disabled or re-enrolled agent, and a lowered policy. The removed principal's `vault_keys` rows are deleted **at once**, and reads stop as well, because the read path checks live grants. The object then goes into `vault_rekey_queue`. The queue is processed in batches the next time the owner, or any other recipient who can re-key it, unlocks. Until then the live DB no longer holds the removed principal's sealed copy. Only historical backups do.
-- **Edit permission** lets a grantee update an entry: a new `version`, the same DEK and `key_epoch`, with optimistic concurrency on `version`. It also lets them create entries in a shared group. A new entry is owned by the group owner and sealed to the group's effective recipients. Only the owner can grant, revoke, delete or move objects.
+  All five steps commit together.
+- **Revocation** is done by the owner, while unlocked, under the exclusive lock. For the object, and recursively for a group's entries and nested groups, Vault:
+  1. deletes the grant and the removed key rows;
+  2. generates a new DEK;
+  3. re-encrypts the *current* payload with `key_epoch + 1`;
+  4. seals the new DEK to the remaining recipients.
+
+  It all commits at once. Afterwards the UI suggests rotating the secrets themselves.
+- **Removals while nobody is unlocked** cover an expired grant, a deleted grantee, a disabled agent and a lowered policy. In **one** exclusive transaction, Vault deletes the removed principal's key rows and inserts the objects into `vault_rekey_queue`. Reads stop at once, because the read path checks live grants.
+- **The re-key queue** is processed under the exclusive lock, by any request from an unlocked principal who still holds the object's DEK. Re-keying needs only the DEK and the recipients' public keys. Each item is idempotent:
+  1. Re-key if `key_epoch` still equals the epoch recorded when the item was queued.
+  2. Delete the queue row in the **same** transaction.
+
+  A crash rolls the whole item back.
+- **Write barrier.** An object that has a queue row can't take a payload update until it has been re-keyed. The writer, who holds the DEK, re-keys it inline in the same transaction, then applies the edit. So data written after a removal is never encrypted under a DEK that a removed principal could recover from an old backup. Rotation uses the same barrier (below).
+- **Edit permission** lets a grantee update an entry: a new `version`, with optimistic concurrency on `version`. It also lets them create entries in a shared group. A new entry is owned by the group owner and sealed to the group's effective recipients. Only the owner can grant, revoke, delete or move objects.
 
 ### Key rotation
 
-Rotation runs when a user changes their passphrase, completes hardware-key enrolment, uses or deletes a recovery code, when the policy is lowered, or when they press **Rotate my keys**. It:
+Rotation gives a principal a new keypair and re-keys everything that principal can read. A backup taken **after** rotation is then useless to anyone holding pre-rotation credentials. Backups taken **before** rotation stay readable with the credentials that were valid then; the docs say so plainly.
 
-1. creates a new keypair;
-2. re-keys every object the principal **owns or can read** (new DEK, `key_epoch + 1`, re-encrypt, re-seal to all effective recipients);
-3. replaces all of the principal's wraps;
-4. locks all of the principal's other vault sessions.
+**Triggers:** a passphrase change, completing hardware-key enrolment, using a recovery code, org recovery, lowering the policy, and **Rotate my keys**.
 
-Rotation runs as a resumable job (`vault_rekey_queue` with `reason = rotation`), processed in transactional batches while the user is unlocked. A progress bar shows. The new wraps are swapped in last, in one transaction. The documentation states the limit plainly: **backups taken before a rotation stay readable with the credentials that were valid then.**
+**The ceremony collects every factor that will survive the rotation before anything changes:**
+- the new (or current) passphrase;
+- a fresh assertion and PRF output from **each** hardware key being kept. A key that isn't presented is removed, after the user confirms. If hardware keys are required and fewer than two would remain, the ceremony enrols a replacement first.
+
+Two kinds of wrap are rebuilt without the user present:
+- The **recovery code** is always replaced: a new code is shown at the end, or the user may choose to have none.
+- The **`org` wrap** is re-sealed to the org public key.
+
+**State machine.** The rotation is stored in `vault_rotations`, one row per principal: `old_pk`, `new_pk`, `phase`. Each phase commits under the exclusive lock.
+1. **start** (one transaction):
+   - Generate `sk2` and store the **pending** wraps for every surviving factor, marked `status = pending`.
+   - Set the principal's state to `rotating`.
+   - Lock all of the principal's *other* vault sessions.
+   - Add `enc_sk_next` (`sk2` under the same `session_key`) to the current session row.
+
+   From now on, any surviving factor unwraps both the active and the pending wrap.
+2. **sweep:** in batches, one transaction each, for every object that has a key row for this principal at `principal_key_gen = old`:
+   - re-check live access;
+   - generate a new DEK, re-encrypt, and set `key_epoch + 1`;
+   - seal to every effective recipient (the rotating principal gets `new_pk` only);
+   - delete the old key rows.
+
+   While the state is `rotating`, new grants seal to **both** keys, and the write barrier applies to every object still holding an old-generation row for the principal.
+3. **finish** (one transaction):
+   - Require that no key row for the principal is at the old generation. If any is, go back to *sweep*.
+   - Promote the pending wraps, delete the old wraps, set `public_key = new_pk` and `key_gen + 1`, move `enc_sk_next` into `enc_sk`, clear `rotating` and delete the `vault_rotations` row.
+
+**Crash recovery.** If rotation stops at any point (a crash, an expired session, a closed tab), the next unlock with any surviving factor unwraps both generations and **resumes** from the current phase. Nothing is ever sealed only to a key that no stored wrap can open.
+
+**Recovery and org recovery** have no hardware key present, so they remove all hardware keys during the rotation. If hardware keys are required, the user must enrol two new keys at their next unlock.
+
+**Tests:** interrupt after each phase and each batch, then resume. Grant a new object to the principal mid-rotation. After rotation, every surviving factor still unlocks, and pre-rotation credentials can't decrypt any post-rotation backup.
 
 ### Unlocked sessions
 
@@ -139,7 +189,7 @@ Kanboard stores PHP sessions **in the database**, so the unlocked `sk` never goe
    - The server decrypts `sk`, uses it, wipes it, then slides `idle_expires_at` forward.
 4. **Locking.**
    - **Triggers:** the idle timeout (default 15 min); the absolute timeout (8 h); Kanboard's `session.destroy` event (logout); "Lock now"; key rotation; user disable or delete.
-   - **Login.** Kanboard regenerates the session id only at login, so a new login never inherits an unlock. The old row is orphaned and later purged.
+   - **Login.** On Kanboard's `auth.success` event, Vault deletes every vault session belonging to that user. Kanboard keeps the old PHP session when it regenerates the id at login (`session_regenerate_id(false)`), so the old vault row has to be removed rather than left behind.
    - **Effect.** Locking deletes the row and clears the cookie.
    - **Session length.** The idle timeout can't outlive the Kanboard session. When `SESSION_DURATION=0`, PHP's `gc_maxlifetime` (24 min by default) caps the timeout, and the admin page shows the effective value.
 5. **Login shortcuts don't unlock.** A Kanboard login, a remember-me cookie, a login-password reset or an API token never satisfies a vault unlock.
@@ -159,27 +209,49 @@ So a backup holds `enc_sk` without `session_key`, and a stolen cookie without th
 | Agent secret reads | A token bucket per agent: by default 60 reads an hour, with a burst of 10. The owner can lower it, and an admin sets a hard maximum. |
 | Share reveal | Per client IP: 20 per 10 min and 200 per day. |
 
-- **Concurrent Argon2 cap.** At most 4 Argon2 derivations run at once per install. A non-blocking `flock` on one of 4 slot files in `DATA_DIR/vault/` enforces this. When every slot is busy, the request gets HTTP 503 with `Retry-After: 2`, and nothing is derived.
-- **Client IP behind Cloudflare.** Production likely runs behind a **Cloudflare Tunnel**. There, every request reaches Kanboard from `cloudflared`, a local or Docker address. Cloudflare sets `CF-Connecting-IP` to a single, overwritten value. The docs therefore tell tunnel installs to set `TRUSTED_PROXY_HEADERS=HTTP_CF_CONNECTING_IP`. That is only safe when the origin is reachable **only** through the tunnel: no published port, no other ingress. Otherwise anyone can send the header, so the admin page states this precondition. For a single-value header like this one, Vault uses the value as it is.
-- **Client IP.** Vault doesn't use `Request::getIpAddress()` as it is. That method returns the left-most address in a trusted header, which the client controls. Vault applies the same trusted-header rule but takes the **right-most** address, the one the nearest proxy appended. With no trusted header configured it uses `REMOTE_ADDR`. The admin page warns when `REMOTE_ADDR` is private or loopback, forwarding headers are present, and `TRUSTED_PROXY_HEADERS` is empty.
+- **Concurrent Argon2 cap.**
+  - Each principal may run **one** Argon2 derivation at a time. A second request gets 429.
+  - Each install runs at most 4 derivations at once. A non-blocking `flock` on one of 4 slot files in `DATA_DIR/vault/` enforces this. When all are busy, the request gets HTTP 503 with `Retry-After: 2`, and nothing is derived.
+  - Starving these slots is an availability problem, which is outside the threat model. The per-principal limit stops one account holding every slot.
+- **Client IP.** Vault resolves the client IP itself, not with `Request::getIpAddress()`. That method trusts a configured header from **any** sender and returns its left-most value, which the client controls.
+  - **Default.** The admin setting **Trusted proxy addresses** (`vault_trusted_proxy_cidrs`, empty by default) lists which senders may supply a forwarding header. If `REMOTE_ADDR` isn't in that list, Vault uses `REMOTE_ADDR` and ignores every forwarding header.
+  - **`CF-Connecting-IP`** (Cloudflare Tunnel). Production likely runs behind a tunnel, where requests arrive from `cloudflared`. Set the trusted addresses to `cloudflared`'s address, for example `127.0.0.1/32` or its Docker network. The header must hold **exactly one** valid IP; anything else falls back to `REMOTE_ADDR`. The docs add that the origin must be reachable only through the tunnel.
+  - **`X-Forwarded-For`.** Vault walks the list right to left, skipping addresses inside the trusted list. The first address outside it is the client.
+  - **Warnings.** The admin page warns when forwarding headers arrive from an address that isn't trusted. It also warns when `REMOTE_ADDR` is a private or loopback address and no trusted proxy is configured.
 
 ### Hardware keys (WebAuthn PRF)
 
 Both ceremonies are **fully verified on the server, without a library.**
 
 - **Challenges** are 32 random bytes. They're single-use and expire after 2 min. They're stored in `vault_challenges`, bound to the user and the purpose.
-- **Registration** (attestation `none`; credential algorithms `ES256 (-7)` and `EdDSA (-8)` only):
-  - `clientDataJSON` must have `type` = `webauthn.create`, the right challenge, and an `origin` equal to the origin of Kanboard's configured application URL.
-  - The attestation object is parsed with a minimal, strict CBOR decoder. It accepts only definite-length maps, byte strings, text strings and integers, and has depth and size limits.
-  - `rpIdHash` must equal `SHA-256(rp_id)`, and the UP flag must be set.
-  - The server stores the credential id, the COSE public key and `signCount`. The credential is rejected if the client doesn't report `prf.enabled`.
+- **Origin and RP ID.** Kanboard's *Application URL* setting must be a non-empty `https://` URL, or `http://localhost` on the dev stack. Otherwise hardware-key enrolment is refused; Kanboard would otherwise fall back to `http://localhost/`. The normalised origin and `rp_id` (the host) are pinned on each credential when it's registered.
+- **The CBOR decoder fails closed.** It rejects:
+  - indefinite lengths, tags, floats and simple values other than `true`, `false` and `null`;
+  - duplicate map keys;
+  - integers or lengths that aren't minimally encoded;
+  - invalid UTF-8;
+  - trailing bytes after the top-level item;
+  - depth over 4, more than 64 items in total, or more than 4 KB of input;
+  - any arithmetic overflow.
+- **Registration** (attestation `none`):
+  - `clientDataJSON` has `type = webauthn.create`, the stored challenge, and exactly the pinned origin, with `crossOrigin` absent or false.
+  - The attestation object must have `fmt == "none"` and an empty `attStmt`.
+  - `authData` is parsed with exact-length consumption: `rpIdHash` (32 bytes), flags, `signCount` (4 bytes), then the attested credential data (AAGUID 16 bytes, a 2-byte id length, the id, then the COSE key). No bytes may remain afterwards unless the ED flag is set, and then only a well-formed extensions map.
+  - `rpIdHash` must equal `SHA-256(rp_id)`, UP must be set, and AT must be set.
+  - **COSE keys** accepted:
+    - `kty = 2` (EC2), `alg = -7` (ES256), `crv = 1` (P-256), with `x` and `y` exactly 32 bytes each. The point is checked to be on the curve: the SPKI is built from a fixed, reviewed DER prefix, then `openssl_pkey_get_public` must load it, and `openssl_pkey_get_details` must report `prime256v1` with the same `x` and `y`.
+    - `kty = 1` (OKP), `alg = -8` (EdDSA), `crv = 6` (Ed25519), with `x` exactly 32 bytes.
+
+    Any other combination, missing field or extra field in the key is rejected.
+  - The client must report `prf.enabled`.
+  - The server stores the credential id, the COSE key, `signCount`, `prf_salt`, the origin and the `rp_id`.
 - **Unlock** (assertion):
-  - The type must be `webauthn.get`, and the challenge, origin, `rpIdHash` and UP flag must all check out (UV preferred).
-  - The credential must belong to this user.
-  - The signature over `authData ‖ SHA-256(clientDataJSON)` must verify: ES256 with `openssl_verify` after converting COSE to a SubjectPublicKeyInfo (SPKI) key, EdDSA with `sodium_crypto_sign_verify_detached`.
-  - **signCount:** if both values are non-zero and the new one isn't greater, the server rejects it and notifies the user.
-  - Only then is the PRF output used, together with the passphrase, to derive the KEK.
-  - The PRF output isn't covered by the authenticator's signature. Replaying a captured PRF value online still fails, because each unlock needs a fresh signed assertion.
+  - The type must be `webauthn.get`, with the stored single-use challenge, the pinned origin, the matching `rpIdHash`, and UP set.
+  - **UV policy: UP is required and UV is not.** The vault passphrase is the knowledge factor and the key proves possession. A key PIN is optional.
+  - The credential id must belong to this user.
+  - The signature over `authData ‖ SHA-256(clientDataJSON)` must verify: ES256 with `openssl_verify` (DER signature, SHA-256), EdDSA with `sodium_crypto_sign_verify_detached`.
+  - **signCount:** if both stored and new values are non-zero and the new one isn't greater, the server rejects it and audits `hw_signcount`.
+  - Only then is the client-reported PRF output used, together with the passphrase, to derive the KEK. The PRF output isn't covered by the signature, but every unlock needs a fresh signed assertion, so a replayed PRF value doesn't work online.
 - **Enrolment, two keys required:**
   1. The user unlocks with their passphrase and registers a first key, which creates a `passphrase+prf` wrap.
   2. They register a second key. Its wrap is created, the bare `passphrase` wrap is deleted and **key rotation** runs.
@@ -187,7 +259,7 @@ Both ceremonies are **fully verified on the server, without a library.**
   If an admin requires hardware keys, users who don't have two keys are sent straight to enrolment after a passphrase unlock and can't view entries until they finish.
 - **Removing a key** requires unlocking with another key. While hardware keys are required, the count can't drop below two. When they're optional, dropping to one key restores a `passphrase` wrap, after a passphrase-plus-key unlock.
 - **The relying-party ID is the Kanboard host,** and PRF outputs are bound to it. **Moving Kanboard to a new domain makes hardware-key wraps unusable.** The admin page shows the bound `rp_id`, and unlock reports a mismatch plainly. The docs say to export your vault, or remove your keys, before changing domains.
-- **Tests** use vectors recorded from a Chrome DevTools virtual authenticator (ES256 and EdDSA, PRF on), plus tampered variants of each field.
+- **Tests** use vectors recorded from a Chrome DevTools virtual authenticator (ES256 and EdDSA, PRF on). Each rejection rule above also gets its own adversarial vector: duplicate keys, non-minimal lengths, trailing bytes, an off-curve point, wrong coordinate sizes, mismatched `alg`/`kty`/`crv`, a foreign origin, a reused challenge, and a signCount regression.
 - **Gate:** if verification can't meet this bar, hardware keys slip to v1.1 rather than shipping without it.
 
 ### Recovery
@@ -214,7 +286,14 @@ Vault *recommends* Agents. Without Agents, agent features are hidden and the JSO
 - The owner must already have a vault. Until they do, the button explains why it's disabled.
 - The server creates the agent's keypair and a random 256-bit vault key, then stores the `agent` wrap. It also creates the agent's "Agent-created" group, owned by the agent and granted (Edit) to the owner.
 - The vault key is shown **once**, with a ready-to-paste line, `KANBOARD_VAULT_KEY=…`.
-- **Re-enrolment** is one transaction: it deletes the old wrap, grants, key rows and rate state, then creates the new keypair and wrap. The owner then gets a **re-grant all** button that re-seals the previous grant list while they're unlocked.
+- **Re-enrolment** is for a lost or suspected-leaked vault key. It needs the owner **unlocked**, and runs as one exclusive transaction:
+  1. Create the agent's new keypair and wrap.
+  2. **Agent-created objects:** the owner holds an Edit grant on them, and therefore their DEKs. Each is re-keyed (new DEK, `key_epoch + 1`) and sealed to the agent's new key and to the owner.
+  3. **Objects the owner owns that were shared with the agent** are re-sealed to the agent's new key, then re-keyed.
+  4. **Objects other users shared with the agent:** the agent's key rows for them are deleted and the objects queued for re-key. Each of those owners gets a notice: "agent A was re-keyed; re-share?". Only they can re-share, because the owner of the agent can't restore access to objects they don't own.
+  5. Delete the old wrap and the agent's rate state.
+
+  A test proves an agent's owner can't restore a grant that another user controls.
 
 **Auth.** Every Vault JSON-RPC call needs:
 
@@ -243,7 +322,7 @@ Refusals come back as `{ok: false, reason}`. The reasons are `not_agent`, `bad_v
 - Shares are created from an entry field's ⋯ menu, or from **New one-time link** with pasted text. Pasted text never enters the vault.
 - The browser generates a 256-bit content key `k` and a 128-bit burn capability `b`. It optionally takes a passphrase `p`. When there is a passphrase, Vault offers a generated 5-word one by default and warns that "a weak passphrase can be guessed offline".
 - If `p` is set, the key is `HKDF-SHA256(k ‖ Argon2id(p, salt, t=3, m=64 MiB), info = "vault/share/v1")`. Argon2 comes from the vendored noble in a worker. Without `p`, the key is `k`. The payload is encrypted with AES-256-GCM, using a random IV and the AD from the encoding table.
-- The browser first asks the server for a `share_id` (128 random bits) and an `expires_at`, so both can go into the AD. It then posts `{share_id, ciphertext, iv, salt, has_passphrase, BLAKE2b(b)}`.
+- The browser first POSTs, with CSRF, a request for a **reservation**. The server returns a `share_id` (128 random bits) and an `expires_at`, so both can go into the AD. A reservation is bound to the creator and their session, lasts 10 minutes, and can be finalised once. The browser then POSTs, with CSRF, `{share_id, ciphertext, iv, salt, has_passphrase, BLAKE2b(b)}`, which consumes the reservation.
 - The server keeps `BLAKE2b(share_id)` and `BLAKE2b(b)`. It never stores which entry a share came from.
 - **The link:** `https://<host>/?controller=VaultShareController&action=show&plugin=Vault&id=<share_id>#<base64url(k ‖ b)>`.
 
@@ -255,7 +334,7 @@ Refusals come back as `{ok: false, reason}`. The reasons are `not_agent`, `bad_v
 
 **Opening a share**
 
-- The public page (`APP_PUBLIC`) is the **same static shell** for real, burned and fake ids. It always shows "Passphrase (only if the sender gave you one)", and it never looks the id up. The shell still costs a Kanboard session read and write, as every web request does, so throttling applies to Reveal, not to page views.
+- The public page (`APP_PUBLIC`) is the **same static shell** for real, burned and fake ids: identical apart from Kanboard's per-session CSRF and session values. It always shows "Passphrase (only if the sender gave you one)", and it never looks the id up. The shell still costs a Kanboard session read and write, as every web request does, so throttling applies to Reveal, not to page views.
 - **Reveal** POSTs `{id, b}` together with the page's session CSRF token. In one transaction (`BEGIN IMMEDIATE` on SQLite, `SELECT … FOR UPDATE` elsewhere), the server finds the row by `BLAKE2b(id)`, checks `BLAKE2b(b)` with `hash_equals`, deletes the row and returns the ciphertext. A wrong `b`, an expired row and a missing row all return the same generic "not available".
 - Knowing only the id, for example from an access log, can't burn the link.
 - Of two concurrent reveals, exactly one wins.
@@ -394,6 +473,24 @@ Avatar menu → **Vault** (also in the dashboard sidebar). It's a full-width pag
 | Recovery | `recovery_code_create`, `recovery_used`, `org_recovery` |
 | Admin | `policy_change` |
 
+**Per-action allowlist.** Every row has `id`, `created_at`, `action`, `actor_kind` and `via`. Beyond those, an action may fill **only** the columns listed here; every other column must be `NULL`. `AuditModel::record()` throws on an unknown action, or on a non-null value in a column that action isn't allowed to use. It never silently drops a value.
+
+| Action | Also allowed (non-null) |
+|---|---|
+| `enroll`, `lock`, `hw_key_add`, `hw_key_remove`, `recovery_code_create` | `actor_user_id` |
+| `unlock`, `unlock_failed`, `recovery_used`, `hw_signcount` | `actor_user_id`, `ip_trunc`, `ua_family` |
+| `read` | `actor_user_id`, `object_type`, `object_id`, `ip_trunc` |
+| `create`, `update`, `delete`, `rekey` | `actor_user_id`, `object_type`, `object_id` |
+| `grant`, `revoke` | `actor_user_id`, `object_type`, `object_id`, `target_user_id` |
+| `rotate`, `import`, `export` | `actor_user_id`, `count` |
+| `share_create`, `share_revoke` | `actor_user_id`, `share_hash` |
+| `share_reveal` | `target_user_id` (the creator), `share_hash`, `ip_trunc`, `ua_family` |
+| `share_expire` | `target_user_id` (the creator), `share_hash` |
+| `rate_limited` | `target_user_id` (when the bucket belongs to a principal), `ip_trunc`, `count` |
+| `bad_vault_key` | `actor_user_id` (the agent), `ip_trunc` |
+| `org_recovery` | `target_user_id` |
+| `policy_change` | `actor_user_id` |
+
 **Who sees what**
 
 - A user sees rows where they are the actor, or where the object or share is theirs.
@@ -403,7 +500,7 @@ Avatar menu → **Vault** (also in the dashboard sidebar). It's a full-width pag
 
 **Retention** is 365 days, set by the admin.
 
-**Logging rules.** No secret, passphrase, vault key, PRF output, share key, burn capability or decrypted value is ever written to `vault_audit`, the PHP error log or Kanboard's logger. A test greps every log the suite produces for the fixture secrets. Another test asserts that each audit action writes only its allowlisted columns.
+**Logging rules.** No secret, passphrase, vault key, PRF output, share key, burn capability or decrypted value is ever written to `vault_audit`, the PHP error log or Kanboard's logger. A test greps every log the suite produces for the fixture secrets. Another test is table-driven from the allowlist above. For every action it asserts that disallowed columns are `NULL`, and that `record()` throws when one is filled.
 
 ## Admin settings
 
@@ -416,7 +513,8 @@ Settings → **Vault** holds:
 - the reveal rate limit;
 - the agent read-cap maximum;
 - audit retention;
-- the bound `rp_id` (read-only);
+- the bound `rp_id` and origin (read-only);
+- **Trusted proxy addresses** (`vault_trusted_proxy_cidrs`, a list of CIDRs, empty by default);
 - the deployment checks: HTTPS, `PLUGIN_INSTALLER`, whether the plugin directory is writable, the proxy-header warning, and sodium.
 
 Every change writes a `policy_change` row. There's no admin "view vault" or "reset user" action, and org recovery is CLI only.
@@ -427,24 +525,27 @@ Binary values are stored base64. MySQL uses `LONGTEXT` for entry and group ciphe
 
 | Table | Key columns |
 |---|---|
-| `vault_principals` | `user_id` PK, `kind (human\|agent)`, `public_key`, `created_at` |
-| `vault_wraps` | `id`, `user_id`, `method`, `credential_id`, `kdf_salt`, `kdf_ops`, `kdf_mem`, `nonce`, `wrapped_sk`, `crypto_v`, `created_at` |
-| `vault_webauthn` | `id`, `user_id`, `credential_id`, `cose_public_key`, `sign_count`, `prf_salt`, `label`, `rp_id`, `created_at`, `last_used_at` |
+| `vault_meta` | `id = 1` (a singleton: the vault lock row), `schema_note` |
+| `vault_principals` | `user_id` PK, `kind (human\|agent)`, `public_key`, `key_gen`, `state (active\|rotating)`, `created_at` |
+| `vault_rotations` | `user_id` PK, `old_pk`, `new_pk`, `phase (start\|sweep\|finish)`, `started_at` |
+| `vault_wraps` | `id`, `user_id`, `method`, `credential_id`, `kdf_salt`, `kdf_ops`, `kdf_mem`, `status (active\|pending)`, `key_gen`, `nonce`, `wrapped_sk`, `crypto_v`, `created_at` |
+| `vault_webauthn` | `id`, `user_id`, `credential_id`, `cose_public_key`, `sign_count`, `prf_salt`, `label`, `origin`, `rp_id`, `created_at`, `last_used_at` |
 | `vault_challenges` | `id`, `user_id`, `purpose`, `challenge_hash`, `expires_at` |
 | `vault_groups` | `id`, `owner_id`, `parent_id`, `kind (normal\|agent_created\|import)`, `key_epoch`, `nonce`, `ciphertext`, `crypto_v`, `position`, `created_at`, `updated_at` |
 | `vault_entries` | `id`, `group_id`, `owner_id`, `created_by`, `version`, `key_epoch`, `nonce`, `ciphertext`, `crypto_v`, `created_at`, `updated_at` |
 | `vault_grants` | `id`, `subject_type`, `subject_id`, `grantee_id`, `permission`, `granted_by`, `expires_at`, `created_at`; unique(`subject_type`,`subject_id`,`grantee_id`) |
-| `vault_keys` | `object_type`, `object_id`, `principal_id`, `key_epoch`, `sealed_dek`; PK(`object_type`,`object_id`,`principal_id`) |
-| `vault_rekey_queue` | `id`, `object_type`, `object_id`, `reason (removal\|rotation)`, `principal_id` (for rotation), `created_at` |
-| `vault_sessions` | `sid_hash` PK, `user_id`, `nonce`, `enc_sk`, `created_at`, `last_used_at`, `idle_expires_at`, `abs_expires_at` |
+| `vault_keys` | `object_type`, `object_id`, `principal_id`, `principal_key_gen`, `key_epoch`, `sealed_dek`; PK(`object_type`,`object_id`,`principal_id`,`principal_key_gen`). A second generation exists only while that principal is rotating. |
+| `vault_rekey_queue` | `id`, `object_type`, `object_id`, `expected_key_epoch`, `created_at`; unique(`object_type`,`object_id`). Rotation needs no queue rows: its sweep finds the old-generation key rows. |
+| `vault_sessions` | `sid_hash` PK, `user_id`, `nonce`, `enc_sk`, `nonce_next`, `enc_sk_next` (both only during rotation), `created_at`, `last_used_at`, `idle_expires_at`, `abs_expires_at` |
 | `vault_shares` | `id_hash` PK, `burn_hash`, `creator_id`, `ciphertext`, `iv`, `salt`, `has_passphrase`, `sealed_label`, `created_at`, `expires_at` |
+| `vault_share_reservations` | `id_hash` PK, `creator_id`, `sid_hash`, `expires_at` (10 min) |
 | `vault_audit` | see *Audit* |
 | `vault_rate` | `bucket` PK (e.g. `unlock:user:<id>`, `unlock:ip:<hash>`, `agentkey:<id>:<hash>`, `agentread:<id>`, `reveal:ip:<hash>`), `tokens`, `updated_at` |
 | `vault_agent_settings` | `agent_user_id` PK, `read_cap_per_hour` |
 
 **Deleting a user** removes their principal, wraps, sessions, grants and key rows, through the cascade or the plugin's cleanup. It also removes the objects they **own**, since nobody else can re-key them as owner. Entries other people added to that user's shared groups are owned by the group owner, so they go too. The docs warn admins about this, because Kanboard has no hook on the user-removal screen. Disabling an agent keeps its "Agent-created" group readable by the owner. Deleting the agent deletes the group.
 
-**Purge.** Expired grants, sessions, challenges and shares, plus audit rows past retention, are purged opportunistically on vault requests, at most once a minute. The same purge also runs from a plugin console command, `php cli vault:purge`. Kanboard's cron has no plugin hook, so the docs give a crontab line.
+**Purge.** Expired grants (deleted the same way as *removals while nobody is unlocked*), sessions, challenges, reservations and shares, plus audit rows past retention, are purged opportunistically on vault requests, at most once a minute. The same purge also runs from a plugin console command, `php cli vault:purge`. Kanboard's cron has no plugin hook, so the docs give a crontab line.
 
 ## Plugin shape and packaging
 
@@ -472,6 +573,16 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
   - Revocation re-keys (the old sealed DEK can't decrypt the new ciphertext).
   - A revoke running concurrently with a read never returns post-revocation data to a revoked reader. This needs a real two-connection test on SQLite and on MySQL.
   - If a re-key crashes midway, the queue resumes it.
+  - **Edit against revoke:** a concurrent edit is never overwritten by revocation, and never committed under the old DEK.
+  - **Revoke against revoke:** recipients come out right.
+  - **Move against read:** a reader removed by a subtree move never receives data written after the move.
+  - **Write barrier:** after a grant expires, an edit from a session that was already unlocked is encrypted under a new DEK. A DEK recovered from a backup taken before the expiry can't decrypt it.
+- **Rotation.**
+  - Interrupt after each phase and each sweep batch, then resume from every surviving factor.
+  - A grant made mid-rotation ends up sealed only to the new key.
+  - After rotation, both hardware keys and the new recovery code unlock.
+  - Pre-rotation credentials can't decrypt any object in a post-rotation dump.
+  - Agent re-enrolment: the owner can't restore another user's grant.
 - **Access.**
   - User B can't read A's entries.
   - Read-only users can't edit, and edit grants can't share onward.
@@ -487,16 +598,20 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 - **Throttling.**
   - Parallel unlock attempts never exceed the bucket.
   - The concurrent-Argon2 cap returns 503.
-  - A spoofed left-most `X-Forwarded-For` value doesn't change the bucket.
+  - A forwarding header from an untrusted `REMOTE_ADDR` is ignored.
+  - A multi-value or malformed `CF-Connecting-IP` falls back to `REMOTE_ADDR`.
+  - The `X-Forwarded-For` walk skips only trusted proxies.
+  - A second concurrent unlock from the same principal gets 429.
+  - A login (`auth.success`) deletes the user's existing vault sessions.
   - A leaked agent token used from another IP doesn't lock out the real agent.
 - **WebAuthn.**
-  - The recorded vectors pass, and every tampered field fails.
+  - The recorded vectors pass, and every adversarial vector listed under *Hardware keys* fails.
   - Challenges are single-use.
   - signCount regression is rejected.
 - **Shares.**
   - Exactly one of two concurrent reveals wins.
   - An id without `b` can't burn the link.
-  - The shell is byte-identical for real, burned and fake ids.
+  - The shell doesn't depend on the id (compared after masking the CSRF token).
   - Expiry, revoke and rate limits work.
 - **Backup theft.** Populate fixtures, dump the DB plus config, and assert that no fixture plaintext (titles, usernames, passwords, notes, group names) appears anywhere in the dump.
 - **Audit and log hygiene.** The allowlist test, plus a grep of every log for the fixture secrets.
@@ -509,6 +624,7 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 ## Security review gates
 
 1. **Spec:** round 1 is done (see *Review log*). Round 2 re-runs `/codex:adversarial-review` and `/powerup:codex-security` on this revision. It must find no high-severity issues before planning starts.
+   - **Round 2** (2026-11-18) found 6 high and 3 medium issues; all are resolved below. **Round 3** must re-check only the resolutions of round 2, and must find no high-severity issue before planning starts.
 2. **Implementation:** both reviews run again on the finished branch before the 1.0.0 tag, and a third time after fixes if round 2 finds anything high-severity.
 
 ## Left to the builder
@@ -576,3 +692,22 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | The MCP client | builder | Carmelo: the safest option, a separate follow-up in the MCP server's repo, with key-handling requirements (see *Agents*). |
 | Production behind a proxy | builder | Carmelo: likely a Cloudflare Tunnel. Added the `CF-Connecting-IP` rule and the origin-exposure precondition (see *Throttling*). |
 | Spec approval | — | Carmelo approved, 2026-11-18. |
+
+**Round 2, 2026-11-18.** Two reviews ran: `/codex:adversarial-review` and `/powerup:codex-security`. The run header shows `gpt-5.6-sol` was served; the program was requested and accepted, but the served program is unverified. Round-1 items the security review rated **CLOSED**: KDF per wrap, throttling, kdbx export gate, XML worker, AD/rollback, shares, share passphrases, recovery encoding, CSRF/XSS, admin preconditions, and all builder items except those reopened below.
+
+| Finding | Source | Resolution |
+|---|---|---|
+| High: rotation can't replace wraps whose secrets aren't present (the second key, the recovery code) | adversarial | A **ceremony** collects every surviving factor first. The recovery code is always replaced, the org wrap is re-sealed, and a key not presented is removed after the user confirms. |
+| High: a crash after a rotation batch strands objects sealed only to the new key | adversarial, security | A durable **state machine** (`vault_rotations`, `status = pending` wraps written at *start*, two key generations, `enc_sk_next`). Any surviving factor opens both generations, so rotation resumes. |
+| High: revocation commits a stale prepared snapshot | adversarial | One **vault lock**: every check and every bit of crypto runs inside the exclusive lock against current rows, with nothing prepared ahead. |
+| High: deferred re-keys let old backups decrypt later edits | adversarial | **Write barrier:** a queued object is re-keyed inline before any payload update, and rotation uses the same barrier. |
+| High: group moves weren't serialised with reads of their descendants | security | The vault lock (shared for reads, exclusive for writes), plus a defined subtree-move protocol in one transaction. SQLite uses a raw `BEGIN IMMEDIATE`, because PicoDB's transaction is deferred. |
+| High: "re-grant all" for agents breaks owner-only sharing | security | Replaced: the owner restores only their own objects, other owners get re-share notices, and agent-created objects are re-keyed by the owner. A test covers it. |
+| Medium: the in-house WebAuthn parser had no fail-closed contract | security | A strict CBOR rule list, `fmt = none`, an exact `authData` layout, EC2/P-256 and OKP/Ed25519 shapes with checks on the parsed key, a pinned https origin, an explicit **UP-required, UV-optional** policy, and adversarial vectors. |
+| Medium: proxy headers trusted from any sender | security | `vault_trusted_proxy_cidrs`, exactly-one-IP `CF-Connecting-IP`, and a right-to-left `X-Forwarded-For` walk skipping trusted proxies. |
+| Medium: the audit allowlist wasn't actually specified | security | A per-action table; `record()` throws on violations; a table-driven test. |
+| Reopened: claimed lock-on-login was false | security | `auth.success` deletes the user's vault sessions. |
+| Reopened: removal and enqueue weren't atomic; queue semantics missing | security | One transaction; idempotent items with `expected_key_epoch`, deleted in the re-key transaction. |
+| Note: share-id reservation needed CSRF and binding | security | A reservation POST with CSRF, bound to creator and session, 10-minute TTL, consumed once. |
+| Out of model: starving the Argon2 slots | security | One derivation at a time per principal (a second gets 429). Full fairness is left as an availability concern. |
+
