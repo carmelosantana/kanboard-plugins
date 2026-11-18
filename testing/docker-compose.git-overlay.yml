@@ -1,0 +1,88 @@
+# Git hosting P1 overlay: Forgejo 15 LTS (Postgres) behind Traefik, whose ForwardAuth asks the
+# kanboard-git-broker about every repo request. Dev only; see testing/README.md "Git overlay".
+#
+# kb-suite is shared: start only these services, with the same compose set kb-suite runs with,
+# so Kanboard is never recreated. testing/git/compose.sh holds that file list:
+#   bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
+#
+# Only Traefik publishes a host port (127.0.0.1:8090). It also listens on :8090 inside the
+# network and carries the alias git.localhost, so http://git.localhost:8090/ is one URL for the
+# host and containers (libcurl pins *.localhost to loopback; see testing/README.md).
+#
+# Images are pinned by tag and digest; bump both together.
+services:
+  forgejo-db:
+    image: postgres:17.12-alpine3.24@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
+    container_name: kb-git-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: forgejo
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: forgejo-dev-only
+    volumes:
+      - kb-git-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgejo -d forgejo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15.0.11-rootless@sha256:3cd6bc2b74c87cbde0a0fd527c9665cb416f5a0540dee54fe5afb3fa2df9f40c
+    container_name: kb-git-forgejo
+    restart: unless-stopped
+    depends_on:
+      forgejo-db:
+        condition: service_healthy
+    volumes:
+      - ./git/forgejo/app.ini.tmpl:/etc/templates/app.ini:ro
+      - kb-git-forgejo-data:/var/lib/gitea
+    # No ports: Forgejo is reachable only through Traefik.
+
+  broker:
+    build:
+      context: ../../kanboard-git-broker
+    image: kanboard-git-broker:dev
+    container_name: kb-git-broker
+    restart: unless-stopped
+    env_file:
+      - path: ./git/.env
+        required: false
+
+  traefik:
+    image: traefik:v3.7.19@sha256:aa942a00bce033c909bf1f7e861d93761be4b31a035f10d2410d33e38a8f41cf
+    container_name: kb-git-traefik
+    restart: unless-stopped
+    depends_on:
+      - forgejo
+      - broker
+    command:
+      - --entrypoints.web.address=:8090
+      # Reject encoded path characters (400) so a request cannot look like one route to the
+      # router matchers and another to Forgejo, e.g. /org%2Frepo.git/info/refs.
+      - --entrypoints.web.http.encodedcharacters.allowencodedslash=false
+      - --entrypoints.web.http.encodedcharacters.allowencodedbackslash=false
+      - --entrypoints.web.http.encodedcharacters.allowencodednullcharacter=false
+      - --entrypoints.web.http.encodedcharacters.allowencodedsemicolon=false
+      - --entrypoints.web.http.encodedcharacters.allowencodedpercent=false
+      - --entrypoints.web.http.encodedcharacters.allowencodedquestionmark=false
+      - --entrypoints.web.http.encodedcharacters.allowencodedhash=false
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --accesslog=true
+      - --log.level=INFO
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+    ports:
+      - "127.0.0.1:8090:8090"
+    # Mount the directory, not the file: an in-place edit then reaches the file watcher.
+    volumes:
+      - ./git/traefik:/etc/traefik:ro
+    networks:
+      default:
+        aliases:
+          - git.localhost
+
+volumes:
+  kb-git-db-data:
+  kb-git-forgejo-data:

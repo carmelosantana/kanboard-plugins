@@ -33,3 +33,5 @@ testing/kanboard-src/
 /node_modules
 # Screenshot capture output (review copies; the real ones go to the directory repo)
 /scripts/screenshots/out/
+# Git hosting P1 overlay: broker env file (Forgejo admin token)
+testing/git/.env

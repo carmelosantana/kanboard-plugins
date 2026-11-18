@@ -1,0 +1,64 @@
+# Traefik dynamic config for the git hosting P1 overlay (file provider, watched).
+#
+# Every request to git.localhost lands on exactly one router; the highest priority wins.
+#   1000 git-exempt        runner API, static assets, health: no ForwardAuth (spec)
+#    900 git-repo          git smart-HTTP (with or without .git), dumb-HTTP, LFS and the
+#                          token-auth web routes raw/archive/media: ForwardAuth (spec + F1)
+#    800 git-api           everything else under /api/ (including /api/v1/*): ForwardAuth
+#    700 git-credentialed  any other request carrying Authorization or ?token=/?access_token=:
+#                          ForwardAuth (F1)
+#      1 git-web           the cookie-session web UI: no ForwardAuth in P1 (spec)
+# The broker answers /authz with 200 (allow) or 403; the skeleton denies everything.
+http:
+  middlewares:
+    broker-authz:
+      forwardAuth:
+        address: http://broker:8080/authz
+        # Traefik sets X-Forwarded-Method/-Uri/-Host/-Proto itself; never trust a client's.
+        trustForwardHeader: false
+
+  routers:
+    git-exempt:
+      rule: >-
+        Host(`git.localhost`) && (Path(`/api/healthz`) || PathPrefix(`/api/actions/`)
+        || PathPrefix(`/assets/`))
+      priority: 1000
+      entryPoints: [web]
+      service: forgejo
+
+    git-repo:
+      rule: >-
+        Host(`git.localhost`) && (PathRegexp(`^/[^/]+/[^/]+\.git(/|$)`)
+        || PathRegexp(`^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack|info/lfs/|HEAD$|objects/|raw/|archive/|media/)`))
+      priority: 900
+      entryPoints: [web]
+      middlewares: [broker-authz]
+      service: forgejo
+
+    git-api:
+      rule: Host(`git.localhost`) && PathPrefix(`/api/`)
+      priority: 800
+      entryPoints: [web]
+      middlewares: [broker-authz]
+      service: forgejo
+
+    git-credentialed:
+      rule: >-
+        Host(`git.localhost`) && (HeaderRegexp(`Authorization`, `.+`)
+        || QueryRegexp(`token`, `.+`) || QueryRegexp(`access_token`, `.+`))
+      priority: 700
+      entryPoints: [web]
+      middlewares: [broker-authz]
+      service: forgejo
+
+    git-web:
+      rule: Host(`git.localhost`)
+      priority: 1
+      entryPoints: [web]
+      service: forgejo
+
+  services:
+    forgejo:
+      loadBalancer:
+        servers:
+          - url: http://forgejo:3000

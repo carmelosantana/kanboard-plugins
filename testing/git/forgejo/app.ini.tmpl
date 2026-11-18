@@ -1,0 +1,75 @@
+; Forgejo config template for the git hosting P1 overlay (dev only).
+; Mounted at /etc/templates/app.ini in the rootless image; docker-setup.sh renders it with
+; envsubst into /var/lib/gitea/custom/conf/app.ini on first start only. After editing it,
+; remove that rendered file (or the kb-git-forgejo-data volume) and recreate forgejo.
+; Forgejo generates and saves INTERNAL_TOKEN and the JWT secrets itself on first start.
+APP_NAME = Kanboard Git (P1 dev)
+RUN_USER = git
+RUN_MODE = prod
+
+[repository]
+ROOT = $GITEA_WORK_DIR/git/repositories
+
+[repository.local]
+LOCAL_COPY_PATH = $GITEA_TEMP/local-repo
+
+[repository.upload]
+TEMP_PATH = $GITEA_TEMP/uploads
+
+[server]
+APP_DATA_PATH = $GITEA_WORK_DIR
+PROTOCOL = http
+HTTP_ADDR = 0.0.0.0
+HTTP_PORT = 3000
+; Same URL from the host and from containers: Traefik listens on :8090 inside the compose
+; network too, and carries the network alias git.localhost.
+DOMAIN = git.localhost
+ROOT_URL = http://git.localhost:8090/
+; P1 is HTTPS-only git: no SSH server, no SSH clone URLs.
+DISABLE_SSH = true
+START_SSH_SERVER = false
+LFS_START_SERVER = true
+OFFLINE_MODE = true
+
+[database]
+DB_TYPE = postgres
+HOST = forgejo-db:5432
+NAME = forgejo
+USER = forgejo
+PASSWD = forgejo-dev-only
+SSL_MODE = disable
+LOG_SQL = false
+
+[session]
+PROVIDER_CONFIG = $GITEA_WORK_DIR/data/sessions
+
+[picture]
+AVATAR_UPLOAD_PATH = $GITEA_WORK_DIR/data/avatars
+REPOSITORY_AVATAR_UPLOAD_PATH = $GITEA_WORK_DIR/data/repo-avatars
+DISABLE_GRAVATAR = true
+
+[attachment]
+PATH = $GITEA_WORK_DIR/data/attachments
+
+[lfs]
+PATH = $GITEA_WORK_DIR/git/lfs
+
+[log]
+MODE = console
+LEVEL = info
+ROOT_PATH = $GITEA_WORK_DIR/data/log
+
+[security]
+INSTALL_LOCK = true
+; Only Traefik sits in front of Forgejo; trust X-Forwarded-* from one hop on private ranges.
+REVERSE_PROXY_LIMIT = 1
+REVERSE_PROXY_TRUSTED_PROXIES = 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+[service]
+DISABLE_REGISTRATION = true
+
+[mailer]
+ENABLED = false
+
+[cron.update_checker]
+ENABLED = false

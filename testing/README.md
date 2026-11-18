@@ -170,6 +170,44 @@ curl -u "jsonrpc:$API_TOKEN" http://localhost:8081/jsonrpc.php \
 
 ---
 
+## Git overlay (git hosting P1)
+
+`docker-compose.git-overlay.yml` adds Forgejo 15 LTS (Postgres) behind Traefik, whose ForwardAuth
+asks the `kanboard-git-broker` (sibling repo `../kanboard-git-broker`) about every repo request.
+Only Traefik publishes a port: **http://git.localhost:8090** (bound to 127.0.0.1).
+
+`kb-suite` is shared, so never `up` the git overlay with a partial file set: compose would recreate
+Kanboard without the jsonrpc, Chicane and Bigboard overlays. `testing/git/compose.sh` runs
+`docker compose -p kanboard-suite` with all five files; name the git services and pass `--no-deps`:
+
+```bash
+bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
+bash testing/git/bootstrap.sh            # admin + broker token -> testing/git/.env (gitignored)
+bash testing/git/scenario.sh preflight   # expect "preflight: PASS (15/15)"
+```
+
+`compose.sh` expands to:
+`docker compose -p kanboard-suite -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml -f testing/docker-compose.bigboard-overlay.yml -f testing/docker-compose.git-overlay.yml`.
+
+| Container | Role |
+|-----------|------|
+| `kb-git-traefik` | `127.0.0.1:8090`; routes in `testing/git/traefik/dynamic.yml` (file provider, watched) |
+| `kb-git-forgejo` | Forgejo, rootless image, no published port; config from `testing/git/forgejo/app.ini.tmpl` on first start |
+| `kb-git-db` | Postgres for Forgejo |
+| `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` |
+
+- **Hostname:** Traefik listens on `:8090` inside the network too and has the network alias
+  `git.localhost`, so `ROOT_URL=http://git.localhost:8090/` is one URL for host and containers. DNS
+  inside containers resolves the alias, but curl/libcurl (so `git` and PHP curl) pin `*.localhost` to
+  loopback; from a container use `--resolve git.localhost:8090:<traefik ip>` (curl) or
+  `-c http.curloptResolve=git.localhost:8090:<traefik ip>` (git).
+- **Forgejo config:** `app.ini.tmpl` is rendered only when the volume has no `app.ini`. After editing
+  it, delete `/var/lib/gitea/custom/conf/app.ini` in the container (or the volume) and recreate `forgejo`.
+- **Stop or remove** the git stack only: `bash testing/git/compose.sh stop forgejo-db forgejo broker traefik`
+  (`rm -s -f` to remove; the volumes `kanboard-suite_kb-git-*` keep the data).
+
+---
+
 ## Unit tests (host-side PHPUnit)
 
 Plugin unit tests run on the **host** against the real Kanboard v1.2.47 source using in-memory SQLite.
