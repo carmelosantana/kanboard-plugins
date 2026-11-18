@@ -51,8 +51,9 @@ core:
 
 ```php
 interface ActivitySource {
-    public function type(): string;            // e.g. 'comment', 'time'
-    /** @return list<array{user_id:int, project_id:int, ts:int, count:float, hours:float}> */
+    /** @return list<string> */
+    public function types(): array;            // e.g. ['comment'], ['time']
+    /** @return list<array{user_id:int, project_id:int, ts:int, type:string, count:int, hours:float}> */
     public function fetch(array $userIds, array $projectIds, int $from, int $to): array;
 }
 ```
