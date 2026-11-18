@@ -205,6 +205,17 @@ bash testing/git/scenario.sh preflight   # expect "preflight: PASS (15/15)"
   it, delete `/var/lib/gitea/custom/conf/app.ini` in the container (or the volume) and recreate `forgejo`.
 - **Stop or remove** the git stack only: `bash testing/git/compose.sh stop forgejo-db forgejo broker traefik`
   (`rm -s -f` to remove; the volumes `kanboard-suite_kb-git-*` keep the data).
+- **Broker integration tests** run on the compose network against `http://forgejo:3000` (Forgejo has
+  no host port), with the admin token from `testing/git/.env`. With the git stack up:
+
+  ```bash
+  bash testing/git/compose.sh --profile it run --rm broker-it   # cargo test --test forgejo_it -- --ignored
+  ```
+
+  `broker-it` (profile `it`, never started by `up`) uses the broker Dockerfile's pinned Rust image,
+  mounts `../kanboard-git-broker` read-only and caches the cargo registry and target dir in the
+  volumes `kanboard-suite_kb-git-broker-it-*`. The tests create throwaway Forgejo users and a
+  `kb-it…` org and delete them when they finish, pass or fail.
 
 ---
 

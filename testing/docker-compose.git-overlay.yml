@@ -49,6 +49,26 @@ services:
       - path: ./git/.env
         required: false
 
+  # Broker integration tests against http://forgejo:3000 on this network (Forgejo has no host
+  # port). Profile `it` keeps it out of `up`; run it with:
+  #   bash testing/git/compose.sh --profile it run --rm broker-it
+  # Same toolchain image as the broker Dockerfile's builder. The broker checkout is mounted
+  # read-only; the cargo registry and target dir live in named volumes.
+  broker-it:
+    image: rust:1.97.1-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c
+    profiles: ["it"]
+    working_dir: /src
+    environment:
+      CARGO_TARGET_DIR: /cargo-target
+    env_file:
+      - path: ./git/.env
+        required: true
+    volumes:
+      - ../../kanboard-git-broker:/src:ro
+      - kb-git-broker-it-registry:/usr/local/cargo/registry
+      - kb-git-broker-it-target:/cargo-target
+    command: ["cargo", "test", "--locked", "--test", "forgejo_it", "--", "--ignored"]
+
   traefik:
     image: traefik:v3.7.19@sha256:aa942a00bce033c909bf1f7e861d93761be4b31a035f10d2410d33e38a8f41cf
     container_name: kb-git-traefik
@@ -86,3 +106,5 @@ services:
 volumes:
   kb-git-db-data:
   kb-git-forgejo-data:
+  kb-git-broker-it-registry:
+  kb-git-broker-it-target:
