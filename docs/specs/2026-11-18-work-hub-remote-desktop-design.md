@@ -1,6 +1,6 @@
 # Work hub, slice 1: remote desktop into Carmelo's session
 
-- **Status:** design agreed 2026-11-18 (approach A); open items below need answers before go-live
+- **Status:** design agreed 2026-11-18 (approach A); open items answered 2026-11-18
 - **Effort:** "Kanboard as a work hub". The rest of the shortlist is listed under *Later slices*.
 - **Research it builds on:** `docs/research/2026-11-17-kanboard-orgs-sso.md` (Kanboard has no orgs and can't be the login for other services).
 
@@ -63,11 +63,11 @@ browser ──https──▶ Cloudflare edge ── Access policy (Carmelo only,
                   except what guacd needs to reach :3389)
 ```
 
-1. **Hostname.** One hostname on a Cloudflare zone (see open item 1), for example `desk.<domain>`.
+1. **Hostname.** `desk.carmelosantana.net` (decision 1). The builder may pick another subdomain on that zone.
 2. **Cloudflare Tunnel.** `cloudflared` runs as a container on the `hub` network and connects outbound only. The ingress maps the hostname to `http://guacamole:8080`. Any other path gets a 404.
 3. **Cloudflare Access** (Zero Trust, Free plan):
    - A self-hosted application on the hostname.
-   - Policy: Allow, include **Carmelo's email only**. Login method is the one-time code by email, or GitHub if he prefers (open item 2).
+   - Policy: Allow, include **Carmelo's email only**. Login method is **GitHub** (decision 2), allowing only his GitHub account's email.
    - Session duration **8h** (my call; shorter if he wants).
    - Turn on "Validate the Access JWT at the origin": Guacamole does not read it, so nothing that skips Access can reach Guacamole anyway, because Guacamole is not published.
 4. **Guacamole.** Official `guacamole/guacamole` and `guacamole/guacd` images, pinned to exact versions. Postgres or the built-in database, whichever the builder finds simplest; one admin user only.
@@ -91,11 +91,13 @@ This exposes Carmelo's own logged-in session. That session holds `~/.claude.json
 
 **Gate:** run `/powerup:codex-security` on this spec and on the `work-hub` repo before the hostname goes live. Revoking access means turning off the Access app or the tunnel, and both are one click in the Cloudflare dashboard. The README says so on its first screen.
 
-## Open items (Carmelo's to answer before go-live)
+## Decisions (Carmelo, 2026-11-18)
 
-1. **Which domain hosts the hostname.** None of his zones is on Cloudflare yet, and Cloudflare Access needs one. My proposal is to move a parked personal domain (for example `carmelosantana.net`) to Cloudflare Free, so `madeinnewburgh.com`'s DNS stays untouched.
-2. **Login method:** email one-time code, or GitHub.
-3. **Reboots and lock screen.** GNOME desktop sharing in user mode only works while he is logged in. After a reboot there is nothing to connect to until someone logs in at the console. The options are: accept that; turn on auto-login (weaker at the console of a VM nobody can reach physically, so arguably fine); or switch GNOME RDP to system "remote login" mode, which gives a separate session rather than his live one. The builder must also confirm a locked screen can be unlocked remotely.
+1. **Domain:** `carmelosantana.net` moves to Cloudflare Free. `madeinnewburgh.com` stays untouched.
+2. **Access login:** GitHub, set up as a Cloudflare Zero Trust identity provider.
+3. **Reboots:** accepted as is. Remote desktop works only while he is logged in at the console. No auto-login, and no separate remote-login session. The builder still checks whether a locked screen can be unlocked remotely and writes the answer in the README.
+
+**Ask Carmelo before any step that changes DNS, Cloudflare or the firewall.** That includes the nameserver move, creating the tunnel or the Access app, and the ufw rules.
 
 ## Left to the builder
 
