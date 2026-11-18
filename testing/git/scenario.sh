@@ -1117,6 +1117,21 @@ fresh_clone() { # fresh_clone <task> <name>
   git_helper "$1" clone --quiet "${BASE}/${REPO}.git" "$WORK/$2" >/dev/null 2>&1
 }
 
+# The task panel (GitHost task metadata, written by the broker): one key of <task>, over JSON-RPC.
+task_meta() { # task_meta <task_id> <key>
+  rpc_admin getTaskMetadataByName "{\"task_id\":$1,\"name\":\"$2\"}" | json_get 'd["result"]'
+}
+# Whether <task>'s panel is for <branch> with <key>=<value> (a run's own branch, not an older one).
+panel_is() { # panel_is <task> <branch> <key> <value>
+  [[ "$(task_meta "$1" githost_branch)" == "$2" && "$(task_meta "$1" "$3")" == "$4" ]] && echo yes || echo no
+}
+show_meta() { # show_meta <task_id>
+  rpc_admin getTaskMetadata "{\"task_id\":$1}" | python3 -I -c '
+import json,sys
+d=json.load(sys.stdin).get("result") or {}
+print("    task %s: %s" % (sys.argv[1], " ".join("%s=%s" % (k, v) for k, v in sorted(d.items()) if k.startswith("githost_"))))' "$1"
+}
+
 # Pushes the clone's HEAD to <branch> and opens a PR into main as the agent; prints its number.
 push_and_open() { # push_and_open <clone> <branch> <title>
   local out
@@ -1228,7 +1243,8 @@ step_3() {
   gate_setup || return
   local clone="clone-3" branch n head out t
   fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
-  branch="agent/${FJ_USER}/scenario-3-$(date +%Y%m%d%H%M%S)-$$"
+  # agent/<login>/<task_id>-<slug>: the broker reports it on the task panel.
+  branch="agent/${FJ_USER}/${CORE_TASK}-scenario-3-$(date +%Y%m%d%H%M%S)-$$"
   git -C "$WORK/$clone" checkout --quiet -b "$branch"
   mkdir -p "$WORK/$clone/scenario"
   printf 'step 3 %s\n' "$branch" >"$WORK/$clone/scenario/step3-$(date +%s%N).txt"
@@ -1245,6 +1261,14 @@ step_3() {
   check "  ... written by the broker identity" yes "$([[ "$(status_of "$head" "$RISK_GATE")" == "success kb-admin: no high-risk paths" ]] && echo yes || echo no)"
   t="$(wait_yes "$GATE_WAIT" status_is "$head" "$CI_PR_CONTEXT" success)"
   check "CI (${CI_PR_CONTEXT}) is green on the dev runner (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+
+  # The task panel: CI shows within one reconcile period (Forgejo sends no status webhook).
+  t="$(wait_yes 90 panel_is "$CORE_TASK" "$branch" githost_ci success)"
+  check "task panel: the broker set task ${CORE_TASK}'s CI to success (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  show_meta "$CORE_TASK"
+  check "  ... with this branch, PR #${n} (open) and ${RISK_GATE} success" \
+    "$branch $(pr_field "$n" 'd["html_url"]') open success $REPO" \
+    "$(task_meta "$CORE_TASK" githost_branch) $(task_meta "$CORE_TASK" githost_pr_url) $(task_meta "$CORE_TASK" githost_pr_state) $(task_meta "$CORE_TASK" githost_risk_gate) $(task_meta "$CORE_TASK" githost_repo)"
 
   # A member who is not a reviewer: the approval is recorded but does not count.
   agent_hdr "$OTHER_AGENT_USERNAME" "${AGENT_TASKS[$OTHER_AGENT_USERNAME]}" "$WORK/hdr.a2"
@@ -1269,6 +1293,8 @@ print("yes" if ok("/reviews") and ok("/merge") else "no")')"
   t="$(wait_yes 90 pr_merged "$n")"
   check "the PR merges on green (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
   check "  ... merged by r1" "${REVIEWER_USERNAME}" "$(pr_field "$n" '(d.get("merged_by") or {}).get("login","")')"
+  t="$(wait_yes 60 panel_is "$CORE_TASK" "$branch" githost_pr_state merged)"
+  check "task panel: PR #${n} shows merged on task ${CORE_TASK} (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 }
 
 step_4() {
@@ -1306,6 +1332,15 @@ step_5c() {
 # The open-or-closed revert PR for <sha> (number), from the admin API.
 revert_pr_for() { fj_api "/api/v1/repos/${REPO}/pulls/main/revert%2F${1:0:7}" | json_get 'd["number"]'; }
 has_revert_pr() { [[ "$(revert_pr_for "$1")" =~ ^[0-9]+$ ]] && echo yes || echo no; }
+# The comments on <task> linking revert PR <url> (the broker's auto-revert comment): "<author>: <text>".
+revert_comments() { # revert_comments <task_id> <url>
+  rpc_admin getAllComments "{\"task_id\":$1}" | python3 -I -c '
+import json,sys
+for c in json.load(sys.stdin).get("result") or []:
+    if "(%s)" % sys.argv[1] in c["comment"]:
+        print("%s: %s" % (c.get("username") or c["user_id"], c["comment"]))' "$2"
+}
+revert_commented() { [[ -n "$(revert_comments "$1" "$2")" ]] && echo yes || echo no; }
 main_sha() { fj_api "/api/v1/repos/${REPO}/branches/main" | json_get 'd["commit"]["id"]'; }
 
 # A run cut off inside step 6 can leave main red with its revert PR waiting for r1: finish it
@@ -1333,7 +1368,8 @@ step_6() {
   settle_red_main || { check "setup: an earlier red main is settled" yes no; return; }
   local clone="clone-6" branch n head bad out t rn rhead files count
   fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
-  branch="agent/${FJ_USER}/scenario-6-$(date +%Y%m%d%H%M%S)-$$"
+  # Task-named, so the broker comments the revert on CORE_TASK.
+  branch="agent/${FJ_USER}/${CORE_TASK}-scenario-6-$(date +%Y%m%d%H%M%S)-$$"
   git -C "$WORK/$clone" checkout --quiet -b "$branch"
   mkdir -p "$WORK/$clone/ci"
   printf 'red %s\n' "$branch" >"$WORK/$clone/ci/red"
@@ -1361,6 +1397,12 @@ step_6() {
   files="$(fj_api "/api/v1/repos/${REPO}/pulls/${rn}/files" | python3 -I -c '
 import json,sys; print(" ".join(sorted("%s:%s" % (f["status"], f["filename"]) for f in json.load(sys.stdin))))')"
   check "  ... reverting exactly the bad change" "deleted:ci/red" "$files"
+  local rurl
+  rurl="$(pr_field "$rn" 'd["html_url"]')"
+  t="$(wait_yes 60 revert_commented "$CORE_TASK" "$rurl")"
+  check "the broker comments the revert on task ${CORE_TASK}, whose PR #${n} merged ${bad:0:7} (${t} s)" yes \
+    "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  revert_comments "$CORE_TASK" "$rurl" | head -1 | sed 's/^/    /'
   rhead="$(pr_head "$rn")"
   t="$(wait_yes 60 status_is "$rhead" "$RISK_GATE" success)"
   check "  ... ${RISK_GATE} success: a broker revert is low risk (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
@@ -1382,6 +1424,7 @@ import json,sys; print(" ".join(sorted("%s:%s" % (f["status"], f["filename"]) fo
   count="$(fj_api "/api/v1/repos/${REPO}/pulls?state=all&sort=recentupdate&limit=50" | python3 -I -c '
 import json,sys; print(sum(1 for p in json.load(sys.stdin) if p["head"]["ref"]==sys.argv[1]))' "revert/${bad:0:7}")"
   check "one revert PR for ${bad:0:7}, after another sweep" 1 "$count"
+  check "  ... and one revert comment on task ${CORE_TASK}" 1 "$(revert_comments "$CORE_TASK" "$rurl" | wc -l)"
 }
 
 # Dispatch table, in run order for `all`: <name> <function> <description>. The spec's numeric
@@ -1390,11 +1433,11 @@ STEPS=(
   "preflight step_preflight stack invariants: no Forgejo port, every repo route behind ForwardAuth"
   "1         step_1         the agent claims an open task; git-credential-kanboard get prints username, password, expiry"
   "2         step_2         clone through Traefik with the helper, branch agent/<login>/scenario-<ts>, commit, push accepted"
-  "3         step_3         low-risk PR: CI green on the dev runner, risk gate success; a2's approval does not count; r1 approves + auto-merge -> merged"
+  "3         step_3         low-risk PR on agent/<login>/<task>-...: CI green, risk gate success, task panel set; a2's approval does not count; r1 approves + auto-merge -> merged (panel: merged)"
   "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
   "5a        step_5a        push to another agent's prefix and to main denied by branch protection (authz ok); status post 403"
   "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
-  "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) -> r1 approves -> merged, main green; one PR per sha"
+  "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"
   "7         step_7         removeProjectUser: next fetch denied; re-add; closeTask: token dead (token_revoked/task_closed)"
   "8         step_8         docker pause kb-suite: fetch denied (kanboard_unreachable); unpause: allowed"
   # Not a numbered spec step: the spec's sequencing exit for identity (Task 13).
