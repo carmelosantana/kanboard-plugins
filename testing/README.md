@@ -187,13 +187,24 @@ bash testing/git/compose.sh up -d kanboard broker   # once, after hmac.env first
 bash testing/git/scenario.sh preflight   # expect "preflight: PASS (16/16)"
 ```
 
-`scenario.sh` runs named steps from one table (`bash testing/git/scenario.sh list`; `all` runs
-each once). Besides `preflight`, the live steps act as agent `githost-e2e-agent` (user 20) on
-project 28 and repo `kb-ghe2e/app`: `credential` (getGitCredential, then `git clone` through
-Traefik), `revoke` (closeTask, then the next fetch is denied) and `outage` (`docker pause
-kb-suite` for one clone, always unpaused by a trap). They read `KANBOARD_USERNAME`,
-`KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or `AGENT_API_TOKEN_FILE`) from the environment or
-from the gitignored `testing/git/scenario.env`, and check the broker's audit lines.
+`scenario.sh` runs the spec's numbered steps from one table (`bash testing/git/scenario.sh
+list`; `all` runs each once). Besides `preflight`, the live steps act as agent
+`githost-e2e-agent` (user 20) on project 28 and repo `kb-ghe2e/app`, with git's
+`credential.helper` set to the broker's `git-credential-kanboard`, built on the host with
+`cargo build` from `../kanboard-git-broker` (`BROKER_DIR`), or `KB_HELPER` for a prebuilt one:
+
+| Step | Checks |
+| --- | --- |
+| `1` | the agent claims (or creates) its open task "scenario core path"; the helper's `get` prints `username`, `password`, `password_expiry_utc` |
+| `2` | clone through Traefik, branch `agent/<login>/scenario-<ts>`, commit, push accepted |
+| `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; an agent status post is 403 |
+| `7` | `removeProjectUser`: the next fetch is denied; re-added (always, also on exit), a push to the own prefix works again; `closeTask`: the token is dead (`token_revoked`/`task_closed`) |
+| `8` | `docker pause kb-suite`: fetch denied (`kanboard_unreachable`), always unpaused by a trap; then allowed |
+
+They read `KANBOARD_USERNAME`, `KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or
+`AGENT_API_TOKEN_FILE`) from the environment or from the gitignored `testing/git/scenario.env`,
+print `PASS`/`FAIL` with the broker's audit lines, and can be re-run: the core task is reused
+and branch names are unique.
 
 The overlay also wires Kanboard to the broker. It mounts `../GitHost` into `kb-suite`, and
 gives `kb-suite` only `testing/git/hmac.env` (`GITHOST_HMAC_SECRET`) plus
