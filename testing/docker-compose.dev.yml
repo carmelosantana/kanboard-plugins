@@ -5,7 +5,10 @@ name: kanboard-suite
 
 services:
   kanboard:
-    image: kanboard/kanboard:v1.2.47
+    # Stock kanboard/kanboard:v1.2.47 plus ext-sodium (Vault). See Dockerfile.sodium.
+    build:
+      context: .
+      dockerfile: Dockerfile.sodium
     container_name: kb-suite
     restart: unless-stopped
     ports:
