@@ -133,7 +133,14 @@ A **principal** is a human user or an agent that has enrolled in the vault. Each
   2. Delete the queue row in the **same** transaction.
 
   A crash rolls the whole item back.
-- **Expiry reconciliation on write.** Every payload write, under the exclusive lock, first reconciles that object. Expired direct grants, and expired grants on any ancestor, are processed as removals right there, which creates any re-key the barrier needs. Grant expiry doesn't wait for the once-a-minute purge. A test edits immediately after expiry while the purge is throttled.
+- **Removing a grant source** follows one procedure wherever it happens: an expiry (purge, read or write), an offline removal, or agent re-enrolment. In one exclusive transaction, Vault:
+  1. enumerates **every** object the source covers (the subject plus, for a group, its whole subtree);
+  2. for each one, works out which principals lose effective access;
+  3. deletes their key rows and queues **every** affected object;
+  4. only then deletes the source.
+
+  So consuming a source can never leave a sibling or descendant without its barrier.
+- **Expiry reconciliation on write.** Every payload write, under the exclusive lock, first looks for expired grants on that object and its ancestors, and removes each one with the procedure above, for its whole subtree. Grant expiry doesn't wait for the once-a-minute purge. A test edits immediately after expiry while the purge is throttled. A two-sibling test has entry A trigger the reconciliation of an expired group grant, then edits sibling B, and checks that B is re-keyed first.
 - **Write barrier.** An object that has a queue row can't take a payload update until it has been re-keyed. The writer, who holds the DEK, re-keys it inline in the same transaction, then applies the edit. So data written after a removal is never encrypted under a DEK that a removed principal could recover from an old backup. Rotation uses the same barrier (below).
 - **Edit permission** lets a grantee update an entry: a new `version`, with optimistic concurrency on `version`. It also lets them create entries in a shared group. A new entry is owned by the group owner and sealed to the group's effective recipients. Only the owner can grant, revoke, delete or move objects.
 
@@ -703,6 +710,7 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | A changed factor (the new passphrase) couldn't open `sk1`, so rotation couldn't resume, and the old passphrase still opened `sk1` | Pending wraps hold `sk2`, and a **bridge** (`sk1` under a key derived from `sk2`) lives in the `vault_rotations` row. The old wraps are deleted at *start*. *Finish* flips the pending wraps to active, which needs no factor, and deletes the bridge. |
 | Re-enrolment left third-party grants live, so the queue re-sealed to the agent | Third-party grant sources are **deleted** (audited, owners notified) before the key rows are deleted and the objects queued. |
 | Expiry could come before the barrier existed (the purge runs once a minute) | **Expiry reconciliation** runs inside every payload write. |
+| Round 4 (security review: bridge and re-enrolment **CLOSED**). High: reconciling an ancestor grant for one object left its siblings without a barrier | One **grant-source removal procedure** covers the whole subtree atomically before deleting the source, with a two-sibling test. |
 
 **Round 2, 2026-11-18.** Two reviews ran: `/codex:adversarial-review` and `/powerup:codex-security`. The run header shows `gpt-5.6-sol` was served; the program was requested and accepted, but the served program is unverified. Round-1 items the security review rated **CLOSED**: KDF per wrap, throttling, kdbx export gate, XML worker, AD/rollback, shares, share passphrases, recovery encoding, CSRF/XSS, admin preconditions, and all builder items except those reopened below.
 
