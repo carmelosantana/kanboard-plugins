@@ -1,6 +1,6 @@
 # Vault: a KeePass-style password store for Kanboard (v1.0)
 
-- **Status:** design settled with Carmelo (Q&A, 2026-11-17 to 18). Review round 1 (builder check, Codex adversarial review, Codex security review) has been folded in; see *Review log*. A few points are marked **[pending Carmelo]**.
+- **Status:** **approved by Carmelo (2026-11-18).** Review round 1 (builder check, Codex adversarial review, Codex security review) is folded in; see *Review log*. Review round 2 gates planning.
 - **Plugin:** `Vault` (directory and PHP namespace `Kanboard\Plugin\Vault`), repo `carmelosantana/kanboard-vault`. The name is my call; rename it freely before the repo exists.
 - **Working folder:** `kanboard-plugins/Vault` (doesn't exist yet)
 - **Also touches:** `Agents` (read-only use of its roster); the production Docker image (adds ext-sodium)
@@ -160,6 +160,7 @@ So a backup holds `enc_sk` without `session_key`, and a stolen cookie without th
 | Share reveal | Per client IP: 20 per 10 min and 200 per day. |
 
 - **Concurrent Argon2 cap.** At most 4 Argon2 derivations run at once per install. A non-blocking `flock` on one of 4 slot files in `DATA_DIR/vault/` enforces this. When every slot is busy, the request gets HTTP 503 with `Retry-After: 2`, and nothing is derived.
+- **Client IP behind Cloudflare.** Production likely runs behind a **Cloudflare Tunnel**. There, every request reaches Kanboard from `cloudflared`, a local or Docker address. Cloudflare sets `CF-Connecting-IP` to a single, overwritten value. The docs therefore tell tunnel installs to set `TRUSTED_PROXY_HEADERS=HTTP_CF_CONNECTING_IP`. That is only safe when the origin is reachable **only** through the tunnel: no published port, no other ingress. Otherwise anyone can send the header, so the admin page states this precondition. For a single-value header like this one, Vault uses the value as it is.
 - **Client IP.** Vault doesn't use `Request::getIpAddress()` as it is. That method returns the left-most address in a trusted header, which the client controls. Vault applies the same trusted-header rule but takes the **right-most** address, the one the nearest proxy appended. With no trusted header configured it uses `REMOTE_ADDR`. The admin page warns when `REMOTE_ADDR` is private or loopback, forwarding headers are present, and `TRUSTED_PROXY_HEADERS` is empty.
 
 ### Hardware keys (WebAuthn PRF)
@@ -233,7 +234,7 @@ The application (`jsonrpc`) user is refused. A non-agent user gets `not_agent`; 
 
 Refusals come back as `{ok: false, reason}`. The reasons are `not_agent`, `bad_vault_key`, `rate_limited`, `not_found`, `conflict` and `agents_unavailable`. An entry the agent can't see always gives `not_found`.
 
-**Agent client [pending Carmelo].** Something has to read `KANBOARD_VAULT_KEY`, send the header and expose these four methods as tools: presumably the `kanboard` MCP server. My proposal is a follow-up in that server's own repo. Vault v1 tests the API directly over JSON-RPC.
+**Agent client (decided 2026-11-18: follow-up).** Something has to read `KANBOARD_VAULT_KEY`, send the header and expose these four methods as tools: the `kanboard` MCP server. That work is a **separate follow-up in that server's own repo**, after Vault v1 ships. Vault v1 tests its API directly over JSON-RPC. Requirements for the follow-up: the vault key is read from a mode-600 profile or env, never logged, never echoed in tool output, and never sent anywhere but the `X-Kanboard-Vault-Key` header. `getVaultSecret` results are returned to the agent only, never written to MCP logs.
 
 ## One-time shares
 
@@ -532,7 +533,7 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 - Defending against server compromise.
 - Rollback protection.
 - Per-project vaults: sharing is per user or agent.
-- Updating the MCP client [pending Carmelo].
+- Updating the MCP client (a follow-up in its own repo).
 
 ## Review log
 
@@ -572,4 +573,6 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | Gap: an agent enrolled before its owner | builder | Refused until the owner has a vault. |
 | Gap: `gc_maxlifetime` caps the idle timeout | builder | The effective cap is shown on the admin page. |
 | Human grant permissions | builder | Carmelo: Read + Edit (decision 10). |
-| Open: the MCP client; whether production runs behind a proxy | builder | **[pending Carmelo]** |
+| The MCP client | builder | Carmelo: the safest option, a separate follow-up in the MCP server's repo, with key-handling requirements (see *Agents*). |
+| Production behind a proxy | builder | Carmelo: likely a Cloudflare Tunnel. Added the `CF-Connecting-IP` rule and the origin-exposure precondition (see *Throttling*). |
+| Spec approval | — | Carmelo approved, 2026-11-18. |
