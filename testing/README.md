@@ -182,9 +182,27 @@ Kanboard without the jsonrpc, Chicane and Bigboard overlays. `testing/git/compos
 
 ```bash
 bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
-bash testing/git/bootstrap.sh            # admin + broker token -> testing/git/.env (gitignored)
+bash testing/git/bootstrap.sh            # admin + broker token -> testing/git/.env, HMAC secret -> testing/git/hmac.env
+bash testing/git/compose.sh up -d kanboard broker   # once, after hmac.env first appears (recreates kb-suite)
 bash testing/git/scenario.sh preflight   # expect "preflight: PASS (15/15)"
 ```
+
+The overlay also wires Kanboard to the broker. It mounts `../GitHost` into `kb-suite`, and
+gives `kb-suite` only `testing/git/hmac.env` (`GITHOST_HMAC_SECRET`) plus
+`GITHOST_BROKER_URL=http://broker:8080`. The broker gets `testing/git/.env` (the Forgejo admin
+token), `hmac.env` and `KANBOARD_URL=http://kb-suite`. Kanboard's php-fpm passes only
+whitelisted variables to PHP, so the overlay replaces `/etc/php84/php-fpm.d/env.conf` with
+`testing/git/php-fpm-env.conf`: the image's file plus the two GitHost lines. Re-copy it when
+the Kanboard image changes. Adding these to `kb-suite` recreates it, which keeps its data
+(volume `kanboard-suite_kb-suite-data`).
+
+Membership reaches Forgejo two ways. The broker pulls `githost/state` every 30 s
+(`BROKER_RECONCILE_SECS`). After each successful membership JSON-RPC call (`addProjectUser`,
+`removeProjectUser`, `changeProjectUserRole`, the three `*ProjectGroup*` methods,
+`addGroupMember` and `removeGroupMember`), GitHost also sends the broker an empty
+`POST /projects/{id}/sync` per affected project. The broker's SQLite store and JSONL audit log
+live in the volume `kanboard-suite_kb-git-broker-data` (`/var/lib/broker`). To read the audit
+log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoint cat kanboard/kanboard:v1.2.47 /d/audit/<YYYY-MM-DD>.jsonl`.
 
 `compose.sh` expands to:
 `docker compose -p kanboard-suite -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml -f testing/docker-compose.bigboard-overlay.yml -f testing/docker-compose.git-overlay.yml`.
@@ -194,7 +212,7 @@ bash testing/git/scenario.sh preflight   # expect "preflight: PASS (15/15)"
 | `kb-git-traefik` | `127.0.0.1:8090`; routes in `testing/git/traefik/dynamic.yml` (file provider, watched) |
 | `kb-git-forgejo` | Forgejo, rootless image, no published port; config from `testing/git/forgejo/app.ini.tmpl` on first start |
 | `kb-git-db` | Postgres for Forgejo |
-| `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` |
+| `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` and `testing/git/hmac.env`; pulls `http://kb-suite` every 30 s |
 
 - **Hostname:** Traefik listens on `:8090` inside the network too and has the network alias
   `git.localhost`, so `ROOT_URL=http://git.localhost:8090/` is one URL for host and containers. DNS

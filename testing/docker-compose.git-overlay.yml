@@ -10,7 +10,24 @@
 # host and containers (libcurl pins *.localhost to loopback; see testing/README.md).
 #
 # Images are pinned by tag and digest; bump both together.
+#
+# The HMAC secret shared by the broker and the GitHost plugin lives in testing/git/hmac.env
+# (gitignored, written by bootstrap.sh). kb-suite loads only that file, never git/.env, which holds
+# the Forgejo admin token. Adding GitHost or the env to kb-suite recreates it once:
+#   bash testing/git/compose.sh up -d kanboard broker
 services:
+  # kb-suite: mount GitHost and point it at the broker. Its data is in kanboard-suite_kb-suite-data.
+  kanboard:
+    env_file:
+      - path: ./git/hmac.env
+        required: false
+    environment:
+      GITHOST_BROKER_URL: http://broker:8080
+    volumes:
+      - ../GitHost:/var/www/app/plugins/GitHost
+      # php-fpm hands PHP only whitelisted env vars; this whitelist adds the two GitHost ones.
+      - ./git/php-fpm-env.conf:/etc/php84/php-fpm.d/env.conf:ro
+
   forgejo-db:
     image: postgres:17.12-alpine3.24@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
     container_name: kb-git-db
@@ -48,6 +65,14 @@ services:
     env_file:
       - path: ./git/.env
         required: false
+      - path: ./git/hmac.env
+        required: false
+    environment:
+      # Pulls githost/state (HMAC-signed) every BROKER_RECONCILE_SECS (default 30).
+      KANBOARD_URL: http://kb-suite
+    volumes:
+      # SQLite store (principals, tokens) and the JSONL audit log.
+      - kb-git-broker-data:/var/lib/broker
 
   # Broker integration tests against http://forgejo:3000 on this network (Forgejo has no host
   # port). Profile `it` keeps it out of `up`; run it with:
@@ -104,6 +129,7 @@ services:
           - git.localhost
 
 volumes:
+  kb-git-broker-data:
   kb-git-db-data:
   kb-git-forgejo-data:
   kb-git-broker-it-registry:

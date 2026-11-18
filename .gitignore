@@ -36,3 +36,5 @@ testing/kanboard-src/
 /scripts/screenshots/out/
 # Git hosting P1 overlay: broker env file (Forgejo admin token)
 testing/git/.env
+# Git hosting P1 overlay: HMAC secret shared by the broker and kb-suite
+testing/git/hmac.env

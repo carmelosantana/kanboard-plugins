@@ -5,6 +5,8 @@
 #   bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
 #   bash testing/git/bootstrap.sh
 #
+# 0. Writes testing/git/hmac.env (gitignored, mode 600) with a random GITHOST_HMAC_SECRET, unless it
+#    already holds one. The broker and kb-suite both load it; kb-suite loads nothing else from here.
 # 1. Waits for Forgejo.
 # 2. Creates the site admin (default kb-admin) with a random password, unless it exists. The
 #    password is not kept: the token is what the broker uses, and `forgejo admin user
@@ -18,11 +20,12 @@
 # 5. Writes testing/git/.env (gitignored, mode 600): FORGEJO_URL, FORGEJO_ADMIN_TOKEN and
 #    FORGEJO_AUTHENTIK_SOURCE_ID (looked up by name; Forgejo has no API for auth sources), the
 #    broker's env file, and recreates the broker if the file changed.
-# Re-running changes nothing when the admin, a working token and the source already exist.
+# Re-running changes nothing when the admin, a working token, the source and the secret already exist.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$HERE/.env"
+HMAC_FILE="$HERE/hmac.env"
 FORGEJO_CONTAINER="${FORGEJO_CONTAINER:-kb-git-forgejo}"
 ADMIN_USER="${FORGEJO_ADMIN_USER:-kb-admin}"
 ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-kb-admin@git.localhost}"
@@ -39,6 +42,14 @@ token_status() {
   docker exec "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
     -H "Authorization: token $1" http://localhost:3000/api/v1/user
 }
+
+if grep -qE '^GITHOST_HMAC_SECRET=.{32,}$' "$HMAC_FILE" 2>/dev/null; then
+  echo "bootstrap: testing/git/hmac.env has a secret"
+else
+  (umask 077 && printf 'GITHOST_HMAC_SECRET=%s\n' "$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" >"$HMAC_FILE")
+  echo "bootstrap: wrote testing/git/hmac.env; recreate kb-suite and the broker to load it:"
+  echo "  bash testing/git/compose.sh up -d kanboard broker"
+fi
 
 echo "bootstrap: waiting for Forgejo"
 for _ in $(seq 1 60); do
