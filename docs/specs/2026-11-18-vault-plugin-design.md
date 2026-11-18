@@ -1,6 +1,6 @@
 # Vault: a KeePass-style password store for Kanboard (v1.0)
 
-- **Status:** **approved by Carmelo (2026-11-18).** Review round 1 (builder check, Codex adversarial review, Codex security review) is folded in; see *Review log*. Review round 2 gates planning.
+- **Status:** **approved by Carmelo (2026-11-18).** Review round 1 (builder check, Codex adversarial review, Codex security review) is folded in; see *Review log*. Spec review gate **passed** on 2026-11-18, after 5 rounds: the final Codex adversarial review says *approve*, and the Codex security review found no critical or high issue. Ready for planning.
 - **Plugin:** `Vault` (directory and PHP namespace `Kanboard\Plugin\Vault`), repo `carmelosantana/kanboard-vault`. The name is my call; rename it freely before the repo exists.
 - **Working folder:** `kanboard-plugins/Vault` (doesn't exist yet)
 - **Also touches:** `Agents` (read-only use of its roster); the production Docker image (adds ext-sodium)
@@ -702,6 +702,8 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | The MCP client | builder | Carmelo: the safest option, a separate follow-up in the MCP server's repo, with key-handling requirements (see *Agents*). |
 | Production behind a proxy | builder | Carmelo: likely a Cloudflare Tunnel. Added the `CF-Connecting-IP` rule and the origin-exposure precondition (see *Throttling*). |
 | Spec approval | — | Carmelo approved, 2026-11-18. |
+
+**Rounds 4 and 5, 2026-11-18.** Round 4 (the security review) rated the bridge and re-enrolment fixes **CLOSED**, and found one high issue: sibling objects left without a barrier, fixed below. Round 5 (the security review) rated the whole-subtree removal **CLOSED**, with no new critical or high issue. The final adversarial review's verdict was **approve**, with no material findings.
 
 **Round 3, 2026-11-18** (both reviews re-checked the round-2 resolutions). Rated **CLOSED**: rotation ceremony, revocation snapshot, write barrier, subtree moves, WebAuthn, proxy trust, audit allowlist, `auth.success`, queue atomicity, share reservations. Three high findings, both reviews agreeing on the first two:
 
