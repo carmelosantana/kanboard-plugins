@@ -41,3 +41,7 @@ testing/git/.env
 testing/git/hmac.env
 # Git hosting P1 overlay: scenario.sh credentials (Kanboard API key, agent API token)
 testing/git/scenario.env
+# Git hosting P1 overlay: Authentik secrets (secret key, akadmin password/API token, OIDC client secrets)
+testing/git/authentik.env
+# Git hosting P1 overlay: third-party code fetched at a pinned commit (testing/git/fetch-oauth2.sh)
+testing/git/vendor/

@@ -11,6 +11,12 @@
 #
 # Images are pinned by tag and digest; bump both together.
 #
+# Authentik (identity for humans, Task 13) sits behind the same Traefik as auth.kb.test:8090, a
+# second network alias. Not *.localhost: the OIDC issuer must be one URL for the browser, Forgejo
+# and Kanboard's PHP curl back-channel, and libcurl pins *.localhost to loopback. The host reaches
+# it with curl --resolve, or one optional /etc/hosts line (testing/README.md "Identity").
+# Its secrets are in testing/git/authentik.env (gitignored, written by bootstrap.sh).
+#
 # The HMAC secret shared by the broker and the GitHost plugin lives in testing/git/hmac.env
 # (gitignored, written by bootstrap.sh). kb-suite loads only that file, never git/.env, which holds
 # the Forgejo admin token. Adding GitHost or the env to kb-suite recreates it once:
@@ -25,6 +31,9 @@ services:
       GITHOST_BROKER_URL: http://broker:8080
     volumes:
       - ../GitHost:/var/www/app/plugins/GitHost
+      # Third-party OAuth2 plugin (Authentik login), pinned and hash-checked by
+      # testing/git/fetch-oauth2.sh. Outside the repo root, so run-plugin-tests.sh never finds it.
+      - ./git/vendor/OAuth2:/var/www/app/plugins/OAuth2:ro
       # php-fpm hands PHP only whitelisted env vars; this whitelist adds the two GitHost ones.
       - ./git/php-fpm-env.conf:/etc/php84/php-fpm.d/env.conf:ro
 
@@ -127,8 +136,58 @@ services:
       default:
         aliases:
           - git.localhost
+          - auth.kb.test
+
+  # Authentik 2026.8: server + worker on their own Postgres. No Redis since 2025.10. No ports;
+  # reached only through Traefik. The worker gets no docker socket (no managed outposts).
+  authentik-db:
+    image: postgres:17.12-alpine3.24@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
+    container_name: kb-auth-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik-dev-only
+    volumes:
+      - kb-auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik -d authentik"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  authentik-server: &authentik
+    image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
+    container_name: kb-auth-server
+    command: server
+    restart: unless-stopped
+    shm_size: 512mb
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+    env_file:
+      # AUTHENTIK_SECRET_KEY, AUTHENTIK_BOOTSTRAP_PASSWORD/_TOKEN, the two OIDC client secrets.
+      - path: ./git/authentik.env
+        required: false
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-dev-only
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_AVATARS: initials
+    volumes:
+      - ./git/authentik/blueprints:/blueprints/custom:ro
+
+  authentik-worker:
+    <<: *authentik
+    container_name: kb-auth-worker
+    command: worker
 
 volumes:
+  kb-auth-db-data:
   kb-git-broker-data:
   kb-git-db-data:
   kb-git-forgejo-data:

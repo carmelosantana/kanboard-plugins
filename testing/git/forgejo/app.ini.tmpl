@@ -67,6 +67,17 @@ REVERSE_PROXY_TRUSTED_PROXIES = 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 
 [service]
 DISABLE_REGISTRATION = true
+; Humans sign in through Authentik only. This turns off the password form for everyone (the admin
+; uses the forgejo CLI); agents are local users guarded by an unknown password, and the broker's
+; token mint basic-auths as them on the API, which ENABLE_BASIC_AUTHENTICATION keeps working.
+ENABLE_INTERNAL_SIGNIN = false
+ENABLE_BASIC_AUTHENTICATION = true
+
+[oauth2_client]
+; An Authentik login must land in the user the broker pre-provisioned (source authentik,
+; login_name = sub). No account is created for an unknown sub, and none is linked by name or email.
+ENABLE_AUTO_REGISTRATION = false
+ACCOUNT_LINKING = disabled
 
 [mailer]
 ENABLED = false

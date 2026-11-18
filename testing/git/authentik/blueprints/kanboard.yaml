@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://goauthentik.io/blueprints/schema.json
+# Authentik blueprint (git hosting P1 overlay): the OIDC provider and application for
+# Kanboard (kb-suite on :8081) through the third-party OAuth2 plugin. Its back-channel (PHP curl in
+# kb-suite) calls the token and userinfo endpoints at http://auth.kb.test:8090, the same URL as
+# the browser. The plugin stores the userinfo sub in users.oauth2_user_id.
+#
+# Mounted at /blueprints/custom; bootstrap.sh applies it through the API after every start.
+# The client secret comes from testing/git/authentik.env (gitignored, written by bootstrap.sh).
+# sub_mode hashed_user_id is the same for both providers, so Kanboard and Forgejo see one sub.
+version: 1
+metadata:
+  name: kb-git kanboard OIDC
+  labels:
+    blueprints.goauthentik.io/description: Kanboard signs humans in through Authentik (git hosting P1)
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider
+    identifiers:
+      name: kanboard
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      # Authentik 2026.8 allows only the listed grants (an empty list allows none).
+      grant_types: [authorization_code]
+      client_id: kanboard
+      client_secret: !Env KANBOARD_OIDC_CLIENT_SECRET
+      redirect_uris:
+        - matching_mode: strict
+          url: http://localhost:8081/oauth/callback
+          redirect_uri_type: authorization
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+      include_claims_in_id_token: true
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+  - model: authentik_core.application
+    identifiers:
+      slug: kanboard
+    attrs:
+      name: Kanboard
+      provider: !KeyOf provider
+      meta_launch_url: http://localhost:8081/
+      policy_engine_mode: any

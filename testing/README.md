@@ -177,14 +177,16 @@ asks the `kanboard-git-broker` (sibling repo `../kanboard-git-broker`) about eve
 Only Traefik publishes a port: **http://git.localhost:8090** (bound to 127.0.0.1).
 
 `kb-suite` is shared, so never `up` the git overlay with a partial file set: compose would recreate
-Kanboard without the jsonrpc, Chicane and Bigboard overlays. `testing/git/compose.sh` runs
-`docker compose -p kanboard-suite` with all five files; name the git services and pass `--no-deps`:
+Kanboard without the jsonrpc, Chicane, Bigboard and Pulse overlays. `testing/git/compose.sh` runs
+`docker compose -p kanboard-suite` with all six files; name the git services and pass `--no-deps`:
 
 ```bash
 bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
-bash testing/git/bootstrap.sh            # admin + broker token -> testing/git/.env, HMAC secret -> testing/git/hmac.env
-bash testing/git/compose.sh up -d kanboard broker   # once, after hmac.env first appears (recreates kb-suite)
+bash testing/git/bootstrap.sh            # Forgejo admin + broker token -> testing/git/.env, HMAC secret -> testing/git/hmac.env,
+                                         # Authentik (started here) + its secrets -> testing/git/authentik.env, OAuth2 plugin -> testing/git/vendor/
+bash testing/git/compose.sh up -d --no-deps kanboard   # once, after hmac.env or vendor/OAuth2 first appears (recreates kb-suite)
 bash testing/git/scenario.sh preflight   # expect "preflight: PASS (16/16)"
+bash testing/git/scenario.sh identity    # expect "identity: PASS (24/24)"
 ```
 
 `scenario.sh` runs the spec's numbered steps from one table (`bash testing/git/scenario.sh
@@ -200,6 +202,7 @@ list`; `all` runs each once). Besides `preflight`, the live steps act as agent
 | `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; an agent status post is 403 |
 | `7` | `removeProjectUser`: the next fetch is denied; re-added (always, also on exit), a push to the own prefix works again; `closeTask`: the token is dead (`token_revoked`/`task_closed`) |
 | `8` | `docker pause kb-suite`: fetch denied (`kanboard_unreachable`), always unpaused by a trap; then allowed |
+| `identity` | see [Identity](#identity-authentik) below: Kanboard and Forgejo logins through Authentik meet on the sub; no password web login |
 
 They read `KANBOARD_USERNAME`, `KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or
 `AGENT_API_TOKEN_FILE`) from the environment or from the gitignored `testing/git/scenario.env`,
@@ -224,7 +227,7 @@ live in the volume `kanboard-suite_kb-git-broker-data` (`/var/lib/broker`). To r
 log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoint cat kanboard/kanboard:v1.2.47 /d/audit/<YYYY-MM-DD>.jsonl`.
 
 `compose.sh` expands to:
-`docker compose -p kanboard-suite -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml -f testing/docker-compose.bigboard-overlay.yml -f testing/docker-compose.git-overlay.yml`.
+`docker compose -p kanboard-suite -f testing/docker-compose.dev.yml -f testing/docker-compose.jsonrpc-overlay.yml -f testing/docker-compose.chicane-overlay.yml -f testing/docker-compose.bigboard-overlay.yml -f testing/docker-compose.git-overlay.yml -f testing/docker-compose.pulse-overlay.yml`.
 
 | Container | Role |
 |-----------|------|
@@ -232,6 +235,8 @@ log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoin
 | `kb-git-forgejo` | Forgejo, rootless image, no published port; config from `testing/git/forgejo/app.ini.tmpl` on first start |
 | `kb-git-db` | Postgres for Forgejo |
 | `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` and `testing/git/hmac.env`; pulls `http://kb-suite` every 30 s |
+| `kb-auth-server`, `kb-auth-worker` | Authentik 2026.8.5 (no Redis since 2025.10), no published port; `http://auth.kb.test:8090` through Traefik; reads `testing/git/authentik.env`; blueprints from `testing/git/authentik/blueprints` |
+| `kb-auth-db` | Postgres for Authentik (same pinned image as `kb-git-db`) |
 
 - **Hostname:** Traefik listens on `:8090` inside the network too and has the network alias
   `git.localhost`, so `ROOT_URL=http://git.localhost:8090/` is one URL for host and containers. DNS
@@ -240,8 +245,8 @@ log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoin
   `-c http.curloptResolve=git.localhost:8090:<traefik ip>` (git).
 - **Forgejo config:** `app.ini.tmpl` is rendered only when the volume has no `app.ini`. After editing
   it, delete `/var/lib/gitea/custom/conf/app.ini` in the container (or the volume) and recreate `forgejo`.
-- **Stop or remove** the git stack only: `bash testing/git/compose.sh stop forgejo-db forgejo broker traefik`
-  (`rm -s -f` to remove; the volumes `kanboard-suite_kb-git-*` keep the data).
+- **Stop or remove** the git stack only: `bash testing/git/compose.sh stop forgejo-db forgejo broker traefik authentik-db authentik-server authentik-worker`
+  (`rm -s -f` to remove; the volumes `kanboard-suite_kb-git-*` and `kanboard-suite_kb-auth-db-data` keep the data).
 - **Broker integration tests** run on the compose network against `http://forgejo:3000` (Forgejo has
   no host port), with the admin token from `testing/git/.env`. With the git stack up:
 
@@ -253,6 +258,85 @@ log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoin
   mounts `../kanboard-git-broker` read-only and caches the cargo registry and target dir in the
   volumes `kanboard-suite_kb-git-broker-it-*`. The tests create throwaway Forgejo users and a
   `kb-it…` org and delete them when they finish, pass or fail.
+
+### Identity (Authentik)
+
+Humans sign in to Kanboard and Forgejo through Authentik (OIDC). The join key is the OIDC `sub`:
+Kanboard's OAuth2 plugin stores it in `users.oauth2_user_id`, and the broker pre-provisions each
+human's Forgejo user on the `authentik` auth source with `login_name = sub`, so Forgejo's OIDC
+login lands in that user. Agents never touch Authentik.
+
+- **Hostname.** Authentik is `http://auth.kb.test:8090`, a second Traefik network alias. It is
+  not `*.localhost` because libcurl pins those to loopback even inside containers, and Kanboard's
+  OAuth2 back-channel is PHP curl in `kb-suite`. One issuer everywhere:
+  `http://auth.kb.test:8090/application/o/<kanboard|forgejo>/`. Forgejo stays on
+  `git.localhost`: its OIDC redirect URI is only ever followed by the browser, so it needs no
+  second name. From the host, curl uses `--resolve auth.kb.test:8090:127.0.0.1`; for a browser,
+  add one line to `/etc/hosts` (a manual step, nothing here edits it):
+
+  ```
+  127.0.0.1 auth.kb.test
+  ```
+
+- **Authentik** is configured only by `testing/git/authentik/blueprints/{kanboard,forgejo}.yaml`
+  (confidential clients `kanboard` and `forgejo`, strict redirect URIs
+  `http://localhost:8081/oauth/callback` and `http://git.localhost:8090/user/oauth2/authentik/callback`,
+  `grant_types: [authorization_code]`, implicit consent, `sub_mode: hashed_user_id`, RS256 with the
+  self-signed key). `bootstrap.sh` writes `testing/git/authentik.env` once (secret key, `akadmin`
+  password and API token, both client secrets), starts Authentik and applies the blueprints through
+  the API. The admin UI is `http://auth.kb.test:8090/if/admin/` as `akadmin` with
+  `AUTHENTIK_BOOTSTRAP_PASSWORD` from that file.
+- **Forgejo** (`app.ini.tmpl`): `ENABLE_INTERNAL_SIGNIN = false` (no password form, for anyone;
+  the admin uses the `forgejo` CLI), `ENABLE_BASIC_AUTHENTICATION = true` (the broker's token mint
+  basic-auths as agents on the API), `[oauth2_client] ENABLE_AUTO_REGISTRATION = false` and
+  `ACCOUNT_LINKING = disabled`. `bootstrap.sh` re-renders `app.ini` when it lacks a template
+  setting, and points the `authentik` source (same id) at Authentik with `forgejo admin auth
+  update-oauth`. Traefik answers 403 on `/user/link_account_signin` and `_signup` (see below).
+- **Kanboard** gets the third-party OAuth2 plugin from `testing/git/vendor/OAuth2` (gitignored,
+  mounted read-only; `run-plugin-tests.sh --all` never sees it). `bootstrap.sh` writes its
+  settings (`oauth2_*` ConfigModel keys) with PDO, and sets `application_url` to
+  `http://localhost:8081/` only when it is empty: otherwise Kanboard builds the redirect URI from
+  the container's own port (`http://localhost/oauth/callback`), which Authentik rejects. The login
+  link is "Sign in with Authentik" on the login page (`/oauth/callback`). The plugin creates the
+  Kanboard user on first login (`oauth2_account_creation = 1`, username = `preferred_username`).
+
+**OAuth2 plugin (spec gap 6).** Supply-chain check 2026-11-18: `github.com/kanboard/plugin-oauth2`
+(the Kanboard org; author Frédéric Guillot), pinned to master `607d0e6` (2026-02-11, nine months
+old) because the only release, v1.0.2 (`f41ed17`, 2020), lacks eight later commits that touch PHP.
+`testing/git/fetch-oauth2.sh` fetches that commit and checks a SHA-256 of the exported tree. The
+code (about 750 lines of PHP) has no `eval`, shell, file or raw curl calls; HTTP goes through
+Kanboard's own client, and the OAuth2 `state` check is Kanboard core's (`OAuthController`,
+session-bound). On Kanboard 1.2.47 it loads (`getCompatibleVersion` `>=1.0.37`), migrates
+(`plugin_schema_versions` oauth2 = 1, column `users.oauth2_user_id`), and its login creates the
+user with `oauth2_user_id = sub`, `is_ldap_user = 1` and `disable_login_form = 1` (verified by the
+`identity` step). Group sync is off (`oauth2_key_groups` empty).
+
+**Verified behaviour** (Forgejo 15.0.11, Authentik 2026.8.5, scenario step `identity`):
+
+| Question | Answer |
+| --- | --- |
+| Does a pre-provisioned user (source `authentik`, `login_name = sub`) receive the OIDC login? | Yes: same Forgejo user id as the broker's principal; nothing else is bound to the sub. |
+| Unknown sub with auto-registration off? | Callback ends on `/user/link_account`, signed out; no user is created. With `ENABLE_AUTO_REGISTRATION = true` (mutation) Forgejo creates a second user with a different id. |
+| Does `ENABLE_INTERNAL_SIGNIN = false` stop password web login? | `POST /user/login` answers 403 even with the correct password, and `/user/login` shows no password field. With it on (mutation) the same request signs in (303). |
+| Does API basic auth still work? | Yes (`ENABLE_BASIC_AUTHENTICATION`): `GET /api/v1/user` with the user's password is 200. |
+| Is the "link account" page closed by those settings? | **No.** `/user/link_account_signin` still checks a local password, binds the sub to that local user and signs in (verified with the Traefik rule removed). Traefik's `git-link-account` router answers 403 on it and on `_signup` (any case, extra or trailing slashes). |
+| CSRF on Forgejo 15 forms? | No form token; Forgejo checks `Origin`/`Sec-Fetch-*` headers, which curl does not send. |
+| Does Authentik need Redis? | No, not since 2025.10. Server + worker + Postgres only. |
+| Authentik 2026.8 provider gotcha? | `grant_types` must list `authorization_code`; an empty list rejects the code flow ("Invalid grant_type for provider"). |
+
+The `identity` step (curl only, Authentik's flow-executor API, re-runnable: the test users are
+reused and get a fresh random password each run):
+
+1. Authentik user `idtest-human` (API, akadmin token from `authentik.env`).
+2. Kanboard OAuth2 login; PDO: `users.oauth2_user_id` = the Authentik `uid` (the `sub`).
+3. `addProjectUser(28, …)` makes sync provision the human (it carries `oauth2_user_id`);
+   `POST /principals` (HMAC-signed, from `kb-suite`) then answers 200 with the same login.
+4. Forgejo OIDC login (SSO, no second password): the session's user id = that user's.
+5. Local user `idtest-local` with a known password: web login 403, API basic auth 200.
+6. Authentik user `idtest-unlinked`, never provisioned: lands on `/user/link_account`, nothing
+   bound; `link_account_signin` with `idtest-local`'s password is 403 and links nothing.
+
+`IDENTITY_PROVISION=0` (with a fresh `IDENTITY_USER`) skips step 3 and must fail.
 
 ---
 

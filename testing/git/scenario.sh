@@ -25,6 +25,13 @@
 #   SCENARIO_REPO           default kb-ghe2e/app
 #   BROKER_DIR              broker checkout, default ../kanboard-git-broker beside this repo
 #   KB_HELPER               a prebuilt git-credential-kanboard (default: cargo build from BROKER_DIR)
+# The identity step also reads AUTHENTIK_BOOTSTRAP_TOKEN from testing/git/authentik.env,
+# FORGEJO_ADMIN_TOKEN and FORGEJO_AUTHENTIK_SOURCE_ID from testing/git/.env and
+# GITHOST_HMAC_SECRET from testing/git/hmac.env (all gitignored, written by bootstrap.sh):
+#   IDENTITY_USER           the Authentik/Kanboard test human (default idtest-human)
+#   IDENTITY_LOCAL_USER     a local Forgejo user with a known password (default idtest-local)
+#   IDENTITY_UNLINKED_USER  an Authentik user that is never provisioned (default idtest-unlinked)
+#   IDENTITY_PROVISION      1 (default); 0 skips pre-provisioning, which must make the step fail
 # git gets its token from git-credential-kanboard (credential.helper = the built binary), which
 # reads the agent's API token from a 0600 copy (KB_TOKEN_FILE) and calls getGitCredential. Where
 # a step needs a token minted *before* a change (removal, close, outage), it keeps one helper
@@ -44,6 +51,11 @@ fi
 GIT_HOST="${GIT_HOST:-git.localhost}"
 GIT_PORT="${GIT_PORT:-8090}"
 BASE="http://${GIT_HOST}:${GIT_PORT}"
+# Authentik, also behind Traefik on :8090. Not *.localhost: libcurl pins those to loopback, and
+# Kanboard's OAuth2 back-channel (PHP curl) must reach the same issuer URL from kb-suite.
+AUTH_HOST="${AUTH_HOST:-auth.kb.test}"
+AUTH_BASE="http://${AUTH_HOST}:${GIT_PORT}"
+KANBOARD_URL="${KANBOARD_URL:-http://localhost:8081}"
 FORGEJO_CONTAINER="${FORGEJO_CONTAINER:-kb-git-forgejo}"
 BROKER_CONTAINER="${BROKER_CONTAINER:-kb-git-broker}"
 KANBOARD_CONTAINER="${KANBOARD_CONTAINER:-kb-suite}"
@@ -168,13 +180,19 @@ need_creds() {
     echo "  FAIL  missing credentials: ${missing[*]} (env or testing/git/scenario.env)" >&2
     return 1
   fi
-  if [[ -z "$WORK" ]]; then
-    WORK="$(mktemp -d "${TMPDIR:-/tmp}/kb-git-scenario.XXXXXX")"
-    chmod 700 "$WORK"
+  if [[ ! -f "${WORK:-/nonexistent}/agent.apitoken" ]]; then
+    ensure_work
     # The helper's KB_TOKEN_FILE must be 0600: a private copy of the agent's API token.
     (umask 077; printf '%s\n' "$AGENT_API_TOKEN" >"$WORK/agent.apitoken")
   fi
   need_helper
+}
+
+# A private (0700) temp dir for secrets and clones, removed on exit.
+ensure_work() {
+  [[ -n "$WORK" ]] && return 0
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/kb-git-scenario.XXXXXX")"
+  chmod 700 "$WORK"
 }
 
 # The credential helper is built on the host with cargo from the broker checkout (the same
@@ -566,6 +584,310 @@ step_8() {
   show_audit "$CORE_TASK" "$since"
 }
 
+# ---------------------------------------------------------------------------------------------
+# Identity: Authentik OIDC into Kanboard (OAuth2 plugin) and Forgejo, joined on the sub.
+
+IDENTITY_USER="${IDENTITY_USER:-idtest-human}"
+LOCAL_USER="${IDENTITY_LOCAL_USER:-idtest-local}"
+UNLINKED_USER="${IDENTITY_UNLINKED_USER:-idtest-unlinked}"
+IDENTITY_PROVISION="${IDENTITY_PROVISION:-1}"
+
+env_value() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1; } # env_value <KEY> <file>
+yesno() { "$@" && echo yes || echo no; }
+urlencode() { python3 -I -c 'import sys,urllib.parse as u; print(u.quote(sys.argv[1], safe=""))' "$1"; }
+
+# curl with a cookie jar; git.localhost and auth.kb.test are pinned to the host loopback.
+web() { # web <jar> <curl args...>
+  local jar="$1"
+  shift
+  curl -s --max-time 30 -b "$jar" -c "$jar" \
+    --resolve "${GIT_HOST}:${GIT_PORT}:127.0.0.1" --resolve "${AUTH_HOST}:${GIT_PORT}:127.0.0.1" "$@"
+}
+# "<status> <absolute Location>" of one request; redirects are not followed.
+web_hop() { # web_hop <jar> <url> [curl args...]
+  local jar="$1" url="$2"
+  shift 2
+  web "$jar" -o /dev/null -w '%{http_code} %{redirect_url}' "$@" "$url"
+}
+
+# Authentik admin API as akadmin; the bootstrap token is in a 0600 header file, never argv.
+ak_api() { # ak_api <method> <path> [curl args...]
+  local method="$1" path="$2"
+  shift 2
+  curl -s --max-time 30 --resolve "${AUTH_HOST}:${GIT_PORT}:127.0.0.1" -X "$method" \
+    -H @"$WORK/ak.hdr" -H 'Accept: application/json' "$@" "${AUTH_BASE}${path}"
+}
+
+# Runs Authentik flow <slug> through the flow-executor API, answering the identification and
+# password stages; prints where the flow sends the browser next.
+ak_flow() { # ak_flow <jar> <slug> <query> <user> <pwfile>
+  local jar="$1" url body comp csrf i
+  url="${AUTH_BASE}/api/v3/flows/executor/$2/?query=$(urlencode "$3")"
+  body="$(web "$jar" -H 'Accept: application/json' "$url")"
+  for i in 1 2 3 4 5 6; do
+    comp="$(json_get 'd.get("component","")' <<<"$body")"
+    case "$comp" in
+      xak-flow-redirect)
+        json_get 'd["to"]' <<<"$body"
+        return 0
+        ;;
+      ak-stage-identification)
+        python3 -I -c 'import json,sys; print(json.dumps({"component": sys.argv[1], "uid_field": sys.argv[2]}))' \
+          "$comp" "$4" >"$WORK/ak.answer"
+        ;;
+      ak-stage-password)
+        (umask 077; python3 -I -c 'import json,sys; print(json.dumps({"component": sys.argv[1], "password": open(sys.argv[2]).read().strip()}))' \
+          "$comp" "$5" >"$WORK/ak.answer")
+        ;;
+      *)
+        echo "    flow $2: unexpected challenge '${comp}': $(head -c 400 <<<"$body")" >&2
+        return 1
+        ;;
+    esac
+    csrf="$(awk '$6 == "authentik_csrf" { print $7 }' "$jar" 2>/dev/null | tail -1)"
+    # Authentik answers a POST with a redirect back to the executor; -L follows it as a GET.
+    body="$(web "$jar" -L -H 'Accept: application/json' -H 'Content-Type: application/json' \
+      -H "X-authentik-CSRF: ${csrf}" -H "Referer: ${AUTH_BASE}/if/flow/$2/" \
+      --data-binary @"$WORK/ak.answer" "$url")"
+    rm -f "$WORK/ak.answer"
+  done
+  echo "    flow $2: still at '${comp}' after six answers (wrong password?)" >&2
+  return 1
+}
+
+# Follows an OIDC authorize URL through Authentik (logging in as <user> when asked) until it
+# leaves Authentik; prints that URL: the client's callback with ?code=.
+ak_authorize() { # ak_authorize <jar> <authorize-url> <user> <pwfile>
+  local jar="$1" url="$2" hop slug query i
+  for i in $(seq 1 12); do
+    case "$url" in
+      "${AUTH_BASE}"/if/flow/*)
+        read -r slug query < <(python3 -I -c '
+import sys,urllib.parse as u
+p=u.urlsplit(sys.argv[1]); print(p.path.split("/")[3], p.query)' "$url")
+        url="$(ak_flow "$jar" "$slug" "$query" "$3" "$4")" || return 1
+        [[ "$url" == /* ]] && url="${AUTH_BASE}${url}"
+        ;;
+      "${AUTH_BASE}"/*)
+        hop="$(web_hop "$jar" "$url")"
+        [[ -n "${hop#* }" ]] || { echo "    no redirect from ${url%%\?*} (${hop})" >&2; return 1; }
+        url="${hop#* }"
+        ;;
+      *)
+        echo "$url"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# Forgejo admin API (GET) inside the Forgejo container; the token goes in on stdin.
+fj_api() { # fj_api <path>
+  printf 'Authorization: token %s\n' "$(env_value FORGEJO_ADMIN_TOKEN "$HERE/.env")" |
+    docker exec -i "$FORGEJO_CONTAINER" curl -s --max-time 10 -H @- "http://localhost:3000$1"
+}
+
+# "id oauth2_user_id" of a Kanboard user, read with PDO from the :8081 dev db.
+kb_user() { # kb_user <username>
+  docker exec "$KANBOARD_CONTAINER" php -r '
+$p = new PDO("sqlite:/var/www/app/data/db.sqlite");
+$s = $p->prepare("SELECT id, oauth2_user_id FROM users WHERE username = ?");
+$s->execute([$argv[1]]);
+if ($r = $s->fetch(PDO::FETCH_NUM)) { echo $r[0], " ", $r[1]; }' -- "$1" 2>/dev/null
+}
+
+# An HMAC-signed broker call (the broker has no host port, so it is sent from kb-suite, as
+# GitHost does). Prints the body, then the status on its own line.
+broker_post() { # broker_post <path> <json>
+  local ts nonce sig
+  ts="$(date +%s)"
+  nonce="scenario-$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
+  sig="$(env_value GITHOST_HMAC_SECRET "$HERE/hmac.env" | python3 -I -c '
+import hashlib,hmac,sys
+ts,nonce,method,path,body=sys.argv[1:]
+msg="\n".join([ts,nonce,method,path,hashlib.sha256(body.encode()).hexdigest()])
+print(hmac.new(sys.stdin.read().strip().encode(),msg.encode(),hashlib.sha256).hexdigest())' \
+    "$ts" "$nonce" POST "$1" "$2")"
+  printf '%s' "$2" | docker exec -i "$KANBOARD_CONTAINER" curl -s --max-time 30 -w '\n%{http_code}' \
+    -H 'Content-Type: application/json' -H "X-GitHost-Timestamp: $ts" -H "X-GitHost-Nonce: $nonce" \
+    -H "X-GitHost-Signature: $sig" --data-binary @- "http://broker:8080$1"
+}
+
+# The login of the Forgejo session in <jar> (from /user/settings), or nothing when signed out.
+fj_session_login() { # fj_session_login <jar>
+  web "$1" "${BASE}/user/settings" | sed -n 's/.*<input name="name" value="\([^"]*\)".*/\1/p' | head -1
+}
+
+# Makes sure Authentik user <name> exists (reused across runs) and gives it a fresh random
+# password, written to <pwfile> (0600). Prints "<pk> <sub>": the OIDC sub of both providers
+# (sub_mode hashed_user_id) is the user's uid.
+ak_user() { # ak_user <name> <pwfile>
+  local pk out
+  pk="$(ak_api GET "/api/v3/core/users/?username=$(urlencode "$1")" |
+    json_get 'd["results"][0]["pk"] if d.get("results") else ""')"
+  if [[ -z "$pk" ]]; then
+    out="$(ak_api POST /api/v3/core/users/ -H 'Content-Type: application/json' --data-binary "$(python3 -I -c '
+import json,sys; u=sys.argv[1]
+print(json.dumps({"username": u, "name": "Identity Test " + u, "email": u + "@kb.test", "is_active": True, "path": "users"}))' "$1")")"
+    pk="$(json_get 'd["pk"]' <<<"$out")"
+    echo "  created Authentik user $1 (pk ${pk})" >&2
+  else
+    echo "  reusing Authentik user $1 (pk ${pk})" >&2
+  fi
+  [[ -n "$pk" ]] || return 1
+  (umask 077
+   od -An -tx1 -N24 /dev/urandom | tr -d ' \n' >"$2"
+   python3 -I -c 'import json,sys; print(json.dumps({"password": open(sys.argv[1]).read().strip()}))' "$2" >"$WORK/ak.setpw")
+  out="$(ak_api POST "/api/v3/core/users/${pk}/set_password/" -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' --data-binary @"$WORK/ak.setpw")"
+  rm -f "$WORK/ak.setpw"
+  [[ "$out" == 204 ]] || { echo "  set_password for $1: $out" >&2; return 1; }
+  echo "$pk $(ak_api GET "/api/v3/core/users/${pk}/" | json_get 'd["uid"]')"
+}
+
+step_identity() {
+  echo "identity: ${IDENTITY_USER} signs in to Kanboard and Forgejo through Authentik (${AUTH_BASE}); joined on the sub"
+  ensure_work
+  local tok
+  tok="$(env_value AUTHENTIK_BOOTSTRAP_TOKEN "$HERE/authentik.env")"
+  check "testing/git/authentik.env holds the Authentik API token" yes "$(yesno test -n "$tok")"
+  [[ -n "$tok" ]] || return
+  (umask 077; printf 'Authorization: Bearer %s\n' "$tok" >"$WORK/ak.hdr")
+  check "Authentik is ready through Traefik (GET ${AUTH_BASE}/-/health/ready/)" 200 \
+    "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --resolve "${AUTH_HOST}:${GIT_PORT}:127.0.0.1" "${AUTH_BASE}/-/health/ready/")"
+
+  # 1. The Authentik test user, reused across runs, with a fresh random password each run.
+  local pk sub jar="$WORK/identity.jar" pw="$WORK/identity.pw" out hop cb
+  read -r pk sub < <(ak_user "$IDENTITY_USER" "$pw")
+  check "Authentik user ${IDENTITY_USER} exists and has a fresh random password" yes \
+    "$(yesno test -n "$sub")"
+  [[ -n "$sub" ]] || return
+  rm -f "$jar"
+
+  # 2. Kanboard: the OAuth2 plugin's login creates (or finds) the user by oauth2_user_id = sub.
+  echo "  \$ GET ${KANBOARD_URL}/oauth/callback   (Kanboard's OAuth2 plugin login link)"
+  hop="$(web_hop "$jar" "${KANBOARD_URL}/oauth/callback")"
+  check "Kanboard redirects to Authentik's authorize endpoint" yes \
+    "$(yesno test "${hop#* }" != "${hop#* ${AUTH_BASE}/application/o/authorize/}")"
+  cb="$(ak_authorize "$jar" "${hop#* }" "$IDENTITY_USER" "$pw")"
+  check "Authentik sends the browser back to Kanboard's callback with a code" yes \
+    "$([[ "$cb" == "${KANBOARD_URL}/oauth/callback?"*code=* ]] && echo yes || echo "no (${cb%%\?*})")"
+  hop="$(web_hop "$jar" "$cb")"
+  echo "  callback: ${hop}"
+  check "Kanboard accepts the code and logs the user in (302 into the app)" 302 "${hop%% *}"
+  local row kb_id kb_sub
+  row="$(kb_user "$IDENTITY_USER")"
+  kb_id="${row%% *}"
+  kb_sub="${row#* }"
+  echo "  Kanboard user ${IDENTITY_USER}: id ${kb_id:-none}"
+  # The dashboard's header links the signed-in user's own profile.
+  check "the Kanboard session is ${IDENTITY_USER}'s (dashboard links /user/show/${kb_id:-?})" yes \
+    "$(yesno grep -q "href=\"/user/show/${kb_id:-none}\"" <(web "$jar" "${KANBOARD_URL}/dashboard"))"
+  check "PDO: users.oauth2_user_id of ${IDENTITY_USER} = the Authentik sub" "$sub" "${kb_sub:-<none>}"
+
+  # 3. The broker pre-provisions the human: sync (nudged by addProjectUser) and POST /principals.
+  local src fj_id="" fj_login="" i
+  src="$(env_value FORGEJO_AUTHENTIK_SOURCE_ID "$HERE/.env")"
+  if [[ "$IDENTITY_PROVISION" == 1 ]]; then
+    if [[ -n "${KANBOARD_USERNAME:-}" && -n "${KANBOARD_API_KEY:-}" && "$kb_id" =~ ^[0-9]+$ ]]; then
+      echo "  \$ addProjectUser(${PROJECT_ID}, ${kb_id}, project-member): $(rpc_admin addProjectUser \
+        "{\"project_id\":$PROJECT_ID,\"user_id\":$kb_id,\"role\":\"project-member\"}" | json_get 'd.get("result")')"
+    fi
+    for i in $(seq 1 20); do
+      read -r fj_id fj_login < <(fj_api "/api/v1/admin/users?source_id=${src}&login_name=$(urlencode "$sub")" |
+        python3 -I -c '
+import json,sys
+src,sub=int(sys.argv[1]),sys.argv[2]
+us=[u for u in json.load(sys.stdin) if u.get("source_id")==src and u.get("login_name")==sub]
+print(us[0]["id"], us[0]["login"]) if len(us)==1 else print("")' "${src:-0}" "$sub" 2>/dev/null)
+      [[ -n "$fj_id" ]] && break
+      sleep 1
+    done
+    check "sync provisioned a Forgejo user on source ${src} with login_name = sub" yes \
+      "$([[ -n "$fj_id" ]] && echo "yes" || echo no)"
+    echo "  Forgejo user: ${fj_login:-none} (id ${fj_id:-none}) after ${i} s"
+    out="$(broker_post /principals "{\"user_id\":${kb_id:-0},\"username\":\"${IDENTITY_USER}\",\"kind\":\"human\",\"authentik_sub\":\"${sub}\"}")"
+    echo "  POST /principals: $(tr '\n' ' ' <<<"$out")"
+    check "POST /principals is idempotent: 200 with that login" "200 ${fj_login}" \
+      "$(tail -1 <<<"$out") $(head -n -1 <<<"$out" | json_get 'd.get("forgejo_username")')"
+  else
+    echo "  IDENTITY_PROVISION=0: pre-provisioning skipped"
+  fi
+
+  # 4. Forgejo: the OIDC login lands in that same account; nothing is auto-created.
+  echo "  \$ GET ${BASE}/user/oauth2/authentik   (Forgejo's sign-in button)"
+  hop="$(web_hop "$jar" "${BASE}/user/oauth2/authentik")"
+  check "Forgejo redirects to Authentik's authorize endpoint" yes \
+    "$(yesno test "${hop#* }" != "${hop#* ${AUTH_BASE}/application/o/authorize/}")"
+  cb="$(ak_authorize "$jar" "${hop#* }" "$IDENTITY_USER" "$pw")"
+  check "Authentik (already signed in: SSO) sends the browser back to Forgejo's callback" yes \
+    "$([[ "$cb" == "${BASE}/user/oauth2/authentik/callback?"*code=* ]] && echo yes || echo "no (${cb%%\?*})")"
+  hop="$(web_hop "$jar" "$cb")"
+  echo "  callback: ${hop}"
+  local s_login s_id n
+  s_login="$(fj_session_login "$jar")"
+  s_id="$([[ -n "$s_login" ]] && fj_api "/api/v1/users/${s_login}" | json_get 'd["id"]')"
+  echo "  Forgejo session: ${s_login:-signed out} (id ${s_id:-none})"
+  check "the Forgejo session is the pre-provisioned user (same id)" "${fj_id:-<pre-provisioned>}" "${s_id:-<signed out>}"
+  n="$(fj_api "/api/v1/admin/users?source_id=${src}&login_name=$(urlencode "$sub")" |
+    python3 -I -c 'import json,sys; print(sum(1 for u in json.load(sys.stdin) if u.get("login_name")==sys.argv[1]))' "$sub" 2>/dev/null)"
+  check "exactly one Forgejo user is bound to the sub (no auto-created second account)" 1 "${n:-0}"
+
+  # 5. Password sign-in on the web is off (agents are local users guarded by a password), but
+  #    API basic auth still works: the broker's mint flow basic-auths as the agent. Forgejo 15
+  #    has no CSRF form token (it checks Origin/Sec-Fetch headers, which curl does not send), so a
+  #    403 here is the sign-in switch, not CSRF.
+  local lpw="$WORK/local.pw" ljar="$WORK/local.jar"
+  (umask 077; od -An -tx1 -N24 /dev/urandom | tr -d ' \n' >"$lpw")
+  if ! fj_api "/api/v1/users/${LOCAL_USER}" | grep -q '"id"'; then
+    LPW="$(<"$lpw")" docker exec -u git -e LPW "$FORGEJO_CONTAINER" sh -c \
+      'forgejo admin user create --username "$1" --email "$1@agents.invalid" --password "$LPW" --must-change-password=false' \
+      sh "$LOCAL_USER" >/dev/null 2>&1
+  fi
+  LPW="$(<"$lpw")" docker exec -u git -e LPW "$FORGEJO_CONTAINER" sh -c \
+    'forgejo admin user change-password --username "$1" --password "$LPW" --must-change-password=false' \
+    sh "$LOCAL_USER" >/dev/null 2>&1
+  (umask 077; python3 -I -c '
+import sys,urllib.parse as u
+sys.stdout.write(u.urlencode({"user_name": sys.argv[1], "password": open(sys.argv[2]).read().strip()}))' \
+    "$LOCAL_USER" "$lpw" >"$WORK/local.form")
+  rm -f "$ljar"
+  check "the sign-in page has no password field" no \
+    "$(yesno grep -q 'name="password"' <(web "$ljar" "${BASE}/user/login"))"
+  check "POST /user/login with ${LOCAL_USER}'s correct password is refused (403)" 403 \
+    "$(web_hop "$ljar" "${BASE}/user/login" --data-binary @"$WORK/local.form" | cut -d' ' -f1)"
+  check "  ... and no session: /user/settings is not ${LOCAL_USER}'s" "" "$(fj_session_login "$ljar")"
+  check "API basic auth as ${LOCAL_USER} still works (GET /api/v1/user is 200)" 200 \
+    "$(printf 'user = "%s:%s"\n' "$LOCAL_USER" "$(<"$lpw")" |
+      docker exec -i "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' -K - http://localhost:3000/api/v1/user)"
+
+  # 6. An Authentik user nobody provisioned: Forgejo creates nothing and links nothing. Its
+  #    "link account" page would sign in with a local password and bind the sub to that user;
+  #    Traefik closes that form (router git-link-account).
+  local upw="$WORK/unlinked.pw" ujar="$WORK/unlinked.jar" usub
+  read -r _ usub < <(ak_user "$UNLINKED_USER" "$upw")
+  check "Authentik user ${UNLINKED_USER} exists and has a fresh random password" yes "$(yesno test -n "$usub")"
+  rm -f "$ujar"
+  hop="$(web_hop "$ujar" "${BASE}/user/oauth2/authentik")"
+  cb="$(ak_authorize "$ujar" "${hop#* }" "$UNLINKED_USER" "$upw")"
+  hop="$(web_hop "$ujar" "$cb")"
+  echo "  ${UNLINKED_USER} callback: ${hop}"
+  check "an unprovisioned sub ends on /user/link_account, signed out" "${BASE}/user/link_account " \
+    "${hop#* } $(fj_session_login "$ujar")"
+  check "no Forgejo user is bound to that sub" 0 \
+    "$(fj_api "/api/v1/admin/users?source_id=${src}&login_name=$(urlencode "${usub:-none}")" |
+      python3 -I -c 'import json,sys; print(sum(1 for u in json.load(sys.stdin) if u.get("login_name")==sys.argv[1]))' "${usub:-none}" 2>/dev/null)"
+  check "POST /user/link_account_signin with ${LOCAL_USER}'s correct password is 403" 403 \
+    "$(web_hop "$ujar" "${BASE}/user/link_account_signin" --data-binary @"$WORK/local.form" | cut -d' ' -f1)"
+  check "  ... and no session" "" "$(fj_session_login "$ujar")"
+  rm -f "$WORK/local.form" "$ujar"
+  hop="$(web_hop "$ujar" "${BASE}/user/oauth2/authentik")"
+  cb="$(ak_authorize "$ujar" "${hop#* }" "$UNLINKED_USER" "$upw")"
+  check "  ... and nothing was linked: a new login still ends on /user/link_account" "${BASE}/user/link_account" \
+    "$(web_hop "$ujar" "$cb" | cut -d' ' -f2)"
+}
+
 # Dispatch table, in run order for `all`: <name> <function> <description>. The spec's numeric
 # step ids only (ruling F10).
 STEPS=(
@@ -575,6 +897,8 @@ STEPS=(
   "5a        step_5a        push to another agent's prefix and to main denied by branch protection (authz ok); status post 403"
   "7         step_7         removeProjectUser: next fetch denied; re-add; closeTask: token dead (token_revoked/task_closed)"
   "8         step_8         docker pause kb-suite: fetch denied (kanboard_unreachable); unpause: allowed"
+  # Not a numbered spec step: the spec's sequencing exit for identity (Task 13).
+  "identity  step_identity  Authentik OIDC: Kanboard oauth2_user_id = sub; Forgejo login lands in the pre-provisioned user; no password web login"
 )
 
 step_fn() { # step_fn <name>: prints the function of a step, or nothing

@@ -1,6 +1,7 @@
 # Traefik dynamic config for the git hosting P1 overlay (file provider, watched).
 #
 # Every request to git.localhost lands on exactly one router; the highest priority wins.
+#   1100 git-link-account  /user/link_account_signin and _signup: always 403 (identity, below)
 #   1000 git-exempt        runner API, static assets, health: no ForwardAuth (spec)
 #    900 git-repo          git smart-HTTP (with or without .git), dumb-HTTP, LFS and the
 #                          token-auth web routes raw/archive/media: ForwardAuth (spec + F1)
@@ -9,6 +10,16 @@
 #                          ForwardAuth (F1)
 #      1 git-web           the cookie-session web UI: no ForwardAuth in P1 (spec)
 # The broker answers /authz with 200 (allow) or 403; the skeleton denies everything.
+#
+# git-link-account: Forgejo 15 shows an OIDC login with an unknown sub the "link account" page,
+# whose sign-in form checks a local password even with ENABLE_INTERNAL_SIGNIN = false, then links
+# the sub to that local user and signs in. Agents are local users guarded only by a password, so
+# both forms are closed here. Forgejo strips extra and trailing slashes; the regexp covers those
+# and any case.
+#
+# auth.kb.test is Authentik (identity for humans): one router, no ForwardAuth. Traefik keeps the
+# Host header, so Authentik's issuer is http://auth.kb.test:8090/application/o/<slug>/ for the
+# browser and for containers alike.
 http:
   middlewares:
     broker-authz:
@@ -16,8 +27,19 @@ http:
         address: http://broker:8080/authz
         # Traefik sets X-Forwarded-Method/-Uri/-Host/-Proto itself; never trust a client's.
         trustForwardHeader: false
+    # Nobody is in TEST-NET-1 (RFC 5737), so every request gets 403.
+    deny-all:
+      ipAllowList:
+        sourceRange: ["192.0.2.0/32"]
 
   routers:
+    git-link-account:
+      rule: Host(`git.localhost`) && PathRegexp(`(?i)^/+user/+link_account_sign(in|up)/*$`)
+      priority: 1100
+      entryPoints: [web]
+      middlewares: [deny-all]
+      service: forgejo
+
     git-exempt:
       rule: >-
         Host(`git.localhost`) && (Path(`/api/healthz`) || PathPrefix(`/api/actions/`)
@@ -57,7 +79,16 @@ http:
       entryPoints: [web]
       service: forgejo
 
+    authentik:
+      rule: Host(`auth.kb.test`)
+      entryPoints: [web]
+      service: authentik
+
   services:
+    authentik:
+      loadBalancer:
+        servers:
+          - url: http://authentik-server:9000
     forgejo:
       loadBalancer:
         servers:
