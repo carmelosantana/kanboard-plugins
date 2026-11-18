@@ -36,6 +36,7 @@ services:
       - ../Presence:/var/www/app/plugins/Presence
       - ../RpcGuard:/var/www/app/plugins/RpcGuard
       - ../ModMenuUpdater:/var/www/app/plugins/ModMenuUpdater
+      - ../Vault:/var/www/app/plugins/Vault
 
 volumes:
   kb-suite-data:
