@@ -495,26 +495,25 @@ step_7() {
 
   echo "  \$ addProjectUser(${PROJECT_ID}, ${AGENT_USER_ID}, ${role})"
   restore_membership
-  # Forgejo team membership and the agent's branch rule come back with the plugin's sync nudge.
-  # The nudge can be cut short (its 2 s client timeout drops the broker's inline sync), leaving
-  # an older catch-all ahead of the new agent rule until the next reconcile sweep (30 s). So
-  # wait, bounded, for a push to the agent's own prefix, and report how long it took: later
-  # steps and the next run need the rule set restored.
+  # Forgejo team membership and the agent's branch rule come back with the plugin's sync nudge,
+  # which the broker runs detached (202 at once). Until that sync has made a new catch-all, the
+  # old one still matches first, so allow it a few seconds: bounded at 10 s, well under one
+  # reconcile sweep (30 s), and report how long it took.
   local ok=no t0 n=0 b
   t0="$(date +%s)"
   out="$(run_git git_helper "$task" -C "$clone" fetch)"
   check "after re-adding, a fetch with the helper is allowed again" "exit=0" "$(last_exit "$out")"
   ensure_fj_user_for "$task"
   git -C "$clone" checkout --quiet -B scenario-7 2>/dev/null
-  while (($(date +%s) - t0 < 90)); do
+  while (($(date +%s) - t0 < 10)); do
     n=$((n + 1))
     b="agent/${FJ_USER}/scenario-7-$(date +%Y%m%d%H%M%S)-$$-$n"
     out="$(run_git git_helper "$task" -C "$clone" push --quiet origin "HEAD:refs/heads/$b")"
     [[ "$(last_exit "$out")" == "exit=0" ]] && { ok=yes; break; }
-    sleep 5
+    sleep 1
   done
   echo "  own-prefix push accepted again after $(($(date +%s) - t0)) s ($n attempt(s))"
-  check "after re-adding, a push to the agent's own prefix is accepted (within 90 s)" yes "$ok"
+  check "after re-adding, a push to the agent's own prefix is accepted (within 10 s)" yes "$ok"
 
   helper_get "$task" "$WORK/cred.7b" 2>/dev/null
   check "helper minted a token before the close" yes "$([[ -n "$(cred_field password "$WORK/cred.7b")" ]] && echo yes || echo no)"
