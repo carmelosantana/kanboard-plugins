@@ -133,6 +133,7 @@ A **principal** is a human user or an agent that has enrolled in the vault. Each
   2. Delete the queue row in the **same** transaction.
 
   A crash rolls the whole item back.
+- **Expiry reconciliation on write.** Every payload write, under the exclusive lock, first reconciles that object. Expired direct grants, and expired grants on any ancestor, are processed as removals right there, which creates any re-key the barrier needs. Grant expiry doesn't wait for the once-a-minute purge. A test edits immediately after expiry while the purge is throttled.
 - **Write barrier.** An object that has a queue row can't take a payload update until it has been re-keyed. The writer, who holds the DEK, re-keys it inline in the same transaction, then applies the edit. So data written after a removal is never encrypted under a DEK that a removed principal could recover from an old backup. Rotation uses the same barrier (below).
 - **Edit permission** lets a grantee update an entry: a new `version`, with optimistic concurrency on `version`. It also lets them create entries in a shared group. A new entry is owned by the group owner and sealed to the group's effective recipients. Only the owner can grant, revoke, delete or move objects.
 
@@ -152,12 +153,13 @@ Two kinds of wrap are rebuilt without the user present:
 
 **State machine.** The rotation is stored in `vault_rotations`, one row per principal: `old_pk`, `new_pk`, `phase`. Each phase commits under the exclusive lock.
 1. **start** (one transaction):
-   - Generate `sk2` and store the **pending** wraps for every surviving factor, marked `status = pending`.
+   - Generate `sk2`. For every surviving factor, store one **pending** wrap, `status = pending`, whose plaintext is the rotation bundle `enc("rotbundle", sk1, sk2)`. So each surviving factor can recover **both** keys.
+   - **Delete the old active wraps** in the same transaction. From this point the old credentials (for example the old passphrase) open nothing, even in a backup taken afterwards.
    - Set the principal's state to `rotating`.
    - Lock all of the principal's *other* vault sessions.
    - Add `enc_sk_next` (`sk2` under the same `session_key`) to the current session row.
 
-   From now on, any surviving factor unwraps both the active and the pending wrap.
+   From now on, any surviving factor unwraps the bundle. Vault checks that both public keys match before using either: `sk1` against `old_pk`, `sk2` against `new_pk`.
 2. **sweep:** in batches, one transaction each, for every object that has a key row for this principal at `principal_key_gen = old`:
    - re-check live access;
    - generate a new DEK, re-encrypt, and set `key_epoch + 1`;
@@ -167,9 +169,9 @@ Two kinds of wrap are rebuilt without the user present:
    While the state is `rotating`, new grants seal to **both** keys, and the write barrier applies to every object still holding an old-generation row for the principal.
 3. **finish** (one transaction):
    - Require that no key row for the principal is at the old generation. If any is, go back to *sweep*.
-   - Promote the pending wraps, delete the old wraps, set `public_key = new_pk` and `key_gen + 1`, move `enc_sk_next` into `enc_sk`, clear `rotating` and delete the `vault_rotations` row.
+   - Re-write each pending wrap as an ordinary active wrap of `sk2` alone. Drop `sk1` from every row, set `public_key = new_pk` and `key_gen + 1`, move `enc_sk_next` into `enc_sk`, clear `rotating` and delete the `vault_rotations` row.
 
-**Crash recovery.** If rotation stops at any point (a crash, an expired session, a closed tab), the next unlock with any surviving factor unwraps both generations and **resumes** from the current phase. Nothing is ever sealed only to a key that no stored wrap can open.
+**Crash recovery.** If rotation stops at any point (a crash, an expired session, a closed tab), the next unlock with any surviving factor, for example the *new* passphrase, opens the bundle. It recovers and checks both keys, then **resumes** from the current phase. Nothing is ever sealed to a key that no stored wrap can open. The test deletes the initiating session, then resumes using only the new credentials.
 
 **Recovery and org recovery** have no hardware key present, so they remove all hardware keys during the rotation. If hardware keys are required, the user must enrol two new keys at their next unlock.
 
@@ -290,10 +292,10 @@ Vault *recommends* Agents. Without Agents, agent features are hidden and the JSO
   1. Create the agent's new keypair and wrap.
   2. **Agent-created objects:** the owner holds an Edit grant on them, and therefore their DEKs. Each is re-keyed (new DEK, `key_epoch + 1`) and sealed to the agent's new key and to the owner.
   3. **Objects the owner owns that were shared with the agent** are re-sealed to the agent's new key, then re-keyed.
-  4. **Objects other users shared with the agent:** the agent's key rows for them are deleted and the objects queued for re-key. Each of those owners gets a notice: "agent A was re-keyed; re-share?". Only they can re-share, because the owner of the agent can't restore access to objects they don't own.
+  4. **Objects other users shared with the agent.** Vault first **deletes those grant sources**: every direct grant and every ancestor-group grant to this agent whose owner isn't the agent's owner. Each deletion is audited as `revoke`. Then it deletes the agent's key rows for those objects and queues them for re-key. A later re-key therefore can't seal anything to the agent's new key. Each of those owners gets a notice: "agent A was re-keyed; re-share?". Re-sharing is an ordinary new grant that only they can make.
   5. Delete the old wrap and the agent's rate state.
 
-  A test proves an agent's owner can't restore a grant that another user controls.
+  A test proves an agent's owner can't restore a grant that another user controls, including after the re-key queue runs and grants are recomputed.
 
 **Auth.** Every Vault JSON-RPC call needs:
 
@@ -692,6 +694,14 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 | The MCP client | builder | Carmelo: the safest option, a separate follow-up in the MCP server's repo, with key-handling requirements (see *Agents*). |
 | Production behind a proxy | builder | Carmelo: likely a Cloudflare Tunnel. Added the `CF-Connecting-IP` rule and the origin-exposure precondition (see *Throttling*). |
 | Spec approval | — | Carmelo approved, 2026-11-18. |
+
+**Round 3, 2026-11-18** (both reviews re-checked the round-2 resolutions). Rated **CLOSED**: rotation ceremony, revocation snapshot, write barrier, subtree moves, WebAuthn, proxy trust, audit allowlist, `auth.success`, queue atomicity, share reservations. Three high findings, both reviews agreeing on the first two:
+
+| Finding | Resolution |
+|---|---|
+| A changed factor (the new passphrase) couldn't open `sk1`, so rotation couldn't resume, and the old passphrase still opened `sk1` | Pending wraps carry a **rotation bundle** (`sk1` and `sk2`), and the old wraps are deleted at *start*. `sk1` is dropped only at *finish*. |
+| Re-enrolment left third-party grants live, so the queue re-sealed to the agent | Third-party grant sources are **deleted** (audited, owners notified) before the key rows are deleted and the objects queued. |
+| Expiry could come before the barrier existed (the purge runs once a minute) | **Expiry reconciliation** runs inside every payload write. |
 
 **Round 2, 2026-11-18.** Two reviews ran: `/codex:adversarial-review` and `/powerup:codex-security`. The run header shows `gpt-5.6-sol` was served; the program was requested and accepted, but the served program is unverified. Round-1 items the security review rated **CLOSED**: KDF per wrap, throttling, kdbx export gate, XML worker, AD/rollback, shares, share passphrases, recovery encoding, CSRF/XSS, admin preconditions, and all builder items except those reopened below.
 
