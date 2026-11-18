@@ -11,9 +11,14 @@
 #    change-password` resets it if the web UI is ever needed.
 # 3. Mints an admin token with the scopes the broker needs, unless testing/git/.env already holds
 #    one that Forgejo still accepts.
-# 4. Writes testing/git/.env (gitignored, mode 600): FORGEJO_URL and FORGEJO_ADMIN_TOKEN, the
+# 4. Creates a placeholder OAuth2 auth source named `authentik`, unless one exists. Human
+#    principals are bound to it (login_name = Authentik sub). Task 13 reconfigures it in place
+#    against the real Authentik, keeping its id. `forgejo admin auth add-oauth` fetches the
+#    discovery URL at creation, so the placeholder points at Forgejo's own OIDC discovery document.
+# 5. Writes testing/git/.env (gitignored, mode 600): FORGEJO_URL, FORGEJO_ADMIN_TOKEN and
+#    FORGEJO_AUTHENTIK_SOURCE_ID (looked up by name; Forgejo has no API for auth sources), the
 #    broker's env file, and recreates the broker if the file changed.
-# Re-running changes nothing when the admin and a working token already exist.
+# Re-running changes nothing when the admin, a working token and the source already exist.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,6 +29,8 @@ ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-kb-admin@git.localhost}"
 # The broker reaches Forgejo directly on the compose network; ForwardAuth is for everyone else.
 FORGEJO_URL="${FORGEJO_URL:-http://forgejo:3000}"
 SCOPES="write:admin,write:organization,write:repository,write:user,read:user"
+AUTH_SOURCE="authentik"
+AUTH_SOURCE_DISCOVERY="http://localhost:3000/.well-known/openid-configuration"
 
 fj() { docker exec -u git "$FORGEJO_CONTAINER" forgejo "$@"; }
 
@@ -65,7 +72,22 @@ else
   echo "bootstrap: minted admin token ($SCOPES)"
 fi
 
-new_env="$(printf 'FORGEJO_URL=%s\nFORGEJO_ADMIN_TOKEN=%s\n' "$FORGEJO_URL" "$token")"
+# `admin auth list` prints "ID<TAB>Name<TAB>..." with a header row.
+source_id() { fj admin auth list | awk -v n="$AUTH_SOURCE" 'NR > 1 && $2 == n { print $1 }'; }
+source="$(source_id)"
+if [[ -n "$source" ]]; then
+  echo "bootstrap: auth source $AUTH_SOURCE exists (id $source)"
+else
+  fj admin auth add-oauth --name "$AUTH_SOURCE" --provider openidConnect \
+    --key placeholder-client-id --secret placeholder-client-secret \
+    --auto-discover-url "$AUTH_SOURCE_DISCOVERY" >/dev/null
+  source="$(source_id)"
+  [[ -n "$source" ]] || { echo "bootstrap: auth source $AUTH_SOURCE not created" >&2; exit 1; }
+  echo "bootstrap: created placeholder auth source $AUTH_SOURCE (id $source)"
+fi
+
+new_env="$(printf 'FORGEJO_URL=%s\nFORGEJO_ADMIN_TOKEN=%s\nFORGEJO_AUTHENTIK_SOURCE_ID=%s\n' \
+  "$FORGEJO_URL" "$token" "$source")"
 if [[ -f "$ENV_FILE" && "$(cat "$ENV_FILE")" == "$new_env" ]]; then
   echo "bootstrap: testing/git/.env unchanged"
 else
