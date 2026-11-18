@@ -1,0 +1,381 @@
+{
+    "version": 1,
+    "description": "Shared HMAC vectors for GitHost <-> broker. signature = hex(HMAC-SHA256(secret, ts \\n nonce \\n METHOD \\n path?query \\n sha256hex(body))). ts within +-60 s of now; a nonce seen in the last 120 s is rejected; a rejected request never records its nonce. A step may override the case now.",
+    "secret": "githost-test-secret-0123456789abcdef",
+    "max_skew_seconds": 60,
+    "nonce_ttl_seconds": 120,
+    "signing": [
+        {
+            "secret": "githost-test-secret-0123456789abcdef",
+            "ts": "1763400000",
+            "nonce": "n-valid-0000000000000001",
+            "method": "POST",
+            "path": "/authz",
+            "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+            "canonical": "1763400000\nn-valid-0000000000000001\nPOST\n/authz\n26ee98aea450f111d2135eabb1ee13811b68237adb05ec50e2cea5e05897e3f0",
+            "signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+        },
+        {
+            "secret": "githost-test-secret-0123456789abcdef",
+            "ts": "1763400000",
+            "nonce": "n-query-0000000000000002",
+            "method": "DELETE",
+            "path": "/tokens?task_id=12",
+            "body": "",
+            "canonical": "1763400000\nn-query-0000000000000002\nDELETE\n/tokens?task_id=12\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "signature": "1e3e316e366af40090fb2a511d02dc789ab4569495df2e7930d42dd54e35a002"
+        }
+    ],
+    "cases": [
+        {
+            "name": "valid",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "accept"
+            ]
+        },
+        {
+            "name": "valid_with_query",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "DELETE",
+                    "path": "/tokens?task_id=12",
+                    "body": "",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-query-0000000000000002",
+                        "X-GitHost-Signature": "1e3e316e366af40090fb2a511d02dc789ab4569495df2e7930d42dd54e35a002"
+                    }
+                }
+            ],
+            "expect": [
+                "accept"
+            ]
+        },
+        {
+            "name": "tampered_body",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"admin\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "tampered_path",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz2",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "tampered_query",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "DELETE",
+                    "path": "/tokens?task_id=13",
+                    "body": "",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-query-0000000000000002",
+                        "X-GitHost-Signature": "1e3e316e366af40090fb2a511d02dc789ab4569495df2e7930d42dd54e35a002"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "tampered_method",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "PUT",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "wrong_secret",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "814a0e6b2f18d7ef3854da5d124d3a069120df97d0fb5fd9b8f72279b656bc28"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "ts_plus_61",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400061",
+                        "X-GitHost-Nonce": "n-skew-00000000000000p61",
+                        "X-GitHost-Signature": "0fe64a02c7ead94f77786839ba58b26f66df4ed075ef0ebc90444c7a4733d695"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "ts_minus_61",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763399939",
+                        "X-GitHost-Nonce": "n-skew-00000000000000m61",
+                        "X-GitHost-Signature": "4e5b06d044738d71060c41e3460acaee996a8344d0260ff3d2bac35ea397ba18"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "ts_plus_60",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400060",
+                        "X-GitHost-Nonce": "n-skew-00000000000000p60",
+                        "X-GitHost-Signature": "8c3189ea0f384cf34887c49d1bc1f50a4cc9043736a08f58c80dae7a787a2122"
+                    }
+                }
+            ],
+            "expect": [
+                "accept"
+            ]
+        },
+        {
+            "name": "ts_minus_60",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763399940",
+                        "X-GitHost-Nonce": "n-skew-00000000000000m60",
+                        "X-GitHost-Signature": "0a9e8fed3f64a34f37d057851eddf5da700ed7d14e9bff68720925892ceccf04"
+                    }
+                }
+            ],
+            "expect": [
+                "accept"
+            ]
+        },
+        {
+            "name": "ts_not_numeric",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000.0",
+                        "X-GitHost-Nonce": "n-skew-0000000000000nan",
+                        "X-GitHost-Signature": "c3b53f3953d738dd390638cf97cf0987713a1f78b28ee31791227f7968783940"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "nonce_with_newline",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-bad-000000000000000\nx",
+                        "X-GitHost-Signature": "538481ac08b2dc54030aced3c3c4ae2ee2df5a1560b333e57a4b31bdb30bfb56"
+                    }
+                }
+            ],
+            "expect": [
+                "reject"
+            ]
+        },
+        {
+            "name": "replayed_nonce",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "accept",
+                "reject"
+            ]
+        },
+        {
+            "name": "rejected_request_does_not_burn_nonce",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                }
+            ],
+            "expect": [
+                "reject",
+                "accept"
+            ]
+        },
+        {
+            "name": "nonce_reusable_after_120s",
+            "now": 1763400000,
+            "steps": [
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400000",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "ab53c4b931651e7bcd37b2e17c94bd36b5ae1d46d35ec59adf0ea08619c367a4"
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400120",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "80942267d1a650ed6bda7e854c1a593ffba5895bf973117e2687dc17fa71fbde"
+                    },
+                    "now": 1763400120
+                },
+                {
+                    "method": "POST",
+                    "path": "/authz",
+                    "body": "{\"user_id\":7,\"project_id\":3,\"access\":\"write\"}",
+                    "headers": {
+                        "X-GitHost-Timestamp": "1763400121",
+                        "X-GitHost-Nonce": "n-valid-0000000000000001",
+                        "X-GitHost-Signature": "534264d8d24bbfe80371f5e784c264b954f57ac51a7d98e29630ef1e41fb54c0"
+                    },
+                    "now": 1763400121
+                }
+            ],
+            "expect": [
+                "accept",
+                "reject",
+                "accept"
+            ]
+        }
+    ]
+}
