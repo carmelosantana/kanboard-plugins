@@ -153,13 +153,14 @@ Two kinds of wrap are rebuilt without the user present:
 
 **State machine.** The rotation is stored in `vault_rotations`, one row per principal: `old_pk`, `new_pk`, `phase`. Each phase commits under the exclusive lock.
 1. **start** (one transaction):
-   - Generate `sk2`. For every surviving factor, store one **pending** wrap, `status = pending`, whose plaintext is the rotation bundle `enc("rotbundle", sk1, sk2)`. So each surviving factor can recover **both** keys.
+   - Generate `sk2`. For every surviving factor, store a **pending** wrap of `sk2`, marked `status = pending`.
+   - Store a **bridge** in the `vault_rotations` row: `XChaCha20-Poly1305(sk1, key = BLAKE2b-256(key = sk2, msg = enc("bridge")), AD = enc("bridge", user_id, old_pk, new_pk))`. Every surviving factor opens `sk2`, and `sk2` opens the bridge to reach `sk1`.
    - **Delete the old active wraps** in the same transaction. From this point the old credentials (for example the old passphrase) open nothing, even in a backup taken afterwards.
    - Set the principal's state to `rotating`.
    - Lock all of the principal's *other* vault sessions.
    - Add `enc_sk_next` (`sk2` under the same `session_key`) to the current session row.
 
-   From now on, any surviving factor unwraps the bundle. Vault checks that both public keys match before using either: `sk1` against `old_pk`, `sk2` against `new_pk`.
+   From now on, any surviving factor recovers `sk2`, and through the bridge `sk1`. Vault checks both against their public keys (`old_pk`, `new_pk`) before using either.
 2. **sweep:** in batches, one transaction each, for every object that has a key row for this principal at `principal_key_gen = old`:
    - re-check live access;
    - generate a new DEK, re-encrypt, and set `key_epoch + 1`;
@@ -169,9 +170,9 @@ Two kinds of wrap are rebuilt without the user present:
    While the state is `rotating`, new grants seal to **both** keys, and the write barrier applies to every object still holding an old-generation row for the principal.
 3. **finish** (one transaction):
    - Require that no key row for the principal is at the old generation. If any is, go back to *sweep*.
-   - Re-write each pending wrap as an ordinary active wrap of `sk2` alone. Drop `sk1` from every row, set `public_key = new_pk` and `key_gen + 1`, move `enc_sk_next` into `enc_sk`, clear `rotating` and delete the `vault_rotations` row.
+   - Flip the pending wraps to `status = active` (they already wrap `sk2` alone, so no factor has to be present). **Delete the bridge**, so `sk1` is gone from the live DB, set `public_key = new_pk` and `key_gen + 1`, move `enc_sk_next` into `enc_sk`, clear `rotating` and delete the `vault_rotations` row.
 
-**Crash recovery.** If rotation stops at any point (a crash, an expired session, a closed tab), the next unlock with any surviving factor, for example the *new* passphrase, opens the bundle. It recovers and checks both keys, then **resumes** from the current phase. Nothing is ever sealed to a key that no stored wrap can open. The test deletes the initiating session, then resumes using only the new credentials.
+**Crash recovery.** If rotation stops at any point (a crash, an expired session, a closed tab), the next unlock with any surviving factor, for example the *new* passphrase, opens `sk2` and the bridge. It recovers and checks both keys, then **resumes** from the current phase. Nothing is ever sealed to a key that no stored wrap can open. The test deletes the initiating session, then resumes using only the new credentials.
 
 **Recovery and org recovery** have no hardware key present, so they remove all hardware keys during the rotation. If hardware keys are required, the user must enrol two new keys at their next unlock.
 
@@ -529,7 +530,7 @@ Binary values are stored base64. MySQL uses `LONGTEXT` for entry and group ciphe
 |---|---|
 | `vault_meta` | `id = 1` (a singleton: the vault lock row), `schema_note` |
 | `vault_principals` | `user_id` PK, `kind (human\|agent)`, `public_key`, `key_gen`, `state (active\|rotating)`, `created_at` |
-| `vault_rotations` | `user_id` PK, `old_pk`, `new_pk`, `phase (start\|sweep\|finish)`, `started_at` |
+| `vault_rotations` | `user_id` PK, `old_pk`, `new_pk`, `bridge_nonce`, `bridge` (`sk1` under a key derived from `sk2`), `phase (start\|sweep\|finish)`, `started_at` |
 | `vault_wraps` | `id`, `user_id`, `method`, `credential_id`, `kdf_salt`, `kdf_ops`, `kdf_mem`, `status (active\|pending)`, `key_gen`, `nonce`, `wrapped_sk`, `crypto_v`, `created_at` |
 | `vault_webauthn` | `id`, `user_id`, `credential_id`, `cose_public_key`, `sign_count`, `prf_salt`, `label`, `origin`, `rp_id`, `created_at`, `last_used_at` |
 | `vault_challenges` | `id`, `user_id`, `purpose`, `challenge_hash`, `expires_at` |
@@ -699,7 +700,7 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 
 | Finding | Resolution |
 |---|---|
-| A changed factor (the new passphrase) couldn't open `sk1`, so rotation couldn't resume, and the old passphrase still opened `sk1` | Pending wraps carry a **rotation bundle** (`sk1` and `sk2`), and the old wraps are deleted at *start*. `sk1` is dropped only at *finish*. |
+| A changed factor (the new passphrase) couldn't open `sk1`, so rotation couldn't resume, and the old passphrase still opened `sk1` | Pending wraps hold `sk2`, and a **bridge** (`sk1` under a key derived from `sk2`) lives in the `vault_rotations` row. The old wraps are deleted at *start*. *Finish* flips the pending wraps to active, which needs no factor, and deletes the bridge. |
 | Re-enrolment left third-party grants live, so the queue re-sealed to the agent | Third-party grant sources are **deleted** (audited, owners notified) before the key rows are deleted and the objects queued. |
 | Expiry could come before the barrier existed (the purge runs once a minute) | **Expiry reconciliation** runs inside every payload write. |
 
