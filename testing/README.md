@@ -184,8 +184,16 @@ Kanboard without the jsonrpc, Chicane and Bigboard overlays. `testing/git/compos
 bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
 bash testing/git/bootstrap.sh            # admin + broker token -> testing/git/.env, HMAC secret -> testing/git/hmac.env
 bash testing/git/compose.sh up -d kanboard broker   # once, after hmac.env first appears (recreates kb-suite)
-bash testing/git/scenario.sh preflight   # expect "preflight: PASS (15/15)"
+bash testing/git/scenario.sh preflight   # expect "preflight: PASS (16/16)"
 ```
+
+`scenario.sh` runs named steps from one table (`bash testing/git/scenario.sh list`; `all` runs
+each once). Besides `preflight`, the live steps act as agent `githost-e2e-agent` (user 20) on
+project 28 and repo `kb-ghe2e/app`: `credential` (getGitCredential, then `git clone` through
+Traefik), `revoke` (closeTask, then the next fetch is denied) and `outage` (`docker pause
+kb-suite` for one clone, always unpaused by a trap). They read `KANBOARD_USERNAME`,
+`KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or `AGENT_API_TOKEN_FILE`) from the environment or
+from the gitignored `testing/git/scenario.env`, and check the broker's audit lines.
 
 The overlay also wires Kanboard to the broker. It mounts `../GitHost` into `kb-suite`, and
 gives `kb-suite` only `testing/git/hmac.env` (`GITHOST_HMAC_SECRET`) plus
