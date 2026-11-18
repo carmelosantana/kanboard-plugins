@@ -39,3 +39,5 @@ testing/kanboard-src/
 testing/git/.env
 # Git hosting P1 overlay: HMAC secret shared by the broker and kb-suite
 testing/git/hmac.env
+# Git hosting P1 overlay: scenario.sh credentials (Kanboard API key, agent API token)
+testing/git/scenario.env
