@@ -45,3 +45,7 @@ testing/git/scenario.env
 testing/git/authentik.env
 # Git hosting P1 overlay: third-party code fetched at a pinned commit (testing/git/fetch-oauth2.sh)
 testing/git/vendor/
+# Git hosting P1 overlay: dev CI runner registration secret (written by bootstrap.sh)
+testing/git/runner.env
+# Git hosting P1 overlay: scenario.sh's Forgejo API token of the test human (high-risk approver)
+testing/git/scenario-human.token

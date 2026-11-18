@@ -17,19 +17,20 @@
 #    password is not kept: the token is what the broker uses, and `forgejo admin user
 #    change-password` resets it if the web UI is ever needed.
 # 3. Mints an admin token with the scopes the broker needs, unless testing/git/.env already holds
-#    one that Forgejo still accepts.
+#    one that Forgejo still accepts, minted with those scopes (FORGEJO_ADMIN_TOKEN_SCOPES).
 # 4. Creates a placeholder OAuth2 auth source named `authentik`, unless one exists. Human
 #    principals are bound to it (login_name = Authentik sub). `forgejo admin auth add-oauth`
 #    fetches the discovery URL at creation, so the placeholder points at Forgejo's own OIDC
 #    discovery document; step 7 points it at Authentik, keeping its id.
-# 5. Writes testing/git/.env (gitignored, mode 600): FORGEJO_URL, FORGEJO_ADMIN_TOKEN and
-#    FORGEJO_AUTHENTIK_SOURCE_ID (looked up by name; Forgejo has no API for auth sources), the
-#    broker's env file, and recreates the broker if the file changed.
+# 5. Writes testing/git/.env (gitignored, mode 600): FORGEJO_URL, FORGEJO_ADMIN_TOKEN,
+#    FORGEJO_AUTHENTIK_SOURCE_ID (looked up by name; Forgejo has no API for auth sources) and
+#    BROKER_WEBHOOK_SECRET (kept across runs), the broker's env file, and recreates the broker if the file changed.
 # 6. Starts (or recreates on a config change) Authentik and Traefik (for the auth.kb.test alias),
 #    waits for Authentik, and applies the blueprints in testing/git/authentik/blueprints through
 #    the API: the kanboard and forgejo OIDC providers and applications.
 # 7. Reconfigures the Forgejo source `authentik` in place against Authentik's forgejo provider.
 # 8. Writes the Kanboard OAuth2 plugin settings (ConfigModel keys) into kb-suite's database.
+# 9. Registers the dev CI runner dev-plain (secret in testing/git/runner.env) with the Forgejo CLI.
 # Re-running changes nothing when everything already exists.
 set -euo pipefail
 
@@ -41,7 +42,8 @@ ADMIN_USER="${FORGEJO_ADMIN_USER:-kb-admin}"
 ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-kb-admin@git.localhost}"
 # The broker reaches Forgejo directly on the compose network; ForwardAuth is for everyone else.
 FORGEJO_URL="${FORGEJO_URL:-http://forgejo:3000}"
-SCOPES="write:admin,write:organization,write:repository,write:user,read:user"
+# write:issue: the merge gate labels its auto-revert PRs (labels are an issue resource).
+SCOPES="write:admin,write:organization,write:repository,write:issue,write:user,read:user"
 AUTH_SOURCE="authentik"
 AUTH_SOURCE_DISCOVERY="http://localhost:3000/.well-known/openid-configuration"
 AK_ENV="$HERE/authentik.env"
@@ -124,10 +126,13 @@ else
 fi
 
 token=""
+token_scopes=""
 if [[ -f "$ENV_FILE" ]]; then
   token="$(sed -n 's/^FORGEJO_ADMIN_TOKEN=//p' "$ENV_FILE")"
+  token_scopes="$(sed -n 's/^FORGEJO_ADMIN_TOKEN_SCOPES=//p' "$ENV_FILE")"
 fi
-if [[ -n "$token" && "$(token_status "$token")" == "200" ]]; then
+# A token minted with other scopes (an older bootstrap) is replaced; Forgejo cannot widen one.
+if [[ -n "$token" && "$token_scopes" == "$SCOPES" && "$(token_status "$token")" == "200" ]]; then
   echo "bootstrap: admin token in testing/git/.env still works"
 else
   # Token names are unique per user, and a lost token cannot be read back: mint a new name.
@@ -151,8 +156,15 @@ else
   echo "bootstrap: created placeholder auth source $AUTH_SOURCE (id $source)"
 fi
 
-new_env="$(printf 'FORGEJO_URL=%s\nFORGEJO_ADMIN_TOKEN=%s\nFORGEJO_AUTHENTIK_SOURCE_ID=%s\n' \
-  "$FORGEJO_URL" "$token" "$source")"
+# The secret Forgejo signs webhooks to the broker with (X-Forgejo-Signature). Only the broker holds
+# it; it gives it to Forgejo when it installs a repo's webhook. Kept across runs.
+hook_secret=""
+if [[ -f "$ENV_FILE" ]]; then
+  hook_secret="$(sed -n 's/^BROKER_WEBHOOK_SECRET=//p' "$ENV_FILE")"
+fi
+[[ "$hook_secret" =~ ^[0-9a-f]{64}$ ]] || hook_secret="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+new_env="$(printf 'FORGEJO_URL=%s\nFORGEJO_ADMIN_TOKEN=%s\nFORGEJO_ADMIN_TOKEN_SCOPES=%s\nFORGEJO_AUTHENTIK_SOURCE_ID=%s\nBROKER_WEBHOOK_SECRET=%s\n' \
+  "$FORGEJO_URL" "$token" "$SCOPES" "$source" "$hook_secret")"
 if [[ -f "$ENV_FILE" && "$(cat "$ENV_FILE")" == "$new_env" ]]; then
   echo "bootstrap: testing/git/.env unchanged"
 else
@@ -259,4 +271,18 @@ else
   echo "bootstrap: kb-suite lacks the OAuth2 plugin mount; recreate it once (keeps its data):"
   echo "  bash testing/git/compose.sh up -d --no-deps kanboard"
 fi
+# 9. The dev CI runner (profile ci-dev, ruling F12): a 40-hex shared secret in testing/git/runner.env
+#    (gitignored, mode 600), registered with the Forgejo CLI. `forgejo-cli actions register` is
+#    idempotent: the same secret is the same runner (uuid = its first 16 characters).
+RUNNER_ENV="$HERE/runner.env"
+runner_secret="$(sed -n 's/^RUNNER_SECRET=//p' "$RUNNER_ENV" 2>/dev/null || true)"
+if [[ ! "$runner_secret" =~ ^[0-9a-f]{40}$ ]]; then
+  runner_secret="$(od -An -tx1 -N20 /dev/urandom | tr -d ' \n')"
+  (umask 077 && printf 'RUNNER_SECRET=%s\n' "$runner_secret" >"$RUNNER_ENV")
+  echo "bootstrap: wrote testing/git/runner.env"
+fi
+runner_uuid="$(printf '%s' "$runner_secret" | docker exec -i -u git "$FORGEJO_CONTAINER" \
+  forgejo forgejo-cli actions register --secret-stdin - --name dev-plain --labels dev-plain)"
+echo "bootstrap: runner dev-plain registered (uuid ${runner_uuid}); start it with"
+echo "  bash testing/git/compose.sh --profile ci-dev up -d --no-deps ci-runner"
 echo "bootstrap: done"

@@ -436,7 +436,9 @@ step_5a() {
   local since out other n
   since="$(date +%s)"
   other="agent/not-${FJ_USER}/scenario-$(date +%Y%m%d%H%M%S)-$$"
-  git -C "$CLONE" checkout --quiet -B "scenario-5a" 2>/dev/null
+  # From the current main (steps 3, 4 and 6 move it), so the push to main is a fast-forward.
+  git_helper "$CORE_TASK" -C "$CLONE" fetch --quiet origin main >/dev/null 2>&1
+  git -C "$CLONE" checkout --quiet -B "scenario-5a" FETCH_HEAD 2>/dev/null
   printf '5a %s\n' "$other" >"$CLONE/scenario-5a-$(date +%s%N).txt"
   git -C "$CLONE" add -A >/dev/null 2>&1
   git_helper "$CORE_TASK" -C "$CLONE" commit --quiet -m "scenario 5a" >/dev/null 2>&1
@@ -888,13 +890,508 @@ sys.stdout.write(u.urlencode({"user_name": sys.argv[1], "password": open(sys.arg
     "$(web_hop "$ujar" "$cb" | cut -d' ' -f2)"
 }
 
+# ---------------------------------------------------------------------------------------------
+# Merge gate (steps 3, 4, 5c, 6): CI on the dev runner, the broker's kanboard/risk-gate status,
+# reviewer agent r1's approval and auto-merge, the humans-high-risk approval, and auto-revert.
+#
+# Setup, idempotent and reused across runs:
+# - r1 (REVIEWER_USERNAME) and a2 (OTHER_AGENT_USERNAME) are Kanboard agents (agents table, owner
+#   KANBOARD_USERNAME's id) and members of the project; r1 is in the group git-reviewers, a2 is
+#   not. They are written with PDO in kb-suite, and each run gives them a fresh random Kanboard
+#   API token (0600, under WORK), so no credential of theirs outlives the run.
+# - The human: IDENTITY_USER (Task 13's Authentik user, signed in by the identity step) is made a
+#   project manager, so GitHost lists it in humans_high_risk. Its Forgejo API token
+#   (write:repository, read:user) is minted with the Forgejo CLI once and kept in
+#   testing/git/scenario-human.token (gitignored, 0600); a human has no password to rotate.
+# - main gets .forgejo/workflows/ci.yml (testing/git/fixtures/ci.yml) through the high-risk flow
+#   the first time a step needs CI.
+# Agents act through Traefik with tokens minted by git-credential-kanboard for their own task, so
+# every API call below passes the broker's live ForwardAuth.
+
+REVIEWER_USERNAME="${REVIEWER_USERNAME:-githost-e2e-r1}"
+OTHER_AGENT_USERNAME="${OTHER_AGENT_USERNAME:-githost-e2e-a2}"
+HUMAN_TOKEN_FILE="${HUMAN_TOKEN_FILE:-$HERE/scenario-human.token}"
+RUNNER_CONTAINER="${RUNNER_CONTAINER:-kb-git-ci-runner}"
+CI_FIXTURE="$HERE/fixtures/ci.yml"
+CI_PATH=".forgejo/workflows/ci.yml"
+CI_PR_CONTEXT="ci / test (pull_request)"
+CI_MAIN_CONTEXT="ci / test (push)"
+RISK_GATE="kanboard/risk-gate"
+ORG="${REPO%%/*}"
+GATE_WAIT="${GATE_WAIT:-240}"
+
+declare -A AGENT_IDS=() AGENT_TASKS=()
+HUMAN_LOGIN=""
+
+# Waits up to <secs> for <cmd...> to print "yes"; prints how long it took.
+wait_yes() { # wait_yes <secs> <cmd...>
+  local secs="$1" t0
+  shift
+  t0="$(date +%s)"
+  while (($(date +%s) - t0 < secs)); do
+    [[ "$("$@" 2>/dev/null)" == yes ]] && { echo "$(($(date +%s) - t0))"; return 0; }
+    sleep 2
+  done
+  echo "timeout"
+  return 1
+}
+
+# Forgejo API through Traefik with an Authorization header file. Prints the body, then the
+# status on its own line.
+api() { # api <hdrfile> <method> <path> [json]
+  local args=(-s --max-time 30 --resolve "${GIT_HOST}:${GIT_PORT}:127.0.0.1" -X "$2" -H @"$1"
+    -H 'Accept: application/json' -w '\n%{http_code}')
+  [[ -n "${4:-}" ]] && args+=(-H 'Content-Type: application/json' --data-binary "$4")
+  curl "${args[@]}" "${BASE}/api/v1$3"
+}
+code_of() { tail -1 <<<"$1"; }
+body_of() { head -n -1 <<<"$1"; }
+
+# A Kanboard agent for the scenario, written with PDO: the user (app-user), its agents row, its
+# git-reviewers membership (reviewer=1) or none (0), and a fresh API token from stdin. Prints its id.
+upsert_agent() { # upsert_agent <username> <reviewer 0|1> <tokenfile>
+  docker exec -i -u nginx "$KANBOARD_CONTAINER" php -r '
+$p = new PDO("sqlite:/var/www/app/data/db.sqlite");
+$p->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+[$_, $user, $reviewer, $owner] = $argv;
+$token = trim(stream_get_contents(STDIN));
+$p->beginTransaction();
+$s = $p->prepare("SELECT id FROM users WHERE username = ?");
+$s->execute([$user]);
+$id = $s->fetchColumn();
+if ($id === false) {
+  $p->prepare("INSERT INTO users (username, password, name, role, is_active, api_access_token) VALUES (?, ?, ?, ?, 1, ?)")
+    ->execute([$user, password_hash(bin2hex(random_bytes(24)), PASSWORD_BCRYPT), "Scenario agent " . $user, "app-user", $token]);
+  $id = $p->lastInsertId();
+} else {
+  $p->prepare("UPDATE users SET api_access_token = ?, is_active = 1 WHERE id = ?")->execute([$token, $id]);
+}
+$s = $p->prepare("SELECT COUNT(*) FROM agents WHERE agent_user_id = ?");
+$s->execute([$id]);
+if ((int) $s->fetchColumn() === 0) {
+  $p->prepare("INSERT INTO agents (owner_user_id, agent_user_id, kind, created_at) VALUES (?, ?, ?, ?)")
+    ->execute([$owner, $id, "githost-e2e", time()]);
+}
+$p->exec("INSERT OR IGNORE INTO groups (name) VALUES (\x27git-reviewers\x27)");
+$gid = $p->query("SELECT id FROM groups WHERE name = \x27git-reviewers\x27")->fetchColumn();
+if ($reviewer === "1") {
+  $p->prepare("INSERT OR IGNORE INTO group_has_users (group_id, user_id) VALUES (?, ?)")->execute([$gid, $id]);
+} else {
+  $p->prepare("DELETE FROM group_has_users WHERE group_id = ? AND user_id = ?")->execute([$gid, $id]);
+}
+$p->commit();
+echo $id;' -- "$1" "$2" "$3" <"$3"
+}
+
+# The Kanboard user id of KANBOARD_USERNAME (the agents' owner).
+admin_user_id() {
+  rpc_admin getMe '{}' | json_get 'd["result"]["id"]'
+}
+
+# Logins (lowercased) in the org's Forgejo team <team>, comma-separated.
+team_logins() { # team_logins <team>
+  local id
+  id="$(fj_api "/api/v1/orgs/${ORG}/teams?limit=50" | python3 -I -c '
+import json,sys; t=[x["id"] for x in json.load(sys.stdin) if x["name"]==sys.argv[1]]; print(t[0] if t else "")' "$1")"
+  [[ -n "$id" ]] || return
+  fj_api "/api/v1/teams/${id}/members?limit=50" | python3 -I -c '
+import json,sys; print(",".join(sorted(u["login"].lower() for u in json.load(sys.stdin))))'
+}
+in_team() { [[ ",$(team_logins "$1")," == *",${2,,},"* ]] && echo yes || echo no; } # in_team <team> <login>
+
+# Makes <username> a scenario agent in the project and gives it an open task; sets
+# AGENT_IDS[<username>] and AGENT_TASKS[<username>]. Its API token is $WORK/<username>.apitoken.
+ensure_agent() { # ensure_agent <username> <reviewer 0|1>
+  local user="$1" tok="$WORK/$1.apitoken" owner id role task
+  [[ -n "${AGENT_TASKS[$user]:-}" ]] && return 0
+  owner="$(admin_user_id)"
+  [[ "$owner" =~ ^[0-9]+$ ]] || { echo "  cannot read ${KANBOARD_USERNAME}'s user id" >&2; return 1; }
+  (umask 077; od -An -tx1 -N32 /dev/urandom | tr -d ' \n' >"$tok")
+  id="$(upsert_agent "$user" "$2" "$tok")"
+  [[ "$id" =~ ^[0-9]+$ ]] || { echo "  upsert_agent $user: $id" >&2; return 1; }
+  AGENT_IDS[$user]="$id"
+  role="$(rpc_admin getProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$id}" | json_get 'd["result"]')"
+  if [[ "$role" != project-member ]]; then
+    rpc_admin addProjectUser "{\"project_id\":$PROJECT_ID,\"user_id\":$id,\"role\":\"project-member\"}" >/dev/null
+  fi
+  task="$(rpc "$user" "$(<"$tok")" getAllTasks "{\"project_id\":$PROJECT_ID,\"status_id\":1}" | python3 -I -c '
+import json,sys
+owner=int(sys.argv[1]); ts=[t for t in json.load(sys.stdin).get("result") or [] if t["title"]=="scenario merge gate" and int(t["owner_id"])==owner]
+print(min(int(t["id"]) for t in ts) if ts else "")' "$id" 2>/dev/null)"
+  if [[ -z "$task" ]]; then
+    task="$(rpc "$user" "$(<"$tok")" createTask \
+      "{\"project_id\":$PROJECT_ID,\"title\":\"scenario merge gate\",\"owner_id\":$id}" | json_get 'd["result"]')"
+  fi
+  [[ "$task" =~ ^[0-9]+$ ]] || { echo "  $user: no task ($task)" >&2; return 1; }
+  AGENT_TASKS[$user]="$task"
+}
+
+# An Authorization header file with a token git-credential-kanboard mints for <user>'s task.
+agent_hdr() { # agent_hdr <username> <task> <hdrfile>
+  local cred="$WORK/cred.$1" tok
+  tok="$([[ "$1" == "$AGENT_USERNAME" ]] && echo "$WORK/agent.apitoken" || echo "$WORK/$1.apitoken")"
+  (umask 077
+   printf 'protocol=http\nhost=%s:%s\n\n' "$GIT_HOST" "$GIT_PORT" |
+     env KB_ENDPOINT="$KANBOARD_API_ENDPOINT" KB_USER="$1" KB_TOKEN_FILE="$tok" KB_TASK_ID="$2" \
+       KB_GIT_HOST="${GIT_HOST}:${GIT_PORT}" "$HELPER" get >"$cred" 2>/dev/null
+   printf 'Authorization: token %s\n' "$(cred_field password "$cred")" >"$3")
+  [[ -n "$(cred_field password "$cred")" ]]
+}
+
+# The Forgejo login of the broker principal of Kanboard user <username> (agents: same name).
+fj_login_of() { fj_api "/api/v1/users/$1" | json_get 'd["login"]'; }
+
+# The scenario's reviewers: r1 in git-reviewers, a2 a plain member. Waits until Forgejo has r1 in
+# `reviewers` and a2 in `members` but not `reviewers`.
+ensure_reviewers() {
+  [[ -n "${AGENT_TASKS[$REVIEWER_USERNAME]:-}" && -n "${AGENT_TASKS[$OTHER_AGENT_USERNAME]:-}" ]] && return 0
+  ensure_agent "$REVIEWER_USERNAME" 1 && ensure_agent "$OTHER_AGENT_USERNAME" 0 || return 1
+  broker_post /reconcile '' >/dev/null
+  wait_yes 60 reviewers_ready >/dev/null
+}
+reviewers_ready() {
+  [[ "$(in_team reviewers "$REVIEWER_USERNAME") $(in_team members "$OTHER_AGENT_USERNAME") $(in_team reviewers "$OTHER_AGENT_USERNAME")" == "yes yes no" ]] &&
+    echo yes || echo no
+}
+
+# The human high-risk approver: IDENTITY_USER as a project manager (humans_high_risk), its
+# Forgejo login in HUMAN_LOGIN, and a header file $WORK/hdr.human with its token.
+ensure_human() {
+  [[ -n "$HUMAN_LOGIN" && -s "$WORK/hdr.human" ]] && return 0
+  local row kb_id sub src role tok
+  row="$(kb_user "$IDENTITY_USER")"
+  kb_id="${row%% *}"
+  sub="${row#* }"
+  if [[ ! "$kb_id" =~ ^[0-9]+$ || -z "$sub" || "$sub" == "$row" ]]; then
+    echo "  ${IDENTITY_USER} has no Authentik sub yet: running the identity step first"
+    step_identity
+    row="$(kb_user "$IDENTITY_USER")"
+    kb_id="${row%% *}"
+    sub="${row#* }"
+  fi
+  [[ "$kb_id" =~ ^[0-9]+$ && -n "$sub" ]] || return 1
+  role="$(rpc_admin getProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$kb_id}" | json_get 'd["result"]')"
+  if [[ "$role" == project-* && "$role" != project-manager ]]; then
+    rpc_admin changeProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$kb_id,\"role\":\"project-manager\"}" >/dev/null
+  elif [[ "$role" != project-manager ]]; then
+    rpc_admin addProjectUser "{\"project_id\":$PROJECT_ID,\"user_id\":$kb_id,\"role\":\"project-manager\"}" >/dev/null
+  fi
+  src="$(env_value FORGEJO_AUTHENTIK_SOURCE_ID "$HERE/.env")"
+  HUMAN_LOGIN="$(fj_api "/api/v1/admin/users?source_id=${src}&login_name=$(urlencode "$sub")" | python3 -I -c '
+import json,sys; us=[u for u in json.load(sys.stdin) if u.get("login_name")==sys.argv[1]]; print(us[0]["login"] if len(us)==1 else "")' "$sub")"
+  [[ -n "$HUMAN_LOGIN" ]] || return 1
+  broker_post /reconcile '' >/dev/null
+  wait_yes 60 in_team humans-high-risk "$HUMAN_LOGIN" >/dev/null || return 1
+  # The token: kept across runs (a human has no password to rotate, and the CLI cannot delete
+  # tokens), minted again only when Forgejo no longer accepts it.
+  tok="$(cat "$HUMAN_TOKEN_FILE" 2>/dev/null)"
+  if [[ -z "$tok" || "$(printf 'Authorization: token %s\n' "$tok" |
+        docker exec -i "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' -H @- http://localhost:3000/api/v1/user)" != 200 ]]; then
+    tok="$(docker exec -u git "$FORGEJO_CONTAINER" forgejo admin user generate-access-token \
+      --username "$HUMAN_LOGIN" --token-name "scenario-high-risk-$(date +%s)" \
+      --scopes write:repository,read:user --raw 2>/dev/null)"
+    (umask 077; printf '%s\n' "$tok" >"$HUMAN_TOKEN_FILE")
+  fi
+  (umask 077; printf 'Authorization: token %s\n' "$tok" >"$WORK/hdr.human")
+  [[ -n "$tok" ]]
+}
+
+# The PR's JSON (admin read, inside the Forgejo container).
+pr_json() { fj_api "/api/v1/repos/${REPO}/pulls/$1"; }
+pr_field() { pr_json "$1" | json_get "$2"; } # pr_field <n> <python expr on d>
+pr_merged() { [[ "$(pr_field "$1" 'd["merged"]')" == True ]] && echo yes || echo no; }
+pr_head() { pr_field "$1" 'd["head"]["sha"]'; }
+
+# "<status> <creator>: <description>" of context <ctx> on <sha>, or nothing.
+status_of() { # status_of <sha> <context>
+  fj_api "/api/v1/repos/${REPO}/commits/$1/status" | python3 -I -c '
+import json,sys
+ss=[s for s in (json.load(sys.stdin).get("statuses") or []) if s["context"]==sys.argv[1]]
+print("%s %s: %s" % (ss[0]["status"], (ss[0].get("creator") or {}).get("login",""), ss[0]["description"]) if ss else "")' "$2"
+}
+status_is() { [[ "$(status_of "$1" "$2")" == "$3"* ]] && echo yes || echo no; } # status_is <sha> <ctx> <state>
+
+# A fresh clone of main for <task>, in $WORK/<name>.
+fresh_clone() { # fresh_clone <task> <name>
+  rm -rf "${WORK:?}/$2"
+  git_helper "$1" clone --quiet "${BASE}/${REPO}.git" "$WORK/$2" >/dev/null 2>&1
+}
+
+# Pushes the clone's HEAD to <branch> and opens a PR into main as the agent; prints its number.
+push_and_open() { # push_and_open <clone> <branch> <title>
+  local out
+  out="$(run_git git_helper "$CORE_TASK" -C "$1" push --quiet origin "HEAD:refs/heads/$2")"
+  [[ "$(last_exit "$out")" == exit=0 ]] || { echo "push: $out" >&2; return 1; }
+  agent_hdr "$AGENT_USERNAME" "$CORE_TASK" "$WORK/hdr.a1" || return 1
+  out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/pulls" "$(python3 -I -c '
+import json,sys; print(json.dumps({"head": sys.argv[1], "base": "main", "title": sys.argv[2]}))' "$2" "$3")")"
+  [[ "$(code_of "$out")" == 201 ]] || { echo "open PR: $(code_of "$out") $(body_of "$out" | head -c 300)" >&2; return 1; }
+  body_of "$out" | json_get 'd["number"]'
+}
+
+# r1 approves PR <n> and schedules "merge when checks succeed" (squash); prints both codes.
+r1_approve_and_schedule() { # r1_approve_and_schedule <n>
+  local out a s
+  agent_hdr "$REVIEWER_USERNAME" "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$WORK/hdr.r1" || { echo "mint failed"; return 1; }
+  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/$1/reviews" '{"event":"APPROVED","body":"r1: looks good"}')"
+  a="$(code_of "$out")"
+  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/$1/merge" '{"Do":"squash","merge_when_checks_succeed":true}')"
+  s="$(code_of "$out")"
+  # 201: scheduled; 200: every check was already green, so Forgejo merged at once.
+  [[ "$s" == 200 || "$s" == 201 ]] && s=ok
+  echo "approve=${a} schedule=${s}"
+}
+
+# The high-risk flow of step 4 (and the seed of ci.yml): a PR changing .forgejo/workflows/ci.yml
+# (the fixture when main has none, else a new stamp line) stays pending on the risk gate, with CI
+# green and r1's approval, until the human approves. Records checks.
+highrisk_flow() { # highrisk_flow <label>
+  local clone="clone-hr" branch n head out t
+  fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return 1; }
+  branch="agent/${FJ_USER}/scenario-hr-$(date +%Y%m%d%H%M%S)-$$"
+  git -C "$WORK/$clone" checkout --quiet -b "$branch"
+  mkdir -p "$WORK/$clone/.forgejo/workflows"
+  if [[ -f "$WORK/$clone/$CI_PATH" ]]; then
+    sed -i "s/^# scenario-stamp: .*/# scenario-stamp: $(date -u +%Y%m%dT%H%M%SZ)-$$/" "$WORK/$clone/$CI_PATH"
+    echo "  $1: change ${CI_PATH} (new stamp line)"
+  else
+    cp "$CI_FIXTURE" "$WORK/$clone/$CI_PATH"
+    echo "  $1: add ${CI_PATH} from testing/git/fixtures/ci.yml (main has none yet)"
+  fi
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario: ${1}: ${CI_PATH}" >/dev/null 2>&1
+  n="$(push_and_open "$WORK/$clone" "$branch" "scenario ${1}: change ${CI_PATH}")"
+  check "$1: agent opens a PR changing ${CI_PATH} (through Traefik)" yes "$([[ "$n" =~ ^[0-9]+$ ]] && echo yes || echo "no ($n)")"
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  head="$(pr_head "$n")"
+  echo "  PR #${n} head ${head:0:7}"
+  t="$(wait_yes 60 status_is "$head" "$RISK_GATE" pending)"
+  check "$1: ${RISK_GATE} is pending (posted by the broker within 60 s: ${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  echo "    ${RISK_GATE}: $(status_of "$head" "$RISK_GATE")"
+  check "$1: ... written by the broker identity, naming ${CI_PATH}" yes \
+    "$([[ "$(status_of "$head" "$RISK_GATE")" == "pending kb-admin:"*"$CI_PATH"* ]] && echo yes || echo no)"
+
+  # F2: the agent cannot clear the gate itself.
+  local since
+  since="$(date +%s)"
+  out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/statuses/${head}" \
+    '{"state":"success","context":"kanboard/risk-gate","description":"forged by the agent"}')"
+  check "$1: agent POST ${RISK_GATE}=success through Traefik is 403" 403 "$(code_of "$out")"
+  check "$1: ... audit: kanboard_deny" yes "$(has_reason kanboard_deny "$(reasons_for_task "$CORE_TASK" "$since" "/statuses/${head}")")"
+  check "$1: ... and the gate is still pending" yes "$(status_is "$head" "$RISK_GATE" pending)"
+
+  out="$(r1_approve_and_schedule "$n")"
+  check "$1: r1 approves and schedules auto-merge" "approve=200 schedule=ok" "$out"
+  t="$(wait_yes "$GATE_WAIT" status_is "$head" "$CI_PR_CONTEXT" success)"
+  check "$1: CI (${CI_PR_CONTEXT}) is green on the runner (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  sleep 4
+  check "$1: with CI green and r1's approval, the PR is still open: blocked on ${RISK_GATE}" "no pending" \
+    "$(pr_merged "$n") $(status_of "$head" "$RISK_GATE" | cut -d' ' -f1)"
+
+  out="$(api "$WORK/hdr.human" POST "/repos/${REPO}/pulls/${n}/reviews" "{\"event\":\"APPROVED\",\"body\":\"${HUMAN_LOGIN}: high-risk change approved\"}")"
+  check "$1: ${HUMAN_LOGIN} (humans-high-risk) approves through Traefik" 200 "$(code_of "$out")"
+  t="$(wait_yes 60 status_is "$head" "$RISK_GATE" success)"
+  check "$1: ${RISK_GATE} turns success (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  echo "    ${RISK_GATE}: $(status_of "$head" "$RISK_GATE")"
+  t="$(wait_yes 90 pr_merged "$n")"
+  check "$1: the PR merges on its own (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+}
+
+# main has ci.yml; if not, the high-risk flow adds it (needs the human).
+ensure_ci_seeded() {
+  if fj_api "/api/v1/repos/${REPO}/contents/${CI_PATH}?ref=main" | grep -q '"sha"'; then
+    return 0
+  fi
+  echo "  setup: main has no ${CI_PATH}; seeding it through the high-risk flow"
+  ensure_human || { check "setup: human high-risk approver" yes no; return 1; }
+  highrisk_flow "seed"
+}
+
+# Shared start of steps 3, 4 and 6: credentials, the agent's core task and login, the runner,
+# r1 and a2, and ci.yml on main.
+gate_setup() {
+  need_creds || { check "credentials and helper present" yes no; return 1; }
+  ensure_core_task && ensure_fj_user || { check "core task and Forgejo login" yes no; return 1; }
+  check "the dev runner (${RUNNER_CONTAINER}, profile ci-dev) is running" true \
+    "$(docker inspect -f '{{.State.Running}}' "$RUNNER_CONTAINER" 2>/dev/null)"
+  ensure_reviewers
+  check "r1 (${REVIEWER_USERNAME}) is in Forgejo reviewers; a2 (${OTHER_AGENT_USERNAME}) is a member but not a reviewer" \
+    "yes yes no" "$(in_team reviewers "$REVIEWER_USERNAME") $(in_team members "$OTHER_AGENT_USERNAME") $(in_team reviewers "$OTHER_AGENT_USERNAME")"
+  ensure_ci_seeded
+}
+
+step_3() {
+  echo "3: low-risk PR -> CI green, risk gate success, r1 approves and schedules auto-merge -> merged on green"
+  gate_setup || return
+  local clone="clone-3" branch n head out t
+  fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
+  branch="agent/${FJ_USER}/scenario-3-$(date +%Y%m%d%H%M%S)-$$"
+  git -C "$WORK/$clone" checkout --quiet -b "$branch"
+  mkdir -p "$WORK/$clone/scenario"
+  printf 'step 3 %s\n' "$branch" >"$WORK/$clone/scenario/step3-$(date +%s%N).txt"
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario 3: low-risk change" >/dev/null 2>&1
+  n="$(push_and_open "$WORK/$clone" "$branch" "scenario 3: low-risk change")"
+  check "agent opens a PR (through Traefik)" yes "$([[ "$n" =~ ^[0-9]+$ ]] && echo yes || echo "no ($n)")"
+  [[ "$n" =~ ^[0-9]+$ ]] || return
+  head="$(pr_head "$n")"
+  echo "  PR #${n} head ${head:0:7}"
+  t="$(wait_yes 60 status_is "$head" "$RISK_GATE" success)"
+  check "${RISK_GATE} is success from the broker (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  echo "    ${RISK_GATE}: $(status_of "$head" "$RISK_GATE")"
+  check "  ... written by the broker identity" yes "$([[ "$(status_of "$head" "$RISK_GATE")" == "success kb-admin: no high-risk paths" ]] && echo yes || echo no)"
+  t="$(wait_yes "$GATE_WAIT" status_is "$head" "$CI_PR_CONTEXT" success)"
+  check "CI (${CI_PR_CONTEXT}) is green on the dev runner (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+
+  # A member who is not a reviewer: the approval is recorded but does not count.
+  agent_hdr "$OTHER_AGENT_USERNAME" "${AGENT_TASKS[$OTHER_AGENT_USERNAME]}" "$WORK/hdr.a2"
+  out="$(api "$WORK/hdr.a2" POST "/repos/${REPO}/pulls/${n}/reviews" '{"event":"APPROVED","body":"a2 is not a reviewer"}')"
+  check "a2 (not in git-reviewers) approves through Traefik (allowed: a member)" 200 "$(code_of "$out")"
+  check "  ... Forgejo marks a2's approval not official" False "$(body_of "$out" | json_get 'd["official"]')"
+  out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/pulls/${n}/merge" '{"Do":"squash"}')"
+  echo "    merge now as the author: $(code_of "$out") $(body_of "$out" | json_get 'd.get("message","")' | head -c 120)"
+  check "  ... so with CI and the gate green, merging now is refused (405) and the PR stays open" "405 no" \
+    "$(code_of "$out") $(pr_merged "$n")"
+
+  local since
+  since="$(date +%s)"
+  out="$(r1_approve_and_schedule "$n")"
+  check "r1 approves and schedules auto-merge through Traefik" "approve=200 schedule=ok" "$out"
+  check "  ... audit: r1's review and merge requests were allowed (write, ok)" yes \
+    "$(audit_for_task "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$since" | python3 -I -c '
+import json,sys
+es=[e for e in map(json.loads,sys.stdin) if e["access"]=="write"]
+ok=lambda s: any(e["target"].split("?")[0].endswith(s) and e["decision"]=="allow" and e["reason"]=="ok" for e in es)
+print("yes" if ok("/reviews") and ok("/merge") else "no")')"
+  t="$(wait_yes 90 pr_merged "$n")"
+  check "the PR merges on green (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  check "  ... merged by r1" "${REVIEWER_USERNAME}" "$(pr_field "$n" '(d.get("merged_by") or {}).get("login","")')"
+}
+
+step_4() {
+  echo "4: a change to ${CI_PATH} stays pending on ${RISK_GATE} until a humans-high-risk member approves"
+  gate_setup || return
+  ensure_human || { check "human high-risk approver ${IDENTITY_USER} (project manager, Forgejo token)" yes no; return; }
+  check "${HUMAN_LOGIN} is in Forgejo humans-high-risk; r1 is not" "yes no" \
+    "$(in_team humans-high-risk "$HUMAN_LOGIN") $(in_team humans-high-risk "$REVIEWER_USERNAME")"
+  highrisk_flow "4"
+}
+
+step_5c() {
+  echo "5c: force-push to main is denied by branch protection (authz allowed it)"
+  need_creds || { check "credentials and helper present" yes no; return; }
+  ensure_core_task && ensure_fj_user || { check "core task and login" yes no; return; }
+  local clone="clone-5c" since out before
+  fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
+  before="$(git -C "$WORK/$clone" rev-parse HEAD)"
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet --amend --allow-empty -m "scenario 5c: rewritten main" >/dev/null 2>&1
+  check "a rewritten main tip (not a fast-forward)" no \
+    "$(git -C "$WORK/$clone" merge-base --is-ancestor "$before" HEAD && echo yes || echo no)"
+  since="$(date +%s)"
+  echo "  \$ git push --force origin HEAD:main"
+  out="$(run_git git_helper "$CORE_TASK" -C "$WORK/$clone" push --force origin HEAD:refs/heads/main)"
+  echo "$out" | grep -iE 'protected|rejected|declined|force|exit=' | sed 's/^/    /'
+  check "force-push to main is denied" yes "$(denied "$out")"
+  check "  ... by branch protection (Forgejo: protected from force push)" yes \
+    "$(grep -qi 'protected from force push' <<<"$out" && echo yes || echo no)"
+  check "main did not move" "$before" \
+    "$(git_helper "$CORE_TASK" -C "$WORK/$clone" ls-remote origin refs/heads/main 2>/dev/null | cut -f1)"
+  check "audit: authz allowed the receive-pack (write, ok), so the denial is not authz" yes \
+    "$(n="$(push_allows "$CORE_TASK" "$since")"; ((n >= 1)) && echo yes || echo "no ($n)")"
+}
+
+# The open-or-closed revert PR for <sha> (number), from the admin API.
+revert_pr_for() { fj_api "/api/v1/repos/${REPO}/pulls/main/revert%2F${1:0:7}" | json_get 'd["number"]'; }
+has_revert_pr() { [[ "$(revert_pr_for "$1")" =~ ^[0-9]+$ ]] && echo yes || echo no; }
+main_sha() { fj_api "/api/v1/repos/${REPO}/branches/main" | json_get 'd["commit"]["id"]'; }
+
+# A run cut off inside step 6 can leave main red with its revert PR waiting for r1: finish it
+# first, so this run starts from a green main.
+settle_red_main() {
+  local sha rn t
+  sha="$(main_sha)"
+  [[ "$(status_is "$sha" "$CI_MAIN_CONTEXT" failure)" == yes ]] || return 0
+  echo "  setup: main ${sha:0:7} is red from an earlier run; finishing its revert"
+  wait_yes 90 has_revert_pr "$sha" >/dev/null
+  rn="$(revert_pr_for "$sha")"
+  [[ "$rn" =~ ^[0-9]+$ ]] || return 1
+  if [[ "$(pr_merged "$rn")" == no ]]; then
+    agent_hdr "$REVIEWER_USERNAME" "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$WORK/hdr.r1"
+    api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/${rn}/reviews" '{"event":"APPROVED","body":"r1: revert approved"}' >/dev/null
+    wait_yes "$GATE_WAIT" pr_merged "$rn" >/dev/null || return 1
+  fi
+  t="$(wait_yes "$GATE_WAIT" status_is "$(main_sha)" "$CI_MAIN_CONTEXT" success)"
+  echo "  setup: revert #${rn} merged; main green after ${t} s"
+}
+
+step_6() {
+  echo "6: break main (ci/red merges green, CI fails on main) -> the broker opens a revert PR -> it merges -> main green"
+  gate_setup || return
+  settle_red_main || { check "setup: an earlier red main is settled" yes no; return; }
+  local clone="clone-6" branch n head bad out t rn rhead files count
+  fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
+  branch="agent/${FJ_USER}/scenario-6-$(date +%Y%m%d%H%M%S)-$$"
+  git -C "$WORK/$clone" checkout --quiet -b "$branch"
+  mkdir -p "$WORK/$clone/ci"
+  printf 'red %s\n' "$branch" >"$WORK/$clone/ci/red"
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario 6: break main (ci/red)" >/dev/null 2>&1
+  n="$(push_and_open "$WORK/$clone" "$branch" "scenario 6: a change that breaks main")"
+  check "agent opens a PR adding ci/red" yes "$([[ "$n" =~ ^[0-9]+$ ]] && echo yes || echo "no ($n)")"
+  [[ "$n" =~ ^[0-9]+$ ]] || return
+  out="$(r1_approve_and_schedule "$n")"
+  check "r1 approves and schedules auto-merge" "approve=200 schedule=ok" "$out"
+  t="$(wait_yes "$GATE_WAIT" pr_merged "$n")"
+  check "the PR is green (CI and gate) and merges (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  bad="$(pr_field "$n" 'd["merge_commit_sha"]')"
+  echo "  main is now ${bad:0:7}"
+  t="$(wait_yes "$GATE_WAIT" status_is "$bad" "$CI_MAIN_CONTEXT" failure)"
+  check "CI on main (${CI_MAIN_CONTEXT}) is red (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+
+  t="$(wait_yes 90 has_revert_pr "$bad")"
+  check "the broker opens revert/${bad:0:7} (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  rn="$(revert_pr_for "$bad")"
+  [[ "$rn" =~ ^[0-9]+$ ]] || return
+  echo "  revert PR #${rn}: $(pr_field "$rn" 'd["title"]')"
+  check "  ... opened by the broker identity, labelled auto-revert" "kb-admin auto-revert" \
+    "$(pr_field "$rn" '(d.get("user") or {}).get("login","") + " " + ",".join(l["name"] for l in d.get("labels") or [])')"
+  files="$(fj_api "/api/v1/repos/${REPO}/pulls/${rn}/files" | python3 -I -c '
+import json,sys; print(" ".join(sorted("%s:%s" % (f["status"], f["filename"]) for f in json.load(sys.stdin))))')"
+  check "  ... reverting exactly the bad change" "deleted:ci/red" "$files"
+  rhead="$(pr_head "$rn")"
+  t="$(wait_yes 60 status_is "$rhead" "$RISK_GATE" success)"
+  check "  ... ${RISK_GATE} success: a broker revert is low risk (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  echo "    ${RISK_GATE}: $(status_of "$rhead" "$RISK_GATE")"
+  agent_hdr "$REVIEWER_USERNAME" "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$WORK/hdr.r1"
+  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/${rn}/reviews" '{"event":"APPROVED","body":"r1: revert approved"}')"
+  check "r1 approves the revert PR (the broker scheduled its auto-merge)" 200 "$(code_of "$out")"
+  t="$(wait_yes "$GATE_WAIT" pr_merged "$rn")"
+  check "the revert PR merges (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  local fixed
+  fixed="$(main_sha)"
+  t="$(wait_yes "$GATE_WAIT" status_is "$fixed" "$CI_MAIN_CONTEXT" success)"
+  check "main (${fixed:0:7}) is green again (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  check "  ... and has no ci/red" no \
+    "$(fj_api "/api/v1/repos/${REPO}/contents/ci/red?ref=main" | grep -q '"sha"' && echo yes || echo no)"
+
+  # Idempotent: another sweep on the same bad sha opens nothing.
+  broker_post /reconcile '' >/dev/null
+  count="$(fj_api "/api/v1/repos/${REPO}/pulls?state=all&sort=recentupdate&limit=50" | python3 -I -c '
+import json,sys; print(sum(1 for p in json.load(sys.stdin) if p["head"]["ref"]==sys.argv[1]))' "revert/${bad:0:7}")"
+  check "one revert PR for ${bad:0:7}, after another sweep" 1 "$count"
+}
+
 # Dispatch table, in run order for `all`: <name> <function> <description>. The spec's numeric
 # step ids only (ruling F10).
 STEPS=(
   "preflight step_preflight stack invariants: no Forgejo port, every repo route behind ForwardAuth"
   "1         step_1         the agent claims an open task; git-credential-kanboard get prints username, password, expiry"
   "2         step_2         clone through Traefik with the helper, branch agent/<login>/scenario-<ts>, commit, push accepted"
+  "3         step_3         low-risk PR: CI green on the dev runner, risk gate success; a2's approval does not count; r1 approves + auto-merge -> merged"
+  "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
   "5a        step_5a        push to another agent's prefix and to main denied by branch protection (authz ok); status post 403"
+  "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
+  "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) -> r1 approves -> merged, main green; one PR per sha"
   "7         step_7         removeProjectUser: next fetch denied; re-add; closeTask: token dead (token_revoked/task_closed)"
   "8         step_8         docker pause kb-suite: fetch denied (kanboard_unreachable); unpause: allowed"
   # Not a numbered spec step: the spec's sequencing exit for identity (Task 13).

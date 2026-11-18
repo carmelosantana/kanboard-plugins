@@ -137,6 +137,41 @@ services:
         aliases:
           - git.localhost
           - auth.kb.test
+      # The CI network: the dev runner reaches Forgejo only through here (ForwardAuth applies).
+      ci:
+        aliases:
+          - git.localhost
+
+  # Dev-only CI runner (ruling F12): forgejo-runner one-job in host mode, label dev-plain, for
+  # testing/git/fixtures/ci.yml. Profile ci-dev keeps it out of a plain `up`:
+  #   bash testing/git/bootstrap.sh            # registers it (testing/git/runner.env)
+  #   bash testing/git/compose.sh --profile ci-dev up -d --no-deps ci-runner
+  # Not an isolation option (Task 16 replaces it): jobs run as the runner user inside this
+  # container, with no Docker daemon and no host socket. It sits only on the internal `ci`
+  # network, whose one other member is Traefik, so jobs reach Forgejo only through ForwardAuth
+  # and never forgejo:3000 (Task 11 note), and nothing else outside.
+  ci-runner:
+    image: data.forgejo.org/forgejo/runner:13.2.1@sha256:568cea8c15ddc01fc8f330124892f572af7db37fa28344a2c1914405793bf61d
+    container_name: kb-git-ci-runner
+    profiles: ["ci-dev"]
+    restart: unless-stopped
+    depends_on:
+      - traefik
+    env_file:
+      - path: ./git/runner.env
+        required: true
+    entrypoint: ["/usr/bin/dumb-init", "--", "/bin/sh", "/etc/runner/one-job.sh"]
+    read_only: true
+    tmpfs:
+      - /home/runner:uid=1000,gid=1000,mode=0700
+      - /tmp:uid=1000,gid=1000
+    environment:
+      HOME: /home/runner
+    volumes:
+      - ./git/runner/one-job.sh:/etc/runner/one-job.sh:ro
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [ci]
 
   # Authentik 2026.8: server + worker on their own Postgres. No Redis since 2025.10. No ports;
   # reached only through Traefik. The worker gets no docker socket (no managed outposts).
@@ -185,6 +220,12 @@ services:
     <<: *authentik
     container_name: kb-auth-worker
     command: worker
+
+networks:
+  # Internal: no route out. Members: Traefik and the dev runner.
+  ci:
+    name: kb-git-ci
+    internal: true
 
 volumes:
   kb-auth-db-data:

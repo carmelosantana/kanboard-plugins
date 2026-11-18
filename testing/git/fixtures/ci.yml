@@ -1,0 +1,30 @@
+# Scenario CI for the git hosting P1 dev stack (testing/git/scenario.sh seeds it as
+# .forgejo/workflows/ci.yml). Runs on the dev-only runner (label dev-plain, host mode).
+#
+# Forgejo reports it as "ci / test (pull_request)" on a PR (the required check on main) and
+# "ci / test (push)" on main (red there makes the broker open an auto-revert PR).
+#
+# It passes, except on a push to main whose head commit adds or modifies the file ci/red: a
+# change that is green on its PR but breaks main (scenario step 6). The job reads that from the
+# event payload: it does not clone, because an Actions job token is not a principal the broker's
+# ForwardAuth allows, and jobs reach Forgejo only through it.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: dev-plain
+    steps:
+      - name: test
+        env:
+          RED: ${{ github.event_name == 'push' && (contains(github.event.head_commit.added, 'ci/red') || contains(github.event.head_commit.modified, 'ci/red')) }}
+        run: |
+          echo "event: ${GITHUB_EVENT_NAME} ref: ${GITHUB_REF} sha: ${GITHUB_SHA}"
+          if [ "$RED" = true ]; then
+            echo "ci/red changed on main: failing on purpose"
+            exit 1
+          fi
+          echo "ok"
+# scenario-stamp: none

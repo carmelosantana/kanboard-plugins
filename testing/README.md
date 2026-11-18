@@ -199,7 +199,11 @@ list`; `all` runs each once). Besides `preflight`, the live steps act as agent
 | --- | --- |
 | `1` | the agent claims (or creates) its open task "scenario core path"; the helper's `get` prints `username`, `password`, `password_expiry_utc` |
 | `2` | clone through Traefik, branch `agent/<login>/scenario-<ts>`, commit, push accepted |
+| `3` | a low-risk PR: CI green on the dev runner, `kanboard/risk-gate` success from the broker; a2's approval (not in `git-reviewers`) does not count (merging now is 405); r1 approves and schedules auto-merge through Traefik; merged on green |
+| `4` | a change to `.forgejo/workflows/ci.yml`: the gate stays `pending` with CI green and r1's approval, an agent's forged `kanboard/risk-gate` post is 403 `kanboard_deny`; a `humans-high-risk` member's approval turns it `success` and the PR merges |
 | `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; an agent status post is 403 |
+| `5c` | a force-push to `main` is refused by branch protection ("protected from force push") while authz allowed it; `main` does not move |
+| `6` | a PR adding `ci/red` merges green and turns `main` red; the broker opens `revert/<sha7>` (auto-revert label, low risk); r1 approves; it merges and `main` is green; one revert PR per sha |
 | `7` | `removeProjectUser`: the next fetch is denied; re-added (always, also on exit), a push to the own prefix works again; `closeTask`: the token is dead (`token_revoked`/`task_closed`) |
 | `8` | `docker pause kb-suite`: fetch denied (`kanboard_unreachable`), always unpaused by a trap; then allowed |
 | `identity` | see [Identity](#identity-authentik) below: Kanboard and Forgejo logins through Authentik meet on the sub; no password web login |
@@ -208,6 +212,37 @@ They read `KANBOARD_USERNAME`, `KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or
 `AGENT_API_TOKEN_FILE`) from the environment or from the gitignored `testing/git/scenario.env`,
 print `PASS`/`FAIL` with the broker's audit lines, and can be re-run: the core task is reused
 and branch names are unique.
+
+### Merge gate and the dev CI runner (steps 3, 4, 5c, 6)
+
+The broker's merge gate (README of `kanboard-git-broker`, "Merge gate") needs `BROKER_WEBHOOK_SECRET`
+in `testing/git/.env` (bootstrap writes it) and the dev runner:
+
+```bash
+bash testing/git/bootstrap.sh                                         # also registers runner dev-plain -> testing/git/runner.env
+bash testing/git/compose.sh --profile ci-dev up -d --no-deps ci-runner
+bash testing/git/scenario.sh 3 4 5c 6
+```
+
+- **Runner** `kb-git-ci-runner` (profile `ci-dev`): `forgejo-runner` 13.2.1 (pinned by digest) in
+  `one-job` mode with label `dev-plain`, host mode: jobs run as the runner user inside its own
+  read-only container, with no Docker daemon and no host socket. Its only network is
+  `kb-git-ci` (internal, no route out), shared with Traefik alone, so it and its jobs reach Forgejo
+  only as `http://git.localhost:8090` through ForwardAuth, never `forgejo:3000` (step 3 checks it
+  runs). Not an isolation option: Task 16 replaces it. A host-mode job can read the runner's own
+  credential (same user); acceptable for a dev-only runner, not beyond.
+- **CI:** `testing/git/fixtures/ci.yml` (workflow `ci`, job `test`). Forgejo reports it as
+  `ci / test (pull_request)` on a PR, the required check on `main`, and `ci / test (push)` on `main`.
+  It fails only on a push to `main` whose head commit adds or modifies `ci/red`, read from the event
+  payload: a job cannot clone, because its Actions token is not a principal ForwardAuth allows.
+  `main` gets the file through the high-risk flow (human approval) the first time a step needs CI.
+- **Actors:** `githost-e2e-r1` (in group `git-reviewers`) and `githost-e2e-a2` (not) are created or
+  reused with PDO as agents of `KANBOARD_USERNAME` and project members, each with a fresh random API
+  token per run. The human is the identity step's `idtest-human`, made a project manager (so in
+  `humans-high-risk`); its Forgejo token is minted with the Forgejo CLI once and kept in the
+  gitignored `testing/git/scenario-human.token`.
+- **Webhooks:** Forgejo calls `http://broker:8080/webhooks/forgejo` on the compose network
+  (`[webhook] ALLOWED_HOST_LIST = broker` in `app.ini.tmpl`); Traefik has no route to it.
 
 The overlay also wires Kanboard to the broker. It mounts `../GitHost` into `kb-suite`, and
 gives `kb-suite` only `testing/git/hmac.env` (`GITHOST_HMAC_SECRET`) plus
@@ -234,7 +269,8 @@ log, run `docker run --rm -v kanboard-suite_kb-git-broker-data:/d:ro --entrypoin
 | `kb-git-traefik` | `127.0.0.1:8090`; routes in `testing/git/traefik/dynamic.yml` (file provider, watched) |
 | `kb-git-forgejo` | Forgejo, rootless image, no published port; config from `testing/git/forgejo/app.ini.tmpl` on first start |
 | `kb-git-db` | Postgres for Forgejo |
-| `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` and `testing/git/hmac.env`; pulls `http://kb-suite` every 30 s |
+| `kb-git-broker` | ForwardAuth target `http://broker:8080/authz`; reads `testing/git/.env` and `testing/git/hmac.env`; pulls `http://kb-suite` every 30 s; receives Forgejo webhooks |
+| `kb-git-ci-runner` | profile `ci-dev`: dev-only Forgejo Actions runner `dev-plain` (host mode, one job per container start) on the internal `kb-git-ci` network with Traefik only |
 | `kb-auth-server`, `kb-auth-worker` | Authentik 2026.8.5 (no Redis since 2025.10), no published port; `http://auth.kb.test:8090` through Traefik; reads `testing/git/authentik.env`; blueprints from `testing/git/authentik/blueprints` |
 | `kb-auth-db` | Postgres for Authentik (same pinned image as `kb-git-db`) |
 

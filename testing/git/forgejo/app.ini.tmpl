@@ -79,6 +79,15 @@ ENABLE_BASIC_AUTHENTICATION = true
 ENABLE_AUTO_REGISTRATION = false
 ACCOUNT_LINKING = disabled
 
+[webhook]
+; Forgejo blocks webhooks to private addresses by default; the broker (http://broker:8080 on the
+; compose network) is the only private host it may call.
+ALLOWED_HOST_LIST = broker
+
+[actions]
+; The dev runner (compose profile ci-dev) reaches Forgejo only through Traefik.
+ENABLED = true
+
 [mailer]
 ENABLED = false
 
