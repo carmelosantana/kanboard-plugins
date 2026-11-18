@@ -1133,12 +1133,15 @@ import json,sys; print(json.dumps({"head": sys.argv[1], "base": "main", "title":
 r1_approve_and_schedule() { # r1_approve_and_schedule <n>
   local out a s
   agent_hdr "$REVIEWER_USERNAME" "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$WORK/hdr.r1" || { echo "mint failed"; return 1; }
-  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/$1/reviews" '{"event":"APPROVED","body":"r1: looks good"}')"
-  a="$(code_of "$out")"
+  # Schedule first, then approve. Forgejo checks a scheduled auto-merge only on a later event
+  # (a status or a review); scheduled in the same moment as the last check turns green, it can
+  # miss that event and stay open. The approval always comes after the schedule this way.
   out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/$1/merge" '{"Do":"squash","merge_when_checks_succeed":true}')"
   s="$(code_of "$out")"
-  # 201: scheduled; 200: every check was already green, so Forgejo merged at once.
+  # 201: scheduled (the usual case: no approval yet).
   [[ "$s" == 200 || "$s" == 201 ]] && s=ok
+  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/$1/reviews" '{"event":"APPROVED","body":"r1: looks good"}')"
+  a="$(code_of "$out")"
   echo "approve=${a} schedule=${s}"
 }
 
@@ -1181,7 +1184,7 @@ highrisk_flow() { # highrisk_flow <label>
   check "$1: ... and the gate is still pending" yes "$(status_is "$head" "$RISK_GATE" pending)"
 
   out="$(r1_approve_and_schedule "$n")"
-  check "$1: r1 approves and schedules auto-merge" "approve=200 schedule=ok" "$out"
+  check "$1: r1 schedules auto-merge and approves" "approve=200 schedule=ok" "$out"
   t="$(wait_yes "$GATE_WAIT" status_is "$head" "$CI_PR_CONTEXT" success)"
   check "$1: CI (${CI_PR_CONTEXT}) is green on the runner (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
   sleep 4
@@ -1221,7 +1224,7 @@ gate_setup() {
 }
 
 step_3() {
-  echo "3: low-risk PR -> CI green, risk gate success, r1 approves and schedules auto-merge -> merged on green"
+  echo "3: low-risk PR -> CI green, risk gate success, r1 schedules auto-merge and approves -> merged on green"
   gate_setup || return
   local clone="clone-3" branch n head out t
   fresh_clone "$CORE_TASK" "$clone" || { check "clone main" yes no; return; }
@@ -1256,7 +1259,7 @@ step_3() {
   local since
   since="$(date +%s)"
   out="$(r1_approve_and_schedule "$n")"
-  check "r1 approves and schedules auto-merge through Traefik" "approve=200 schedule=ok" "$out"
+  check "r1 schedules auto-merge and approves through Traefik" "approve=200 schedule=ok" "$out"
   check "  ... audit: r1's review and merge requests were allowed (write, ok)" yes \
     "$(audit_for_task "${AGENT_TASKS[$REVIEWER_USERNAME]}" "$since" | python3 -I -c '
 import json,sys
@@ -1340,7 +1343,7 @@ step_6() {
   check "agent opens a PR adding ci/red" yes "$([[ "$n" =~ ^[0-9]+$ ]] && echo yes || echo "no ($n)")"
   [[ "$n" =~ ^[0-9]+$ ]] || return
   out="$(r1_approve_and_schedule "$n")"
-  check "r1 approves and schedules auto-merge" "approve=200 schedule=ok" "$out"
+  check "r1 schedules auto-merge and approves" "approve=200 schedule=ok" "$out"
   t="$(wait_yes "$GATE_WAIT" pr_merged "$n")"
   check "the PR is green (CI and gate) and merges (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
   bad="$(pr_field "$n" 'd["merge_commit_sha"]')"

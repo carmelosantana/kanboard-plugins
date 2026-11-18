@@ -199,7 +199,7 @@ list`; `all` runs each once). Besides `preflight`, the live steps act as agent
 | --- | --- |
 | `1` | the agent claims (or creates) its open task "scenario core path"; the helper's `get` prints `username`, `password`, `password_expiry_utc` |
 | `2` | clone through Traefik, branch `agent/<login>/scenario-<ts>`, commit, push accepted |
-| `3` | a low-risk PR: CI green on the dev runner, `kanboard/risk-gate` success from the broker; a2's approval (not in `git-reviewers`) does not count (merging now is 405); r1 approves and schedules auto-merge through Traefik; merged on green |
+| `3` | a low-risk PR: CI green on the dev runner, `kanboard/risk-gate` success from the broker; a2's approval (not in `git-reviewers`) does not count (merging now is 405); r1 schedules auto-merge, then approves, through Traefik (in that order: Forgejo checks a scheduled auto-merge only on a later status or review); merged on green |
 | `4` | a change to `.forgejo/workflows/ci.yml`: the gate stays `pending` with CI green and r1's approval, an agent's forged `kanboard/risk-gate` post is 403 `kanboard_deny`; a `humans-high-risk` member's approval turns it `success` and the PR merges |
 | `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; an agent status post is 403 |
 | `5c` | a force-push to `main` is refused by branch protection ("protected from force push") while authz allowed it; `main` does not move |
