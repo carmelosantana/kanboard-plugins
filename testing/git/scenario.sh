@@ -1110,7 +1110,6 @@ ss=[s for s in (json.load(sys.stdin).get("statuses") or []) if s["context"]==sys
 print("%s %s: %s" % (ss[0]["status"], (ss[0].get("creator") or {}).get("login",""), ss[0]["description"]) if ss else "")' "$2"
 }
 status_is() { [[ "$(status_of "$1" "$2")" == "$3"* ]] && echo yes || echo no; } # status_is <sha> <ctx> <state>
-verdict_is() { [[ "$(status_of "$1" "$RISK_GATE")" == "$2" ]] && echo yes || echo no; } # verdict_is <sha> "<state> <creator>: <desc>"
 
 # A fresh clone of main for <task>, in $WORK/<name>.
 fresh_clone() { # fresh_clone <task> <name>
@@ -1259,10 +1258,7 @@ step_3() {
   t="$(wait_yes 60 status_is "$head" "$RISK_GATE" success)"
   check "${RISK_GATE} is success from the broker (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
   echo "    ${RISK_GATE}: $(status_of "$head" "$RISK_GATE")"
-  # A pull_request delivery processed after the push's sweep holds the head on pending again
-  # (review N2) until its own sweep re-posts the verdict: wait for the settled status.
-  t="$(wait_yes 30 verdict_is "$head" "success kb-admin: no high-risk paths")"
-  check "  ... written by the broker identity (settled after ${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  check "  ... written by the broker identity" yes "$([[ "$(status_of "$head" "$RISK_GATE")" == "success kb-admin: no high-risk paths" ]] && echo yes || echo no)"
   t="$(wait_yes "$GATE_WAIT" status_is "$head" "$CI_PR_CONTEXT" success)"
   check "CI (${CI_PR_CONTEXT}) is green on the dev runner (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 
