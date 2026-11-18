@@ -1449,7 +1449,13 @@ RUNNERS_DIR="$HERE/runners"
 LEAK_FIXTURE="$HERE/fixtures/leak-secrets.yml"
 COLDSTART_FIXTURE="$HERE/fixtures/coldstart.yml"
 COLDSTART_RUNS="${COLDSTART_RUNS:-20}"
-DEPLOY_REPO="kb-deploy/app-deploy"
+# Outside the broker's kb-<identifier> org namespace, so no Kanboard project can map onto it.
+DEPLOY_REPO="deploy-kb/app-deploy"
+ISOLATION_FIXTURE="$HERE/fixtures/isolation-probe.yml"
+PROXY_CONTAINER="${PROXY_CONTAINER:-kb-git-ci-proxy}"
+PROXY_NETWORK="kb-git-ci-egress"
+# The default capability set of a Docker container (no --privileged, no --cap-add).
+DEFAULT_CAPEFF="00000000a80425fb"
 CI_SECRET_NAME="KB_DEPLOY_TOKEN"
 CI_WAIT="${CI_WAIT:-300}"
 
@@ -1497,12 +1503,12 @@ run_status() { fj_api "/api/v1/repos/${REPO}/actions/runs/$1" | json_get 'd["sta
 run_done() { [[ "$(run_status "$1")" =~ ^(success|failure|cancelled|skipped)$ ]] && echo yes || echo no; }
 sha_run_done() { local r; r="$(run_for_sha "$1")"; [[ "${r##* }" =~ ^(success|failure|cancelled|skipped)$ ]] && echo yes || echo no; }
 
-# The task (job attempt) id of run number <n>.
-task_of_run() { # task_of_run <run number>
+# The task (job attempt) id of run number <n>, of job <name> when given.
+task_of_run() { # task_of_run <run number> [job name]
   fj_api "/api/v1/repos/${REPO}/actions/tasks?limit=50" | python3 -I -c '
 import json,sys
-ts=[t for t in json.load(sys.stdin).get("workflow_runs") or [] if int(t["run_number"])==int(sys.argv[1])]
-print(max(t["id"] for t in ts) if ts else "")' "$1" 2>/dev/null
+ts=[t for t in json.load(sys.stdin).get("workflow_runs") or [] if int(t["run_number"])==int(sys.argv[1]) and sys.argv[2] in ("", t["name"])]
+print(max(t["id"] for t in ts) if ts else "")' "$1" "${2:-}" 2>/dev/null
 }
 
 # A finished task's log from Forgejo's storage (zstd once the job is done).
@@ -1513,6 +1519,7 @@ task_log() { # task_log <task id>
     { zstd -dcq 2>/dev/null || cat; }
 }
 kb5d() { sed -n "s/^[^ ]* KB5D $1 //p" "$2" | head -1; } # kb5d <key> <logfile>
+kbp() { sed -n "s/^[^ ]* KBP $1\( \|$\)//p" "$2" | head -1; } # kbp <key> <logfile> (isolation-probe.yml)
 
 # Pushes the clone's HEAD (with <fixture> as .forgejo/workflows/<name>, runs-on <label>) to a new
 # agent branch; prints "<branch> <sha>".
@@ -1580,6 +1587,24 @@ step_5d() {
     "$([[ " $(secret_names "/repos/${DEPLOY_REPO}") " == *" ${CI_SECRET_NAME} "* ]] && echo yes || echo no)"
   check "${REPO} has no Actions secrets" none "$(secret_names "/repos/${REPO}")"
   check "org ${ORG} has no Actions secrets" none "$(secret_names "/orgs/${ORG}")"
+  # The fallback holds only while no agent can reach the deploy repo. Its org is outside the
+  # broker's kb-<identifier> namespace, and the agent's own credential is refused on it.
+  check "deploy org ${DEPLOY_REPO%%/*} is outside the broker's kb-<identifier> org namespace" yes \
+    "$([[ "${DEPLOY_REPO%%/*}" != kb-* ]] && echo yes || echo no)"
+  local out since
+  since="$(date +%s)"
+  agent_hdr "$AGENT_USERNAME" "$CORE_TASK" "$WORK/hdr.a1"
+  check "the agent's token: GET /api/v1/repos/${DEPLOY_REPO} through Traefik is 403" 403 \
+    "$(code_of "$(api "$WORK/hdr.a1" GET "/repos/${DEPLOY_REPO}")")"
+  check "the agent's token: GET .../actions/secrets of ${DEPLOY_REPO} is 403" 403 \
+    "$(code_of "$(api "$WORK/hdr.a1" GET "/repos/${DEPLOY_REPO}/actions/secrets")")"
+  out="$(run_git git_helper "$CORE_TASK" ls-remote "${BASE}/${DEPLOY_REPO}.git")"
+  check "the agent's helper credential: git ls-remote ${DEPLOY_REPO} is denied" yes "$(denied "$out")"
+  rm -rf "${WORK:?}/deploy-clone"
+  out="$(run_git git_helper "$CORE_TASK" clone --quiet "${BASE}/${DEPLOY_REPO}.git" "$WORK/deploy-clone")"
+  check "the agent's helper credential: git clone ${DEPLOY_REPO} is denied, nothing cloned" "yes no" \
+    "$(denied "$out") $([[ -d "$WORK/deploy-clone/.git" ]] && echo yes || echo no)"
+  echo "    broker audit for task ${CORE_TASK} on ${DEPLOY_REPO}: $(reasons_for_task "$CORE_TASK" "$since" | tr '\n' ' ')"
 
   local opt dir label pushed branch sha t run id num task log VM_CGROUP
   for opt in $CI_OPTIONS; do
@@ -1611,6 +1636,8 @@ step_5d() {
     check "$label: the job dumped its secrets context (decodes as JSON)" yes \
       "$(python3 -I -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' "$secrets" 2>/dev/null || echo no)"
     check "$label: ${CI_SECRET_NAME}'s value is not in the dumped secrets" no "$(grep -qF "$secret" <<<"$secrets" && echo yes || echo no)"
+    check "$label: the job dumped its variables context (decodes as JSON)" yes \
+      "$(python3 -I -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' "$vars" 2>/dev/null || echo no)"
     check "$label: ... nor in the dumped variables" no "$(grep -qF "$secret" <<<"$vars" && echo yes || echo no)"
     check "$label: ... nor anywhere in the job log" no "$(grep -qF "$secret" "$log" && echo yes || echo no)"
     # Limits (spec: CPU 2, memory 4 GB, pids 1024), from the job's own cgroup files.
@@ -1639,7 +1666,6 @@ step_5d() {
     check "$label: the registry proxy serves an allowlisted registry (npm: CONNECT/GET)" 200/200 "$(kb5d proxy-allowed "$log")"
     check "$label: ... and refuses others (example.com: CONNECT 403)" 403/000 "$(kb5d proxy-denied "$log")"
     check "$label: Traefik (git.localhost:8090) is reachable" 200 "$(kb5d traefik "$log")"
-    check "$label: forgejo:3000 is not reachable" closed "$(kb5d forgejo-direct "$log")"
     check "$label: no host service through the user-net gateway (10.0.2.2:22,3000,8081,8090)" "closed closed closed closed" \
       "$(kb5d host-22 "$log") $(kb5d host-3000 "$log") $(kb5d host-8081 "$log") $(kb5d host-8090 "$log")"
     check "$label: the runner host is not reachable from the job ($(kb5d gateway "$log"):22)" closed "$(kb5d gateway-22 "$log")"
@@ -1648,7 +1674,67 @@ step_5d() {
       c) check "$label: the job ran in a Kata guest kernel, not the runner VM's ($(kb5d kernel "$log"))" yes \
            "$([[ -n "$(kb5d kernel "$log")" && "$(kb5d kernel "$log")" != *-cloud-amd64 && "$(kb5d dmesg "$log")" != *gVisor* ]] && echo yes || echo no)" ;;
     esac
+    isolation_probe "$opt" "$label"
   done
+  proxy_isolation
+}
+
+# isolation-probe.yml on <option>: a job that asks for --privileged, SYS_ADMIN, the host network
+# and more CPU/pids gets none of it, and a second job finds none of its markers (no tool cache
+# or volume survives from one job to the next on the long-lived runner VM).
+isolation_probe() { # isolation_probe <option> <label>
+  local opt="$1" label="$2" branch sha t run id num l1 l2
+  read -r branch sha <<<"$(push_probe "$ISOLATION_FIXTURE" "$label" "5d-iso-$opt")"
+  check "$label: agent pushes isolation-probe.yml to an agent branch" yes "$([[ "$sha" =~ ^[0-9a-f]{40}$ ]] && echo yes || echo no)"
+  [[ -n "$sha" ]] || return
+  echo "    ${branch} ${sha:0:7}"
+  t="$(wait_yes "$CI_WAIT" sha_run_done "$sha")"
+  run="$(run_for_sha "$sha")"
+  read -r id num _ <<<"$run"
+  check "$label: the isolation-probe run (two jobs) finishes (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  check "$label: ... and succeeds" success "${run##* }"
+  l1="$WORK/iso-$opt-first.log"
+  l2="$WORK/iso-$opt-second.log"
+  task_log "$(task_of_run "$num" first)" >"$l1" 2>/dev/null
+  task_log "$(task_of_run "$num" second)" >"$l2" 2>/dev/null
+  check "$label: both job logs read" "yes yes" \
+    "$(grep -q 'KBP first-done' "$l1" && echo yes || echo no) $(grep -q 'KBP second-done' "$l2" && echo yes || echo no)"
+  sed -n 's/^[^ ]* \(KBP .*\)$/    \1/p' "$l1" "$l2"
+  # No capability outside Docker's default set (gVisor also drops CAP_NET_RAW: a80405fb).
+  check "$label: override job: no capability beyond Docker's default ${DEFAULT_CAPEFF} (CapEff $(kbp capeff "$l1"))" 0 \
+    "$(c="$(kbp capeff "$l1")"; [[ "$c" =~ ^[0-9a-f]+$ ]] && printf '%x' $((0x$c & ~0x$DEFAULT_CAPEFF)) || echo "unread")"
+  check "$label: ... no runner-VM devices (kvm, disks, vhost, vsock, mem)" none "$(kbp devices "$l1" | xargs)"
+  check "$label: ... not in the runner VM's network namespace" no "$(kbp vm-netns "$l1")"
+  check "$label: ... the runner VM's sshd is closed (127.0.0.1:22, 10.0.2.15:22, gateway:22)" "closed closed closed" \
+    "$(kbp vm-loopback-22 "$l1") $(kbp vm-eth0-22 "$l1") $(kbp gateway-22 "$l1")"
+  check "$label: ... still CPU 2 (asked for 6)" 2 "$(kbp cpu "$l1" | awk '$1 ~ /^[0-9]+$/ && $2 > 0 { printf "%g", $1 / $2; exit } { print "none: " $0 }')"
+  check "$label: the first job wrote markers (in /tmp at least)" yes "$([[ " $(kbp wrote "$l1") " == *" /tmp "* ]] && echo yes || echo no)"
+  check "$label: the second job finds none of the first job's markers" none "$(kbp markers-found "$l2" | xargs)"
+}
+
+# The registry proxy sits on its own egress-only network: from its network namespace nothing of
+# the git stack answers (by address, so DNS cannot make it vacuous), while the internet does.
+proxy_isolation() {
+  local nets targets c ip port out
+  nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$PROXY_CONTAINER" 2>/dev/null | xargs)"
+  check "ci-proxy is on ${PROXY_NETWORK} only" "$PROXY_NETWORK" "$nets"
+  targets=""
+  for c in kb-git-forgejo:3000 kb-git-broker:8080 kb-suite:80 kb-git-db:5432 kb-auth-db:5432 \
+    kb-auth-server:9000 kb-git-traefik:8090; do
+    for ip in $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "${c%%:*}" 2>/dev/null); do
+      targets+=" ${c%%:*}@${ip}:${c##*:}"
+    done
+  done
+  out="$(docker run --rm --network "container:${PROXY_CONTAINER}" --entrypoint bash \
+    debian:trixie-20261027-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 -c '
+    tcp() { timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null && echo open || echo closed; }
+    echo "internet $(tcp 1.1.1.1 443)"
+    for t in "$@"; do a="${t#*@}"; echo "${t%%@*}:${a##*:} ${a%:*} $(tcp "${a%:*}" "${a##*:}")"; done' bash $targets 2>&1)"
+  printf '%s\n' "$out" | sed 's/^/    from ci-proxy: /'
+  check "from ci-proxy's netns the internet answers (1.1.1.1:443, control)" open "$(awk '$1 == "internet" { print $2 }' <<<"$out")"
+  check "from ci-proxy's netns no git-stack service answers (forgejo, broker, kanboard, both DBs, authentik, traefik)" \
+    "0 open, $(wc -w <<<"$targets") probed" \
+    "$(awk '$1 != "internet" && $NF == "open"' <<<"$out" | wc -l) open, $(awk '$1 != "internet"' <<<"$out" | wc -l) probed"
 }
 
 # The runner VM's clock minus the host's, in ns (median of 3). The VM has no NTP (restricted

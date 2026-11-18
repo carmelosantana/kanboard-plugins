@@ -1,0 +1,62 @@
+# Isolation probe (scenario step 5d, beside leak-secrets.yml): untrusted code on an agent/* branch
+# that asks for more than the runner gives, then checks it got nothing extra.
+#   first   requests --privileged --cap-add SYS_ADMIN --network host and more CPU/pids through
+#           its own container options, then reports its capabilities, devices, network namespace,
+#           reach to the runner VM, and limits. It writes a marker into every writable path a
+#           tool cache or volume could live in.
+#   second  runs after it (a new one-job runner process, a new container) and looks for those
+#           markers anywhere: none may survive from one job to the next.
+# scenario.sh 5d replaces the runs-on label. Lines that start with "KBP " are what it reads.
+name: isolation-probe
+on:
+  push:
+    branches: ['agent/**']
+jobs:
+  first:
+    runs-on: kb-ci-option
+    container:
+      image: kb-ci-job:1
+      options: --privileged --cap-add SYS_ADMIN --network host --cpus 6 --pids-limit 4096
+    steps:
+      - name: ask for more, then look
+        shell: bash
+        run: |
+          set +e
+          tcp() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null && echo open || echo closed; }
+          printf 'KBP capeff %s\n' "$(awk '/^CapEff:/ { print $2 }' /proc/self/status)"
+          # Devices a privileged container would see: the VM's disks, KVM, vsock, raw memory.
+          extra="$(ls /dev | grep -E '^(kvm|vd[a-z]|sd[a-z]|nvme|vhost|mem$|port$|vsock|loop[0-9]|dm-|nbd)' | tr '\n' ' ')"
+          printf 'KBP devices %s\n' "${extra:-none}"
+          # With --network host the job would share the runner VM's netns (eth0 10.0.2.15/24 under
+          # QEMU user-net); its routing table would then hold 10.0.2.0 (0002000A in /proc).
+          printf 'KBP vm-netns %s\n' "$(awk '$2 == "0002000A" { f=1 } END { print f ? "yes" : "no" }' /proc/net/route)"
+          printf 'KBP vm-loopback-22 %s\n' "$(tcp 127.0.0.1 22)"
+          printf 'KBP vm-eth0-22 %s\n' "$(tcp 10.0.2.15 22)"
+          h="$(awk '$2 == "00000000" { print $3; exit }' /proc/net/route)"
+          gw=""; [ -n "$h" ] && gw="$(printf '%d.%d.%d.%d' "0x${h:6:2}" "0x${h:4:2}" "0x${h:2:2}" "0x${h:0:2}")"
+          printf 'KBP gateway-22 %s\n' "$(tcp "${gw:-0.0.0.0}" 22)"
+          cg=/sys/fs/cgroup
+          if [ -f $cg/cpu.max ]; then cpu="$(cat $cg/cpu.max)"
+          else cpu="$(cat $cg/cpu/cpu.cfs_quota_us 2>/dev/null) $(cat $cg/cpu/cpu.cfs_period_us 2>/dev/null)"; fi
+          printf 'KBP cpu %s\n' "$cpu"
+          # Markers: every candidate cache path, plus every writable mount that is not a
+          # pseudo filesystem.
+          paths="/opt/hostedtoolcache ${RUNNER_TOOL_CACHE:-} ${AGENT_TOOLSDIRECTORY:-} ${RUNNER_TEMP:-} ${GITHUB_WORKSPACE:-} ${HOME:-} /root /tmp /var/tmp /workspace /github /cache"
+          paths="$paths $(awk '$3 !~ /^(proc|sysfs|cgroup2?|devpts|mqueue|tmpfs|devtmpfs)$/ && $4 ~ /(^|,)rw(,|$)/ { print $2 }' /proc/mounts | tr '\n' ' ')"
+          wrote=""
+          for p in $paths; do
+            mkdir -p "$p" 2>/dev/null && echo "$GITHUB_RUN_ID" >"$p/.kb-persist-marker" 2>/dev/null && wrote="$wrote $p"
+          done
+          printf 'KBP wrote%s\n' "$wrote"
+          printf 'KBP mounts %s\n' "$(awk '$3 !~ /^(proc|sysfs|cgroup2?|devpts|mqueue|devtmpfs)$/ { print $2 "(" $3 ")" }' /proc/mounts | tr '\n' ' ')"
+          echo "KBP first-done"
+  second:
+    needs: first
+    runs-on: kb-ci-option
+    steps:
+      - name: look for the first job's markers
+        shell: bash
+        run: |
+          found="$(find / \( -path /proc -o -path /sys \) -prune -o -name .kb-persist-marker -print 2>/dev/null | tr '\n' ' ')"
+          printf 'KBP markers-found %s\n' "${found:-none}"
+          echo "KBP second-done"

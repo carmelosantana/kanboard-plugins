@@ -182,7 +182,9 @@ services:
   # Registry allowlist proxy for the isolation-option runners (Task 16, ruling F15): tinyproxy,
   # default deny, CONNECT to npm, Packagist, crates.io and Docker Hub only. No published port
   # (F14): the runner VMs reach it through a QEMU guestfwd that connects to this container's
-  # address (testing/git/runners/vm.sh). Profile ci keeps it out of a plain `up`; up.sh starts it:
+  # address (testing/git/runners/vm.sh). It is the one service job code talks to, so it sits alone
+  # on its own egress-only network, never beside Forgejo, the broker, Kanboard or the databases.
+  # Profile ci keeps it out of a plain `up`; up.sh starts it:
   #   bash testing/git/compose.sh --profile ci up -d --no-deps --build ci-proxy
   ci-proxy:
     build: ./git/proxy
@@ -193,6 +195,7 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    networks: [ci-egress]
 
   # Authentik 2026.8: server + worker on their own Postgres. No Redis since 2025.10. No ports;
   # reached only through Traefik. The worker gets no docker socket (no managed outposts).
@@ -247,6 +250,9 @@ networks:
   ci:
     name: kb-git-ci
     internal: true
+  # Not internal (the proxy fetches from the registries). Its only member is ci-proxy.
+  ci-egress:
+    name: kb-git-ci-egress
 
 volumes:
   kb-auth-db-data:

@@ -32,7 +32,10 @@ extension) pin `*.localhost` to loopback, so in-container clients need
 
 `bash testing/git/scenario.sh coldstart` (20 `workflow_dispatch` runs per option, one at a time,
 each 5 s after the one-job runner restarted). Job: one `echo` step in `kb-ci-job:1` with the spec
-limits (CPU 2, 4 GiB, pids 1024).
+limits (CPU 2, 4 GiB, pids 1024). Neither runtime shows the pids limit in the job's own cgroup
+(`max`): on (a) it is enforced on the gVisor sandbox's cgroup on the runner VM (exceeding it kills
+the sandbox); on (c) the job's guest kernel is capped at `threads-max` 1024, about 936 usable
+beside the guest's own threads (exceeding it kills the guest).
 
 - **setup**: the runner's own log timestamps, "received task" to the first step's output. One
   clock. This is the runtime's container start (sandbox or microVM) plus act's job setup.
@@ -43,7 +46,7 @@ limits (CPU 2, 4 GiB, pids 1024).
 
 | Option | What it really is | n | setup p50 | setup p95 | end-to-end p50 | end-to-end p95 |
 | --- | --- | --- | --- | --- | --- | --- |
-| (a) `vm-gvisor` | Same physical host, separate kernel: a QEMU/KVM VM (4 vCPU, 6 GiB) with Docker 26.1.5 and gVisor `runsc` release-20261102.0 (systrap) as the default runtime | 20 | 0.63 s | 1.25 s | 2.15 s | 2.92 s |
+| (a) `vm-gvisor` | Same physical host, separate kernel: a QEMU/KVM VM (4 vCPU, 6 GiB, no nested virtualization) with Docker 26.1.5 and gVisor `runsc` release-20261102.0 (systrap) as the default runtime | 20 | 0.63 s | 1.25 s | 2.15 s | 2.92 s |
 | (b) `rootless-gvisor` | PARKED: needs root apt installs (`uidmap`, `slirp4netns`) and `runsc` on the host; see `testing/git/runners/b-rootless-gvisor/up.sh` | – | – | – | – | – |
 | (c) `kvm-kata` | Kata Containers 4.3.1 (Go shim, QEMU) as the default runtime of a QEMU/KVM VM (4 vCPU, 9 GiB): each job is an L2 microVM under nested KVM | 20 | 17.39 s | 18.44 s | 18.48 s | 19.97 s |
 

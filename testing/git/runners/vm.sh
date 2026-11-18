@@ -15,6 +15,7 @@
 #              HTTP from 127.0.0.1 on the host) runs guest/provision.sh, which installs Docker and
 #              the option's runtime, re-verifies every artifact against its pin, builds the job
 #              image and powers off. The result is .cache/<option>/provisioned.qcow2.
+#   (VM_CPU in vm.env sets -cpu; default host, which exposes nested virtualization.)
 #   up         Each boot gets a fresh overlay of provisioned.qcow2 (nothing survives a down).
 #              User-mode networking with restrict=on: the guest reaches nothing on the host or
 #              the internet, except two guestfwd addresses, each a new connection per request:
@@ -110,7 +111,7 @@ EOF
   rm -f "$STATE/provisioned.qcow2.tmp"
   qemu-img create -q -f qcow2 -F qcow2 -b "$(base_image)" "$STATE/provisioned.qcow2.tmp" "$VM_DISK"
   : >"$STATE/provision.log"
-  timeout 2400 qemu-system-x86_64 -name "$VM_NAME-provision" -machine q35,accel=kvm -cpu host \
+  timeout 2400 qemu-system-x86_64 -name "$VM_NAME-provision" -machine q35,accel=kvm -cpu "${VM_CPU:-host}" \
     -smp "$VM_CPUS" -m "$VM_MEM" -display none -serial "file:$STATE/provision.log" -monitor none \
     -drive "file=$STATE/provisioned.qcow2.tmp,if=virtio,discard=unmap" \
     -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${VM_SSH_PORT}-:22" -device virtio-net-pci,netdev=n0 \
@@ -156,7 +157,7 @@ up() {
       { log "cannot start ci-proxy"; return 1; }
     rm -f "$STATE/run.qcow2" "$SERIAL"
     qemu-img create -q -f qcow2 -F qcow2 -b "$STATE/provisioned.qcow2" "$STATE/run.qcow2"
-    qemu-system-x86_64 -name "$VM_NAME" -machine q35,accel=kvm -cpu host \
+    qemu-system-x86_64 -name "$VM_NAME" -machine q35,accel=kvm -cpu "${VM_CPU:-host}" \
       -smp "$VM_CPUS" -m "$VM_MEM" -display none -serial "file:$SERIAL" -monitor none \
       -daemonize -pidfile "$PIDFILE" \
       -drive "file=$STATE/run.qcow2,if=virtio,discard=unmap" \
