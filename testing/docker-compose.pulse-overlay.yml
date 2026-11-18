@@ -1,0 +1,7 @@
+# Mounts the Pulse activity heatmap plugin (its own repo, gitignored here) into the suite harness.
+# Add it to the compose set already in use (see docker inspect kb-suite for the current set), e.g.:
+#   docker compose -f testing/docker-compose.dev.yml ... -f testing/docker-compose.pulse-overlay.yml up -d --no-deps kanboard
+services:
+  kanboard:
+    volumes:
+      - ../Pulse:/var/www/app/plugins/Pulse
