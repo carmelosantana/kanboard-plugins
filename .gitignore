@@ -48,5 +48,8 @@ testing/git/authentik.env
 testing/git/vendor/
 # Git hosting P1 overlay: dev CI runner registration secret (written by bootstrap.sh)
 testing/git/runner.env
+# Task 16: the CI test secret, and the runners' pinned downloads, VM disks and secrets.
+testing/git/ci-secret.env
+testing/git/runners/.cache/
 # Git hosting P1 overlay: scenario.sh's Forgejo API token of the test human (high-risk approver)
 testing/git/scenario-human.token

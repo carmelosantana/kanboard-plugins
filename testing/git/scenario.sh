@@ -32,6 +32,13 @@
 #   IDENTITY_LOCAL_USER     a local Forgejo user with a known password (default idtest-local)
 #   IDENTITY_UNLINKED_USER  an Authentik user that is never provisioned (default idtest-unlinked)
 #   IDENTITY_PROVISION      1 (default); 0 skips pre-provisioning, which must make the step fail
+# Step 5d and coldstart (Task 16) run against the CI isolation options' runners
+# (testing/git/runners/<option>/up.sh, called by the step; it boots the option's VM if needed) and
+# read the test secret from testing/git/ci-secret.env (bootstrap.sh step 10):
+#   CI_OPTIONS              options to run, default "a c" ((b) is parked)
+#   COLDSTART_RUNS          runs per option for coldstart (default 20); coldstart is not in `all`
+#   CI_WAIT                 seconds to wait for one CI run (default 300)
+# Steps 3, 4 and 6 keep the dev-only runner dev-plain (testing/git/fixtures/ci.yml).
 # git gets its token from git-credential-kanboard (credential.helper = the built binary), which
 # reads the agent's API token from a 0600 copy (KB_TOKEN_FILE) and calls getGitCredential. Where
 # a step needs a token minted *before* a change (removal, close, outage), it keeps one helper
@@ -1427,6 +1434,296 @@ import json,sys; print(sum(1 for p in json.load(sys.stdin) if p["head"]["ref"]==
   check "  ... and one revert comment on task ${CORE_TASK}" 1 "$(revert_comments "$CORE_TASK" "$rurl" | wc -l)"
 }
 
+# ---------------------------------------------------------------------------------------------
+# Step 5d and coldstart (Task 16): CI isolation options and secret scoping.
+#
+# Isolation options: <id> <directory under testing/git/runners> <runner label>. CI_OPTIONS picks
+# the ones 5d and coldstart run (default: the working ones; (b) is parked, see its up.sh).
+CI_OPTION_ROWS=(
+  "a a-vm-gvisor       vm-gvisor"
+  "b b-rootless-gvisor rootless-gvisor"
+  "c c-kvm             kvm-kata"
+)
+CI_OPTIONS="${CI_OPTIONS:-a c}"
+RUNNERS_DIR="$HERE/runners"
+LEAK_FIXTURE="$HERE/fixtures/leak-secrets.yml"
+COLDSTART_FIXTURE="$HERE/fixtures/coldstart.yml"
+COLDSTART_RUNS="${COLDSTART_RUNS:-20}"
+DEPLOY_REPO="kb-deploy/app-deploy"
+CI_SECRET_NAME="KB_DEPLOY_TOKEN"
+CI_WAIT="${CI_WAIT:-300}"
+
+ci_option() { # ci_option <id>: prints "<dir> <label>"
+  local row id dir label
+  for row in "${CI_OPTION_ROWS[@]}"; do
+    read -r id dir label <<<"$row"
+    [[ "$id" == "$1" ]] && { echo "$dir $label"; return; }
+  done
+}
+
+# Forgejo admin API with any method, inside the Forgejo container. The token and the body reach
+# curl on stdin (a curl config), never argv. Prints the body, then the status on its own line.
+fj_call() { # fj_call <method> <path> [json]
+  { printf 'header = "Authorization: token %s"\n' "$(env_value FORGEJO_ADMIN_TOKEN "$HERE/.env")"
+    if [[ -n "${3:-}" ]]; then
+      printf 'header = "Content-Type: application/json"\ndata-binary = "%s"\n' "${3//\"/\\\"}"
+    fi
+  } | docker exec -i "$FORGEJO_CONTAINER" curl -s --max-time 15 -K - -w '\n%{http_code}' -X "$1" \
+    "http://localhost:3000/api/v1$2"
+}
+
+# Names of the Actions secrets at <api prefix> (/repos/o/r or /orgs/o), space-separated.
+secret_names() { # secret_names <prefix>
+  fj_api "/api/v1$1/actions/secrets?limit=50" | python3 -I -c '
+import json,sys; print(" ".join(sorted(s["name"] for s in json.load(sys.stdin))) or "none")' 2>/dev/null
+}
+
+# "<status>" of the registered runner named <name> (idle, active, offline), or "missing".
+runner_status() { # runner_status <name>
+  fj_api "/api/v1/admin/actions/runners?limit=50" | python3 -I -c '
+import json,sys
+d=json.load(sys.stdin); rs=d if isinstance(d,list) else d.get("runners") or d.get("data") or []
+r=[x for x in rs if x["name"]==sys.argv[1]]; print(r[0]["status"] if r else "missing")' "$1"
+}
+
+# "<run id> <run number> <status>" of the newest run for <sha>.
+run_for_sha() { # run_for_sha <sha>
+  fj_api "/api/v1/repos/${REPO}/actions/runs?head_sha=$1&limit=5" | python3 -I -c '
+import json,sys
+rs=json.load(sys.stdin).get("workflow_runs") or []
+print("%s %s %s" % (rs[0]["id"], rs[0]["index_in_repo"], rs[0]["status"]) if rs else "")' 2>/dev/null
+}
+run_status() { fj_api "/api/v1/repos/${REPO}/actions/runs/$1" | json_get 'd["status"]'; } # run_status <id>
+run_done() { [[ "$(run_status "$1")" =~ ^(success|failure|cancelled|skipped)$ ]] && echo yes || echo no; }
+sha_run_done() { local r; r="$(run_for_sha "$1")"; [[ "${r##* }" =~ ^(success|failure|cancelled|skipped)$ ]] && echo yes || echo no; }
+
+# The task (job attempt) id of run number <n>.
+task_of_run() { # task_of_run <run number>
+  fj_api "/api/v1/repos/${REPO}/actions/tasks?limit=50" | python3 -I -c '
+import json,sys
+ts=[t for t in json.load(sys.stdin).get("workflow_runs") or [] if int(t["run_number"])==int(sys.argv[1])]
+print(max(t["id"] for t in ts) if ts else "")' "$1" 2>/dev/null
+}
+
+# A finished task's log from Forgejo's storage (zstd once the job is done).
+task_log() { # task_log <task id>
+  local f
+  f="/var/lib/gitea/actions_log/${REPO}/$(printf '%02x' $(($1 % 256)))/$1.log"
+  docker exec "$FORGEJO_CONTAINER" sh -c 'if [ -f "$1.zst" ]; then cat "$1.zst"; else cat "$1"; fi' sh "$f" |
+    { zstd -dcq 2>/dev/null || cat; }
+}
+kb5d() { sed -n "s/^[^ ]* KB5D $1 //p" "$2" | head -1; } # kb5d <key> <logfile>
+
+# Pushes the clone's HEAD (with <fixture> as .forgejo/workflows/<name>, runs-on <label>) to a new
+# agent branch; prints "<branch> <sha>".
+# The branch stays: Forgejo refuses to delete agent/* branches under the broker's protection,
+# even for the admin (403 branch protected).
+push_probe() { # push_probe <fixture> <label> <tag>
+  local clone="clone-$3" branch out
+  fresh_clone "$CORE_TASK" "$clone" || return 1
+  branch="agent/${FJ_USER}/${CORE_TASK}-$3-$(date +%Y%m%d%H%M%S)-$$"
+  git -C "$WORK/$clone" checkout --quiet -b "$branch"
+  mkdir -p "$WORK/$clone/.forgejo/workflows"
+  sed "s/^\(    runs-on: \)kb-ci-option$/\1$2/" "$1" >"$WORK/$clone/.forgejo/workflows/$(basename "$1")"
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario $3: $(basename "$1") on $2" >/dev/null 2>&1
+  out="$(run_git git_helper "$CORE_TASK" -C "$WORK/$clone" push --quiet origin "HEAD:refs/heads/$branch")"
+  [[ "$(last_exit "$out")" == exit=0 ]] || { echo "push: $out" >&2; return 1; }
+  echo "$branch $(git -C "$WORK/$clone" rev-parse HEAD)"
+}
+
+# Waits for the run of <sha> to finish, sampling the job container's cgroup on the runner VM (over
+# the debug ssh) while it runs, into $WORK/vm-cgroup ("cpu.max memory.max pids.max"). Prints the
+# wait in seconds (it runs in a command substitution, hence the file).
+wait_run_sampling() { # wait_run_sampling <sha> <dir>
+  local t0 sample VM_CGROUP=""
+  t0="$(date +%s)"
+  : >"$WORK/vm-cgroup"
+  while (($(date +%s) - t0 < CI_WAIT)); do
+    if [[ -z "$VM_CGROUP" ]]; then
+      sample="$(bash "$RUNNERS_DIR/vm.sh" ssh "$2" 'sudo sh -c '"'"'for id in $(docker ps -q --no-trunc); do
+        d=$(find /sys/fs/cgroup -maxdepth 3 -type d -name "*$id*" | head -1)
+        [ -n "$d" ] && echo "$(cat "$d/cpu.max") $(cat "$d/memory.max") $(cat "$d/pids.max")"; done'"'" 2>/dev/null | head -1)"
+      [[ -n "$sample" ]] && { VM_CGROUP="$sample"; printf '%s\n' "$sample" >"$WORK/vm-cgroup"; }
+    fi
+    [[ "$(sha_run_done "$1")" == yes ]] && { echo "$(($(date +%s) - t0))"; return 0; }
+    sleep 1
+  done
+  echo timeout
+  return 1
+}
+
+# Brings an option's runner up (its up.sh is idempotent) and waits until Forgejo sees it.
+ci_runner_up() { # ci_runner_up <dir> <label>
+  local out rc t
+  out="$(bash "$RUNNERS_DIR/$1/up.sh" 2>&1)"
+  rc=$?
+  printf '%s\n' "$out" | tail -3 | sed 's/^/    up.sh: /'
+  check "$2: runner up (testing/git/runners/$1/up.sh exit 0)" 0 "$rc"
+  ((rc == 0)) || return 1
+  t="$(wait_yes 120 runner_online "$2")"
+  check "$2: Forgejo lists runner $2 online (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+}
+runner_online() { [[ "$(runner_status "$1")" =~ ^(idle|active)$ ]] && echo yes || echo no; }
+
+step_5d() {
+  echo "5d: an agent-branch workflow that dumps every secret and variable sees none of the deploy secret; job limits and egress per isolation option (${CI_OPTIONS})"
+  need_creds || { check "credentials and helper present" yes no; return; }
+  ensure_core_task && ensure_fj_user || { check "core task and Forgejo login" yes no; return; }
+  local secret
+  secret="$(env_value "$CI_SECRET_NAME" "$HERE/ci-secret.env")"
+  check "testing/git/ci-secret.env holds the test secret (bootstrap.sh step 10)" yes "$(yesno test -n "$secret")"
+  [[ -n "$secret" ]] || return
+  # Spec gap 5: Forgejo 15 has no environment-level secrets, so the fallback: the secret lives
+  # only on the deploy repo, and neither the scenario repo nor its org holds any secret.
+  check "${DEPLOY_REPO} holds ${CI_SECRET_NAME} (repo level, deploy repo only)" yes \
+    "$([[ " $(secret_names "/repos/${DEPLOY_REPO}") " == *" ${CI_SECRET_NAME} "* ]] && echo yes || echo no)"
+  check "${REPO} has no Actions secrets" none "$(secret_names "/repos/${REPO}")"
+  check "org ${ORG} has no Actions secrets" none "$(secret_names "/orgs/${ORG}")"
+
+  local opt dir label pushed branch sha t run id num task log VM_CGROUP
+  for opt in $CI_OPTIONS; do
+    read -r dir label <<<"$(ci_option "$opt")"
+    [[ -n "$label" ]] || { check "known isolation option $opt" yes no; continue; }
+    echo "  option ($opt) $dir, label $label"
+    ci_runner_up "$dir" "$label" || continue
+    pushed="$(push_probe "$LEAK_FIXTURE" "$label" "5d-$opt")"
+    read -r branch sha <<<"$pushed"
+    check "$label: agent pushes leak-secrets.yml to an agent branch" yes "$([[ "$sha" =~ ^[0-9a-f]{40}$ ]] && echo yes || echo no)"
+    [[ -n "$sha" ]] || continue
+    echo "    ${branch} ${sha:0:7}"
+    t="$(wait_run_sampling "$sha" "$dir")"
+    VM_CGROUP="$(cat "$WORK/vm-cgroup")"
+    run="$(run_for_sha "$sha")"
+    read -r id num _ <<<"$run"
+    check "$label: the leak-secrets run finishes (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+    check "$label: ... and succeeds" success "${run##* }"
+    task="$(task_of_run "$num")"
+    log="$WORK/5d-$opt.log"
+    [[ -n "$task" ]] && task_log "$task" >"$log"
+    check "$label: job log read (task ${task:-none})" yes "$([[ -s "$log" ]] && grep -q 'KB5D done' "$log" && echo yes || echo no)"
+    [[ -s "$log" ]] || continue
+    sed -n 's/^[^ ]* \(KB5D .*\)$/    \1/p' "$log" | grep -v -- '-b64 '
+    local secrets vars
+    secrets="$(kb5d secrets-b64 "$log" | base64 -d 2>/dev/null)"
+    vars="$(kb5d vars-b64 "$log" | base64 -d 2>/dev/null)"
+    echo "    secrets visible to the job: $(python3 -I -c 'import json,sys; print(" ".join(sorted(json.loads(sys.argv[1]))))' "$secrets" 2>/dev/null)"
+    check "$label: the job dumped its secrets context (decodes as JSON)" yes \
+      "$(python3 -I -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' "$secrets" 2>/dev/null || echo no)"
+    check "$label: ${CI_SECRET_NAME}'s value is not in the dumped secrets" no "$(grep -qF "$secret" <<<"$secrets" && echo yes || echo no)"
+    check "$label: ... nor in the dumped variables" no "$(grep -qF "$secret" <<<"$vars" && echo yes || echo no)"
+    check "$label: ... nor anywhere in the job log" no "$(grep -qF "$secret" "$log" && echo yes || echo no)"
+    # Limits (spec: CPU 2, memory 4 GB, pids 1024), from the job's own cgroup files.
+    check "$label: cgroup CPU limit is 2 CPUs" 2 "$(kb5d cpu "$log" | awk '$1 ~ /^[0-9]+$/ && $2 > 0 { printf "%g", $1 / $2; exit } { print "none: " $0 }')"
+    check "$label: cgroup memory limit is 4 GiB" 4294967296 "$(kb5d memory "$log")"
+    # The job container's cgroup on the runner VM's kernel, sampled while the job ran ("cpu.max
+    # memory.max pids.max"). pids: neither runtime mirrors the OCI pids limit into the job's own
+    # cgroup (both show max).
+    #  - gVisor: the VM-side cgroup is the sandbox's, where the kernel enforces all three limits;
+    #    the in-sandbox cgroupfs mirrors CPU and memory only. pids is asserted on the sandbox.
+    #  - Kata: the limits are enforced in the job's guest kernel (vCPUs, hot-plugged memory, the
+    #    guest cgroup above). Kata puts the pids limit on the sandbox's VM-side cgroup, where it
+    #    would count QEMU's threads, and enables only the cpu controller there; so the guest
+    #    kernel, one job per guest, is capped instead: threads-max 1024 (Kata kernel_params).
+    echo "    job cgroup on the runner VM: ${VM_CGROUP:-none}; in the job: cpu $(kb5d cpu "$log"), memory $(kb5d memory "$log"), pids $(kb5d pids "$log")"
+    case "$opt" in
+      a|b)
+        check "$label: the sandbox's cgroup on the runner VM: CPU 2, 4 GiB, pids 1024" "200000 100000 4294967296 1024" "${VM_CGROUP:-none}"
+        check "$label: pids 1024 is enforced on the sandbox's cgroup (gVisor's cgroupfs shows: $(kb5d pids "$log"))" 1024 "${VM_CGROUP##* }" ;;
+      c)
+        check "$label: pids: the job's guest kernel caps threads at 1024 (job cgroup shows $(kb5d pids "$log"); guest threads now $(kb5d threads "$log"))" 1024 "$(kb5d threads-max "$log")" ;;
+    esac
+    # Egress: no internet; the allowlist proxy and Traefik only.
+    check "$label: no direct internet (curl https://example.com: no response)" 000 "$(kb5d internet "$log")"
+    check "$label: ... nor a raw connect to 1.1.1.1:443" closed "$(kb5d internet-ip "$log")"
+    check "$label: the registry proxy serves an allowlisted registry (npm: CONNECT/GET)" 200/200 "$(kb5d proxy-allowed "$log")"
+    check "$label: ... and refuses others (example.com: CONNECT 403)" 403/000 "$(kb5d proxy-denied "$log")"
+    check "$label: Traefik (git.localhost:8090) is reachable" 200 "$(kb5d traefik "$log")"
+    check "$label: forgejo:3000 is not reachable" closed "$(kb5d forgejo-direct "$log")"
+    check "$label: no host service through the user-net gateway (10.0.2.2:22,3000,8081,8090)" "closed closed closed closed" \
+      "$(kb5d host-22 "$log") $(kb5d host-3000 "$log") $(kb5d host-8081 "$log") $(kb5d host-8090 "$log")"
+    check "$label: the runner host is not reachable from the job ($(kb5d gateway "$log"):22)" closed "$(kb5d gateway-22 "$log")"
+    case "$opt" in
+      a|b) check "$label: the job ran under gVisor (dmesg)" yes "$([[ "$(kb5d dmesg "$log")" == *gVisor* ]] && echo yes || echo no)" ;;
+      c) check "$label: the job ran in a Kata guest kernel, not the runner VM's ($(kb5d kernel "$log"))" yes \
+           "$([[ -n "$(kb5d kernel "$log")" && "$(kb5d kernel "$log")" != *-cloud-amd64 && "$(kb5d dmesg "$log")" != *gVisor* ]] && echo yes || echo no)" ;;
+    esac
+  done
+}
+
+# The runner VM's clock minus the host's, in ns (median of 3). The VM has no NTP (restricted
+# network) and boots from the RTC, so it is off by up to a second. Over one ssh session the host
+# sends its time and the guest answers with its own at once (well under a ms one way).
+vm_skew_ns() { # vm_skew_ns <dir>
+  local i out
+  for i in 1 2 3; do
+    out="$( (sleep 1; date +%s%N) | bash "$RUNNERS_DIR/vm.sh" ssh "$1" 'read -r t; echo "$t $(date +%s%N)"')"
+    echo $((${out#* } - ${out% *}))
+  done | sort -n | sed -n 2p
+}
+
+# Cold start: COLDSTART_RUNS dispatches per option, one at a time, each after the one-job runner
+# is waiting again. setup = the runner's own log timestamps, "received task" to the first step's
+# output (one clock); e2e = dispatch on the host to that output, corrected by the VM's clock skew.
+step_coldstart() {
+  echo "coldstart: ${COLDSTART_RUNS} runs per option (${CI_OPTIONS})"
+  need_creds || { check "credentials and helper present" yes no; return; }
+  ensure_core_task && ensure_fj_user || { check "core task and Forgejo login" yes no; return; }
+  local opt dir label branch sha i t0 out id num task log ok results skew
+  for opt in $CI_OPTIONS; do
+    read -r dir label <<<"$(ci_option "$opt")"
+    echo "  option ($opt) $dir, label $label"
+    ci_runner_up "$dir" "$label" || continue
+    skew="$(vm_skew_ns "$dir")"
+    check "$label: VM clock skew measured" yes "$([[ "$skew" =~ ^-?[0-9]+$ ]] && echo yes || echo no)"
+    [[ "$skew" =~ ^-?[0-9]+$ ]] || continue
+    echo "    VM clock minus host clock: $((skew / 1000000)) ms (subtracted from end-to-end)"
+    read -r branch sha <<<"$(push_probe "$COLDSTART_FIXTURE" "$label" "coldstart-$opt")"
+    check "$label: coldstart.yml pushed" yes "$([[ "$sha" =~ ^[0-9a-f]{40}$ ]] && echo yes || echo no)"
+    [[ -n "$sha" ]] || continue
+    results="$WORK/coldstart-$opt.tsv"
+    : >"$results"
+    ok=0
+    for i in $(seq 1 "$COLDSTART_RUNS"); do
+      wait_yes 60 runner_online "$label" >/dev/null
+      sleep 5 # the one-job runner restarted after the last job; let it reach its fetch loop
+      t0="$(date +%s%N)"
+      out="$(fj_call POST "/repos/${REPO}/actions/workflows/coldstart.yml/dispatches" \
+        "{\"ref\":\"${branch}\",\"return_run_info\":true}")"
+      id="$(body_of "$out" | json_get 'd["id"]')"
+      num="$(body_of "$out" | json_get 'd["run_number"]')"
+      [[ "$id" =~ ^[0-9]+$ ]] || { echo "    run $i: dispatch $(code_of "$out")"; continue; }
+      wait_yes "$CI_WAIT" run_done "$id" >/dev/null
+      task="$(task_of_run "$num")"
+      log="$WORK/cs-$opt-$i.log"
+      [[ -n "$task" ]] && task_log "$task" >"$log"
+      if [[ "$(run_status "$id")" == success ]] && python3 -I -c '
+import datetime,sys
+def ts(l): return datetime.datetime.fromisoformat(l.split(" ",1)[0].rstrip("Z")[:26]).replace(tzinfo=datetime.timezone.utc).timestamp()
+lines=open(sys.argv[1]).read().splitlines()
+recv=[ts(l) for l in lines if " received task " in l][0]
+first=[ts(l) for l in lines if l.endswith(" KBCS first-step")][0]
+print("%d\t%.3f\t%.3f" % (int(sys.argv[3]), first-recv, first-int(sys.argv[4])/1e9-int(sys.argv[2])/1e9))' "$log" "$t0" "$i" "$skew" >>"$results" 2>/dev/null; then
+        ok=$((ok + 1))
+      else
+        echo "    run $i: status $(run_status "$id"), no timing"
+      fi
+    done
+    check "$label: ${COLDSTART_RUNS} cold starts measured" "$COLDSTART_RUNS" "$ok"
+    python3 -I -c '
+import math,sys
+rows=[l.split("\t") for l in open(sys.argv[1]).read().splitlines() if l]
+def pct(xs,p):
+  xs=sorted(xs); return xs[max(0,math.ceil(p/100*len(xs))-1)]
+s=[float(r[1]) for r in rows]; e=[float(r[2]) for r in rows]
+if rows:
+  print("    %s: n=%d setup p50 %.2f s p95 %.2f s (max %.2f); end-to-end p50 %.2f s p95 %.2f s (max %.2f)" % (
+    sys.argv[2], len(rows), pct(s,50), pct(s,95), max(s), pct(e,50), pct(e,95), max(e)))
+  print("    COLDSTART|%s|%d|%.2f|%.2f|%.2f|%.2f" % (sys.argv[2], len(rows), pct(s,50), pct(s,95), pct(e,50), pct(e,95)))
+' "$results" "$label"
+  done
+}
+
 # Dispatch table, in run order for `all`: <name> <function> <description>. The spec's numeric
 # step ids only (ruling F10).
 STEPS=(
@@ -1437,6 +1734,7 @@ STEPS=(
   "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
   "5a        step_5a        push to another agent's prefix and to main denied by branch protection (authz ok); status post 403"
   "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
+  "5d        step_5d        agent-branch workflow dumping all secrets/vars sees no deploy secret (fallback: deploy repo only); job cgroup CPU 2 / 4 GiB / 1024 pids; no internet, allowlist proxy and Traefik only; per option in CI_OPTIONS"
   "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"
   "7         step_7         removeProjectUser: next fetch denied; re-add; closeTask: token dead (token_revoked/task_closed)"
   "8         step_8         docker pause kb-suite: fetch denied (kanboard_unreachable); unpause: allowed"
@@ -1444,9 +1742,14 @@ STEPS=(
   "identity  step_identity  Authentik OIDC: Kanboard oauth2_user_id = sub; Forgejo login lands in the pre-provisioned user; no password web login"
 )
 
+# Named-only steps, not part of `all`: <name> <function> <description>.
+EXTRA_STEPS=(
+  "coldstart step_coldstart CI cold start, COLDSTART_RUNS (20) one-job runs per option in CI_OPTIONS: setup and end-to-end p50/p95"
+)
+
 step_fn() { # step_fn <name>: prints the function of a step, or nothing
   local row
-  for row in "${STEPS[@]}"; do
+  for row in "${STEPS[@]}" "${EXTRA_STEPS[@]}"; do
     read -r name fn _ <<<"$row"
     [[ "$name" == "$1" ]] && { echo "$fn"; return; }
   done
@@ -1457,6 +1760,11 @@ usage() {
   echo "steps:" >&2
   local row
   for row in "${STEPS[@]}"; do
+    read -r name _ desc <<<"$row"
+    printf '  %-10s %s\n' "$name" "$desc" >&2
+  done
+  echo "named only (not in all):" >&2
+  for row in "${EXTRA_STEPS[@]}"; do
     read -r name _ desc <<<"$row"
     printf '  %-10s %s\n' "$name" "$desc" >&2
   done

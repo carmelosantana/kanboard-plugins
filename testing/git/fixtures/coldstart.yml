@@ -1,0 +1,12 @@
+# CI cold start probe (scenario step coldstart). Dispatched on an agent/* branch, one run at a
+# time; scenario.sh replaces the runs-on label with the isolation option's runner label. The
+# runner's own log timestamps give the setup time ("received task" to the first step's output),
+# and the dispatch time on the host gives the end-to-end time.
+name: coldstart
+on: workflow_dispatch
+jobs:
+  start:
+    runs-on: kb-ci-option
+    steps:
+      - name: first step
+        run: echo "KBCS first-step"

@@ -1,0 +1,11 @@
+# Loaded by kb-jobs-firewall.service. docker0 is the default bridge; br-* are the per-job
+# networks forgejo-runner creates. Forwarded traffic (to the guestfwd addresses) is unaffected.
+table inet kbjobs
+delete table inet kbjobs
+table inet kbjobs {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "docker0" drop
+    iifname "br-*" drop
+  }
+}

@@ -1,0 +1,13 @@
+# Jobs reach nothing on the runner VM itself (its sshd, Docker's embedded services): an nftables
+# table of its own, so Docker's rules are left alone.
+[Unit]
+Description=Drop traffic from job bridges to the runner VM
+Before=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/kb-runner/jobs-firewall.nft
+
+[Install]
+WantedBy=multi-user.target

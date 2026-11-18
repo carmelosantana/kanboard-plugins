@@ -1,0 +1,8 @@
+{
+  "default-runtime": "kata",
+  "runtimes": {
+    "kata": { "runtimeType": "io.containerd.kata.v2" }
+  },
+  "exec-opts": ["native.cgroupdriver=cgroupfs"],
+  "log-driver": "local"
+}

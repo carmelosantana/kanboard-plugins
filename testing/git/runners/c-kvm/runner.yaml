@@ -1,0 +1,40 @@
+# forgejo-runner config template for option (c); kb-runner.sh fills in the uuid. The token comes
+# from the systemd credential (QEMU fw_cfg), never this file.
+log:
+  level: info
+  job_level: info
+runner:
+  capacity: 1
+  # Spec: wall time 30 min per job.
+  timeout: 30m
+  fetch_interval: 2s
+  report_interval: 1s
+  # Package managers in jobs go through the allowlist proxy; Traefik is reached directly.
+  envs:
+    HTTP_PROXY: http://kb-proxy:3128
+    HTTPS_PROXY: http://kb-proxy:3128
+    http_proxy: http://kb-proxy:3128
+    https_proxy: http://kb-proxy:3128
+    NO_PROXY: git.localhost
+    no_proxy: git.localhost
+cache:
+  enabled: false
+container:
+  # A fresh network per job. Spec limits: CPU 2, memory 4 GB (no swap on top), pids 1024. The
+  # two names are the VM's guestfwd addresses (vm.sh).
+  network: ""
+  privileged: false
+  options: >-
+    --cpus 2 --memory 4g --memory-swap 4g --pids-limit 1024
+    --add-host git.localhost:10.0.2.100 --add-host kb-proxy:10.0.2.101
+  valid_volumes: []
+  # No Docker socket in job containers.
+  docker_host: "-"
+  force_pull: false
+server:
+  connections:
+    forgejo:
+      url: http://git.localhost:8090
+      uuid: @@UUID@@
+      token_url: file:$CREDENTIALS_DIRECTORY/kb-runner-secret
+      labels: ["kvm-kata:docker://kb-ci-job:1"]

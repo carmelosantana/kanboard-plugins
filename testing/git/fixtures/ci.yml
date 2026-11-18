@@ -1,5 +1,6 @@
 # Scenario CI for the git hosting P1 dev stack (testing/git/scenario.sh seeds it as
-# .forgejo/workflows/ci.yml). Runs on the dev-only runner (label dev-plain, host mode).
+# .forgejo/workflows/ci.yml). Runs on the dev-only runner (label dev-plain, host mode); the CI
+# isolation options (testing/git/runners/) are exercised by scenario steps 5d and coldstart.
 #
 # Forgejo reports it as "ci / test (pull_request)" on a PR (the required check on main) and
 # "ci / test (push)" on main (red there makes the broker open an auto-revert PR).

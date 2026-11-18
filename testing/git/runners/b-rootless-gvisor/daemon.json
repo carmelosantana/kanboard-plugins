@@ -1,0 +1,11 @@
+{
+  "default-runtime": "runsc",
+  "runtimes": {
+    "runsc": {
+      "path": "/usr/local/bin/runsc"
+    }
+  },
+  "log-driver": "local",
+  "iptables": true,
+  "userland-proxy": false
+}

@@ -31,6 +31,9 @@
 # 7. Reconfigures the Forgejo source `authentik` in place against Authentik's forgejo provider.
 # 8. Writes the Kanboard OAuth2 plugin settings (ConfigModel keys) into kb-suite's database.
 # 9. Registers the dev CI runner dev-plain (secret in testing/git/runner.env) with the Forgejo CLI.
+# 10. Defines the CI test secret only on the deploy repo kb-deploy/app-deploy (spec gap 5
+#     fallback; CI_SECRET_SCOPE=repo|org are the scoping mutations scenario step 5d must catch).
+#     The isolation-option runners register themselves (testing/git/runners/*/up.sh).
 # Re-running changes nothing when everything already exists.
 set -euo pipefail
 
@@ -285,4 +288,62 @@ runner_uuid="$(printf '%s' "$runner_secret" | docker exec -i -u git "$FORGEJO_CO
   forgejo forgejo-cli actions register --secret-stdin - --name dev-plain --labels dev-plain)"
 echo "bootstrap: runner dev-plain registered (uuid ${runner_uuid}); start it with"
 echo "  bash testing/git/compose.sh --profile ci-dev up -d --no-deps ci-runner"
+
+# 10. CI secrets (decision 12, spec gap 5). Forgejo 15 has no environment-scoped Actions secrets:
+#     its secret table is (owner, repo, name) and the API has no environments. So the spec
+#     fallback applies: secret-bearing workflows live only in a separate deploy repo,
+#     ${DEPLOY_REPO}, in its own private org with no teams, so no agent is a member. The test
+#     secret ${CI_SECRET_NAME} (value in testing/git/ci-secret.env, gitignored, mode 600) is a
+#     repo-level secret there and nowhere else: this step deletes a same-named secret from the
+#     scenario repo and its org, so a plain re-run restores the scoping after a mutation.
+#     Mutation (scenario step 5d must then fail): CI_SECRET_SCOPE=repo also defines it on
+#     SCENARIO_REPO (default kb-ghe2e/app); CI_SECRET_SCOPE=org on that repo's org.
+DEPLOY_ORG="kb-deploy"
+DEPLOY_REPO="${DEPLOY_ORG}/app-deploy"
+CI_SECRET_NAME="KB_DEPLOY_TOKEN"
+CI_SECRET_ENV="$HERE/ci-secret.env"
+CI_SECRET_SCOPE="${CI_SECRET_SCOPE:-deploy}"
+SCENARIO_REPO="${SCENARIO_REPO:-kb-ghe2e/app}"
+# Admin API call inside the Forgejo container; the token and body reach curl on stdin (a curl
+# config), never argv. Prints the HTTP status.
+fj_admin() { # fj_admin <method> <path> [json]
+  { printf 'header = "Authorization: token %s"\n' "$token"
+    if [[ -n "${3:-}" ]]; then
+      printf 'header = "Content-Type: application/json"\ndata-binary = "%s"\n' "${3//\"/\\\"}"
+    fi
+  } | docker exec -i "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' --max-time 10 -K - \
+    -X "$1" "http://localhost:3000/api/v1$2"
+}
+ci_secret="$(sed -n "s/^${CI_SECRET_NAME}=//p" "$CI_SECRET_ENV" 2>/dev/null || true)"
+if [[ ! "$ci_secret" =~ ^[0-9a-f]{48}$ ]]; then
+  ci_secret="$(rand_hex 24)"
+  (umask 077 && printf '%s=%s\n' "$CI_SECRET_NAME" "$ci_secret" >"$CI_SECRET_ENV")
+  echo "bootstrap: wrote testing/git/ci-secret.env"
+fi
+[[ "$(fj_admin GET "/orgs/${DEPLOY_ORG}")" == 200 ]] ||
+  fj_admin POST /orgs "{\"username\":\"${DEPLOY_ORG}\",\"visibility\":\"private\"}" >/dev/null
+[[ "$(fj_admin GET "/repos/${DEPLOY_REPO}")" == 200 ]] ||
+  fj_admin POST "/orgs/${DEPLOY_ORG}/repos" "{\"name\":\"${DEPLOY_REPO#*/}\",\"private\":true,\"auto_init\":true}" >/dev/null
+[[ "$(fj_admin GET "/repos/${DEPLOY_REPO}")" == 200 ]] || { echo "bootstrap: no deploy repo ${DEPLOY_REPO}" >&2; exit 1; }
+put_secret() { # put_secret <api prefix>; 201 created, 204 updated
+  local s
+  s="$(fj_admin PUT "$1/actions/secrets/${CI_SECRET_NAME}" "{\"data\":\"${ci_secret}\"}")"
+  [[ "$s" == 201 || "$s" == 204 ]] || { echo "bootstrap: PUT $1 secret: $s" >&2; exit 1; }
+}
+put_secret "/repos/${DEPLOY_REPO}"
+case "$CI_SECRET_SCOPE" in
+  deploy)
+    # 204 deleted, 404 absent.
+    for prefix in "/repos/${SCENARIO_REPO}" "/orgs/${SCENARIO_REPO%%/*}"; do
+      s="$(fj_admin DELETE "${prefix}/actions/secrets/${CI_SECRET_NAME}")"
+      [[ "$s" == 204 || "$s" == 404 ]] || { echo "bootstrap: DELETE ${prefix} secret: $s" >&2; exit 1; }
+      [[ "$s" == 204 ]] && echo "bootstrap: removed ${CI_SECRET_NAME} from ${prefix}"
+    done
+    echo "bootstrap: CI secret ${CI_SECRET_NAME} is defined only on ${DEPLOY_REPO}" ;;
+  repo) put_secret "/repos/${SCENARIO_REPO}"
+    echo "bootstrap: MUTATION: ${CI_SECRET_NAME} is also a repo-level secret of ${SCENARIO_REPO}" ;;
+  org) put_secret "/orgs/${SCENARIO_REPO%%/*}"
+    echo "bootstrap: MUTATION: ${CI_SECRET_NAME} is also an org-level secret of ${SCENARIO_REPO%%/*}" ;;
+  *) echo "bootstrap: CI_SECRET_SCOPE must be deploy, repo or org" >&2; exit 1 ;;
+esac
 echo "bootstrap: done"

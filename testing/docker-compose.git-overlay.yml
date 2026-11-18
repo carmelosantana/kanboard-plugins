@@ -179,6 +179,21 @@ services:
     security_opt: ["no-new-privileges:true"]
     networks: [ci]
 
+  # Registry allowlist proxy for the isolation-option runners (Task 16, ruling F15): tinyproxy,
+  # default deny, CONNECT to npm, Packagist, crates.io and Docker Hub only. No published port
+  # (F14): the runner VMs reach it through a QEMU guestfwd that connects to this container's
+  # address (testing/git/runners/vm.sh). Profile ci keeps it out of a plain `up`; up.sh starts it:
+  #   bash testing/git/compose.sh --profile ci up -d --no-deps --build ci-proxy
+  ci-proxy:
+    build: ./git/proxy
+    image: kb-git-ci-proxy:dev
+    container_name: kb-git-ci-proxy
+    profiles: ["ci"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   # Authentik 2026.8: server + worker on their own Postgres. No Redis since 2025.10. No ports;
   # reached only through Traefik. The worker gets no docker socket (no managed outposts).
   authentik-db:

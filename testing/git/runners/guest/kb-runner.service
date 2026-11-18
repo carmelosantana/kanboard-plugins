@@ -1,0 +1,24 @@
+# forgejo-runner in one-job mode (Task 16): one job per process, restarted for the next one.
+[Unit]
+Description=forgejo-runner one-job
+Requires=docker.service
+After=docker.service kb-jobs-firewall.service
+
+[Service]
+User=kbrunner
+Group=kbrunner
+SupplementaryGroups=docker
+# The system credential QEMU passes through fw_cfg (opt/io.systemd.credentials/kb-runner-secret).
+LoadCredential=kb-runner-secret
+RuntimeDirectory=kb-runner
+RuntimeDirectoryMode=0700
+StateDirectory=kb-runner
+StateDirectoryMode=0700
+ExecStart=/usr/local/libexec/kb-runner.sh
+Restart=always
+RestartSec=1
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
