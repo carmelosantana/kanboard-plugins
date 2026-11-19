@@ -468,6 +468,17 @@ step_5a() {
   n="$(push_allows "$CORE_TASK" "$since")"
   check "audit: authz allowed both receive-packs (write, ok), so the denial is not authz" yes \
     "$( ((n >= 2)) && echo yes || echo "no ($n)")"
+  # GH-03 (Task 18): tags are outside branch protection; the broker's tag protection keeps
+  # agents off every tag name, slashes included.
+  local tag
+  for tag in "scenario-5a-$(date +%Y%m%d%H%M%S)-$$" "release/scenario-5a-$(date +%s)-$$"; do
+    echo "  \$ git push origin HEAD:refs/tags/${tag}"
+    out="$(run_git git_helper "$CORE_TASK" -C "$CLONE" push origin "HEAD:refs/tags/${tag}")"
+    echo "$out" | grep -iE 'protected|rejected|declined|exit=' | sed 's/^/    /'
+    check "agent tag push refs/tags/${tag%%-*}... is denied" yes "$(denied "$out")"
+    check "  ... the tag was not created" "" \
+      "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "refs/tags/${tag}" 2>/dev/null)"
+  done
   # F2: an agent may not post a commit status (kanboard/risk-gate is the broker's alone).
   local cred="$WORK/cred.5a" hdr="$WORK/hdr.5a"
   helper_get "$CORE_TASK" "$cred" 2>/dev/null
@@ -477,6 +488,13 @@ step_5a() {
       -H @"$hdr" -H 'Content-Type: application/json' -d '{"state":"success","context":"kanboard/risk-gate"}')"
   check "audit: the status post was denied (kanboard_deny)" yes \
     "$(has_reason kanboard_deny "$(reasons_for_task "$CORE_TASK" "$since")")"
+  # GH-03: the tag API is held by the same tag protection.
+  tag="scenario-5a-api-$(date +%s)-$$"
+  check "agent POST /api/v1/repos/${REPO}/tags is refused" no \
+    "$(c="$(status POST "/api/v1/repos/${REPO}/tags" -H @"$hdr" -H 'Content-Type: application/json' \
+      -d "{\"tag_name\":\"${tag}\",\"target\":\"main\"}")"; [[ "$c" == 2* ]] && echo "yes ($c)" || echo no)"
+  check "  ... the tag was not created" "" \
+    "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "refs/tags/${tag}" 2>/dev/null)"
   show_audit "$CORE_TASK" "$since"
 }
 
@@ -1996,7 +2014,7 @@ STEPS=(
   "2         step_2         clone through Traefik with the helper, branch agent/<login>/scenario-<ts>, commit, push accepted"
   "3         step_3         low-risk PR on agent/<login>/<task>-...: CI green, risk gate success, task panel set; a2's approval does not count; r1 approves + auto-merge -> merged (panel: merged)"
   "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
-  "5a        step_5a        push to another agent's prefix and to main denied by branch protection (authz ok); status post 403"
+  "5a        step_5a        push to another agent's prefix, to main and to tags denied by branch/tag protection (authz ok); status post 403"
   "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
   "5d        step_5d        agent-branch workflow dumping all secrets/vars sees no deploy secret (fallback: deploy repo only); job cgroup CPU 2 / 4 GiB / 1024 pids; no internet, allowlist proxy and Traefik only; per option in CI_OPTIONS"
   "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"
