@@ -114,8 +114,13 @@ mv "$tmp_config" "$CONFIG"
 
 # ── A plugins dir of our own for this run ─────────────────────────────────────
 # Kanboard reads PLUGINS_DIR from the environment, so each run links every plugin under
-# PLUGINS_ROOT into a temp directory instead of editing kanboard-src/plugins, which other
-# sessions share. A path argument points its plugin's link at that path.
+# PLUGINS_ROOT into a temp directory, and a path argument points its plugin's link at that
+# path. Classes and templates load from there.
+#
+# Kanboard's AssetHelper still stats assets at <kanboard-src>/plugins/<Name>/..., ignoring
+# PLUGINS_DIR, so missing links there are created too. Existing ones are never repointed:
+# other sessions share them. A path run whose plugin adds a new asset file therefore needs
+# that file in the checkout <kanboard-src>/plugins/<Name> points at.
 PLUGINS_DIR="$(mktemp -d)"
 trap 'rm -rf "$PLUGINS_DIR"' EXIT
 for p in "${PLUGINS[@]}"; do ln -s "${PLUGINS_ROOT}/${p}" "${PLUGINS_DIR}/${p}"; done
@@ -132,6 +137,12 @@ if [[ "$ARG" == */* && -f "${ARG}/plugin.json" ]]; then
   [[ -n "$ARG" ]] || { echo "ERROR: no 'namespace Kanboard\\Plugin\\X;' in ${SRC}/Plugin.php"; exit 1; }
   ln -sfn "$SRC" "${PLUGINS_DIR}/${ARG}"
 fi
+
+mkdir -p "${KB_SRC}/plugins"
+for p in "${PLUGINS[@]}" ${SRC:+"$ARG"}; do
+  [[ -e "${KB_SRC}/plugins/${p}" || -L "${KB_SRC}/plugins/${p}" ]] && continue
+  ln -s "$(readlink "${PLUGINS_DIR}/${p}")" "${KB_SRC}/plugins/${p}"
+done
 
 # ── Single plugin ──────────────────────────────────────────────────────────────
 if [[ "$ARG" != "--all" ]]; then

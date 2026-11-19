@@ -186,7 +186,9 @@ composer install -d testing/kanboard-src
 ```
 
 `testing/kanboard-src/` is gitignored — it is large and not part of this repo.
-The runner links the plugins into a temp directory per run; `testing/kanboard-src/plugins/` is not used.
+The runner links the plugins into a temp directory per run. It also creates any missing link in
+`testing/kanboard-src/plugins/`, because Kanboard's `AssetHelper` stats plugin assets there; it
+never repoints an existing link.
 
 ### Running a plugin's tests
 
@@ -211,7 +213,8 @@ The script:
 **Testing a worktree or another checkout.** Pass a path instead of a name. The plugin name comes
 from the `namespace Kanboard\Plugin\X;` line in its `Plugin.php`, and that name points at your
 path in this run's plugins directory, so you never switch branches in a shared plugin checkout to
-test a change. The :8081 stack still mounts `../<Plugin>`, so a live
+test a change. One limit: asset timestamps still come from `kanboard-src/plugins/<Name>`, so a test
+that renders a CSS or JS file new to your worktree fails until that file exists there too. The :8081 stack still mounts `../<Plugin>`, so a live
 check of a worktree needs its own overlay (not provided yet).
 
 **Running from a harness worktree.** In a linked worktree of this repo, the runner falls back to

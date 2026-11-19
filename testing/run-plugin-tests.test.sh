@@ -31,8 +31,9 @@ ln -s "$REAL_KB/vendor" "$KB/vendor"
 ln -s "$REAL_KB/app" "$KB/app"
 cp "$REAL_KB/tests/units.sqlite.xml" "$KB/tests/units.sqlite.xml"
 
-# make_plugin <dir> <marker>: a plugin whose suite has 3 tests; test 1 fails, and
-# testMarker passes only when marker.txt says "worktree".
+# make_plugin <dir> <marker>: a plugin whose suite has 4 tests; test 1 fails, testMarker
+# passes only when marker.txt says "worktree", and testAssetPath needs <Kanboard>/plugins/<Name>
+# to exist (Kanboard's AssetHelper stats plugin assets there, ignoring PLUGINS_DIR).
 make_plugin() {
   mkdir -p "$1/Test"
   echo '{ "name": "RptFixture", "version": "1.0.0" }' > "$1/plugin.json"
@@ -49,6 +50,10 @@ class FixtureTest extends TestCase
     {
         $this->assertSame('worktree', trim(file_get_contents(__DIR__ . '/../marker.txt')));
     }
+    public function testAssetPath(): void
+    {
+        $this->assertFileExists(getcwd() . '/plugins/RptFixture/marker.txt');
+    }
 }
 PHP
 }
@@ -59,9 +64,10 @@ make_plugin "$TMP/wt/fixture-branch" worktree
 
 run() { PLUGINS_ROOT="$ROOT" KB_SRC="$KB" "$RUNNER" "$@" 2>&1; }
 
-# 1. A failing test must not stop the run: PHPUnit reports all 3 tests.
+# 1. A failing test must not stop the run: PHPUnit reports all 4 tests, and on a fresh
+#    Kanboard tree the asset path resolves (only testAFails and testMarker fail).
 out="$(run RptFixture)"; rc=$?
-if [[ $rc -ne 0 ]] && grep -qE 'Tests: 3,' <<<"$out"; then
+if [[ $rc -ne 0 ]] && grep -qE 'Tests: 4, Assertions: 4, Failures: 2\.' <<<"$out"; then
   pass "full test count after a failure (rc=$rc)"
 else
   fail "full test count after a failure (rc=$rc)" "$out"
@@ -70,23 +76,23 @@ fi
 # 2. A path argument tests that checkout (a worktree) in place of PLUGINS_ROOT/<Name>.
 out="$(run "$TMP/wt/fixture-branch")"
 if grep -q "Source        : $TMP/wt/fixture-branch" <<<"$out" \
-   && grep -qE 'Tests: 3, Assertions: 3, Failures: 1\.' <<<"$out"; then
+   && grep -qE 'Tests: 4, Assertions: 4, Failures: 1\.' <<<"$out"; then
   pass "path argument runs the worktree's code"
 else
   fail "path argument runs the worktree's code" "$out"
 fi
 
-# 3. The shared kanboard-src/plugins/ is never written: each run links into its own dir.
-left="$(ls -A "$KB/plugins")"
-if [[ -z "$left" ]]; then
-  pass "shared plugins/ untouched"
+# 3. Existing links in the shared kanboard-src/plugins/ are never repointed, even by a path run.
+link="$(readlink "$KB/plugins/RptFixture" || true)"
+if [[ "$link" == "$ROOT/RptFixture" ]]; then
+  pass "shared plugins/ link created once, not repointed ($link)"
 else
-  fail "shared plugins/ untouched" "$left"
+  fail "shared plugins/ link created once, not repointed" "link=$link"
 fi
 
 # 4. --all reports the full count in its table too.
 out="$(LOG_DIR="$TMP/logs" run --all)"
-if grep -qE 'RptFixture +\| FAIL +\| Tests: 3,' <<<"$out"; then
+if grep -qE 'RptFixture +\| FAIL +\| Tests: 4,' <<<"$out"; then
   pass "--all table shows the full count"
 else
   fail "--all table shows the full count" "$out"
@@ -107,11 +113,7 @@ if [[ "$(git -C "$HERE" rev-parse --git-dir)" != "$(git -C "$HERE" rev-parse --g
   else
     fail "linked worktree uses $REAL_KB" "$out"
   fi
-  if [[ ! -e "$REAL_KB/plugins/RptFixture" ]]; then
-    pass "linked worktree left $REAL_KB/plugins alone"
-  else
-    rm -f "$REAL_KB/plugins/RptFixture"; fail "linked worktree left $REAL_KB/plugins alone" "RptFixture link created"
-  fi
+  rm -f "$REAL_KB/plugins/RptFixture"   # the fallback run linked the fixture there
 else
   echo "skip - linked-worktree fallback (not run from a linked worktree)"
 fi
@@ -120,7 +122,7 @@ fi
 #    to the job summary. A plain `| tee` under `bash -e` once turned a failing suite green.
 summary="$TMP/summary.md"; : > "$summary"
 out="$(PLUGINS_ROOT="$ROOT" KB_SRC="$KB" GITHUB_STEP_SUMMARY="$summary" bash "$HERE/ci-phpunit.sh" RptFixture 2>&1)"; rc=$?
-if [[ $rc -ne 0 ]] && grep -q 'RptFixture PHPUnit: Tests: 3, Assertions: 3, Failures: 2\.' "$summary"; then
+if [[ $rc -ne 0 ]] && grep -q 'RptFixture PHPUnit: Tests: 4, Assertions: 4, Failures: 2\.' "$summary"; then
   pass "ci-phpunit.sh fails with the suite and writes the summary (rc=$rc)"
 else
   fail "ci-phpunit.sh fails with the suite and writes the summary (rc=$rc)" "$out
