@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review pending
+- **Status:** approved by Carmelo 2026-11-18; spec security review round 1 resolved, round 2 pending
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -58,6 +58,7 @@ the public what they are working on. Signed-in users have no project home page e
 | 18 | **Public URLs live under `/explore`:** directory `/explore`, listed project `/explore/:identifier`. Core already owns `/p/:project_id` and `/projects`, and core routes match first. | Builder's call (builder check) |
 | 19 | **Test email is sent synchronously,** bypassing the queue, by calling the active transport directly and catching exceptions. Success reads "Handed to *transport* without error, check your inbox", because core's SMTP/mail transports log failures instead of throwing. | Builder's call (builder check) |
 | 20 | **The announcement banner's "public pages" means Steward's public pages only,** not core's public board/task views (those render without layout hooks; overriding them isn't worth the upgrade risk). | Builder's call (builder check) |
+| 21 | **Switch back is a logout plus a normal sign-in.** "Switch back" ends the switch, logs the browser out and sends the admin to the login page, returning to the user's profile afterwards. Nothing in a switched session can regain admin rights, so a stolen or unattended switched session is worth only the target's rights. | Carmelo (spec review round 1) |
 
 ## 1. Shell: settings, switches, audit log
 
@@ -118,10 +119,12 @@ the public what they are working on. Signed-in users have no project home page e
    old session id).
 4. **Banner** (`template:layout:top`, plus an item in `template:header:dropdown`): "You are viewing
    Kanboard as **Ana** — Switch back". Switch back is a POST with CSRF.
-5. **Switch back:** read `admin_id` from the session only. Re-load the admin from the DB; if it no longer
-   exists, is inactive or is no longer app admin, log the session out entirely (`switch.revoked`).
-   Otherwise `session_regenerate_id(true)`, clear session keys, `initialize($admin)`, mark 2FA validated,
-   audit `switch.end`, redirect to the target's profile.
+5. **Switch back = log out and sign in again** (Decision 21). Steward never restores admin rights by
+   itself. The POST audits `switch.end`, destroys the session (as core's logout does), starts a fresh one
+   holding only `redirectAfterLogin` = the target's profile path (a local path, which core's
+   `redirectAfterLogin()` accepts), and redirects to the login page. The admin signs in with password and
+   2FA as usual. If the admin was demoted or disabled meanwhile, the login itself shows it; the audit still
+   records `switch.end`.
 
 **Guards on every request while switched** (a `before` hook on the dispatcher or `app.bootstrap`; builder
 to pick the earliest point that runs for HTML requests). `app.bootstrap` also fires for the API and queue
@@ -314,7 +317,8 @@ Steward changes who is who, and it can publish project data, so it gets the same
 - **Switching tests** cover, at least: non-admin refused; admin→admin refused; self, inactive, nested refused
   with one message; CSRF missing/invalid refused; GET refused; session id changes on start and end; old
   session id is dead afterwards (with `SESSION_HANDLER=db`); `last_logins` untouched and no remember-me
-  cookie; 2FA target not prompted; switch back restores the admin; admin demoted/disabled mid-switch →
+  cookie; 2FA target not prompted; switch back destroys the session, lands on the login page, and after the
+  admin signs in returns to the target's profile (no path restores the admin without a login); admin demoted/disabled mid-switch →
   logout; idle expiry → logout; board polling doesn't extend idle; admin's remember-me revoked at switch
   start (no silent re-login after expiry); both the old and the intermediate session ids are dead;
   account-security pages 403 for read and write; writes to a non-allow-listed core or plugin controller
