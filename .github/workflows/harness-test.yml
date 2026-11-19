@@ -41,5 +41,8 @@ jobs:
       - name: run-plugin-tests.test.sh
         run: testing/run-plugin-tests.test.sh
 
+      - name: ci-requires.test.sh
+        run: testing/ci-requires.test.sh
+
       - name: package.test.sh
         run: scripts/package.test.sh

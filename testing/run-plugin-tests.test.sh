@@ -116,4 +116,15 @@ else
   echo "skip - linked-worktree fallback (not run from a linked worktree)"
 fi
 
+# 6. ci-phpunit.sh (the CI step) exits with PHPUnit's status, not tee's, and writes the count
+#    to the job summary. A plain `| tee` under `bash -e` once turned a failing suite green.
+summary="$TMP/summary.md"; : > "$summary"
+out="$(PLUGINS_ROOT="$ROOT" KB_SRC="$KB" GITHUB_STEP_SUMMARY="$summary" bash "$HERE/ci-phpunit.sh" RptFixture 2>&1)"; rc=$?
+if [[ $rc -ne 0 ]] && grep -q 'RptFixture PHPUnit: Tests: 3, Assertions: 3, Failures: 2\.' "$summary"; then
+  pass "ci-phpunit.sh fails with the suite and writes the summary (rc=$rc)"
+else
+  fail "ci-phpunit.sh fails with the suite and writes the summary (rc=$rc)" "$out
+summary: $(cat "$summary")"
+fi
+
 [[ $fails -eq 0 ]] && echo "run-plugin-tests.test.sh PASS" || { echo "run-plugin-tests.test.sh: $fails failed"; exit 1; }

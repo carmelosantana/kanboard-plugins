@@ -53,7 +53,7 @@ See [`testing/README.md`](testing/README.md) for the stack, seeding and the test
 ## CI
 
 `.github/workflows/plugin-test.yml` is a reusable workflow (`workflow_call`) that checks out
-Kanboard v1.2.47, installs its dev dependencies, checks out the plugins named in `requires`, and runs
+Kanboard v1.2.47, installs its dev dependencies, checks out the plugins named in `requires` and `recommends` (tests may load a recommended plugin's classes), and runs
 the plugin's PHPUnit suite with `testing/run-plugin-tests.sh`. `.github/workflows/plugin-release.yml`
 checks the tag against `plugin.json` (and any version still hard-coded in `Plugin.php`), then builds
 and publishes the release zip. Each plugin repo calls them from two short files,
