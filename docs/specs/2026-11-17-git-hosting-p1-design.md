@@ -90,7 +90,8 @@ overlay pattern.
 - Teams per org: `managers` (admin), `members` (write), `viewers` (read), `reviewers` (write,
   approval allowlist), `humans-high-risk` (write, approval allowlist for high-risk paths).
 - Kanboard project-manager → `managers`; project-member → `members`; project-viewer →
-  `viewers`. Membership via Kanboard groups is expanded to users.
+  `viewers`. Membership via Kanboard groups is expanded to users. `managers` is repo admin, so it
+  holds humans only: an agent with the project-manager role joins `members` (final review I2).
 - Reviewer agents: users in the Kanboard group `git-reviewers` who are also project members join
   `reviewers`. Humans who are project managers join `humans-high-risk`.
 - Team state in Forgejo exists for the web UI and branch protection. It is never the authz
