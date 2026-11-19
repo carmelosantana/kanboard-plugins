@@ -461,3 +461,26 @@ re-syncs from the tag before its own release. Installing on production is Carmel
 - The knowledge viewer page (a simple read-only page per document so sources have a URL).
 - Wording of notices and receipts beyond the ones listed; translations go through `t()`.
 - Test fixtures: a fake provider for runs; a Save-it-shaped fixture importer for `knowledgeUpsert`.
+
+## Amendments (2026-11-19, during implementation)
+
+These rulings from the build ledger change the text above. Where they disagree, the amendment wins.
+
+- **Ruling 9: a refused stream answers 200 + `done`, not 204.** A used, unknown, finished or foreign
+  stream id gets HTTP 200 with a single `event: done` (empty data). This replaces "204" in the stream
+  protocol's reconnect trap and in step 2 of the bot run. Why: a spike showed htmx-ext-sse 2.2.4
+  reconnects on any closed source, 204 included. chatparts.js also drops `sse-connect` on
+  `htmx:sseError`. The intent stands: no reconnect loop, never a second run.
+- **Ruling 57: the stream returns 403 only without AiConnector.** `/agentchat/stream` answers 403 only
+  when AiConnector is absent or too old; then no SSE element is ever rendered, so nothing reconnects.
+  An unconfigured AiConnector or a project with its bot off gets 200 + `done` as in ruling 9. Why: it
+  keeps the 403 that tests expect without breaking the no-reconnect rule.
+- **Ruling 58: degrading keeps send, stop and context working.** This replaces "the send/stream/stop/
+  context routes for bot runs return 403" in Degrading. Without AiConnector, send stores a plain people
+  message (no run), context answers 204 (no ring), stop has nothing to stop, and only stream answers 403
+  (ruling 57). Why: people chat must keep working when AI is absent, and a 403 on send would break it.
+- **Ruling 61: asking is independent of posting.** Decision 7 ("everyone incl. viewers") is binding:
+  asking needs the project's ask role and the AI gate, not post rights. A viewer under "everyone" asks in
+  the task drawer (a private thread, text only, since image upload stays with posters) but still cannot
+  post in the room, so `@bot` in the room stays with members and managers. Why: the earlier code required
+  post rights and so silently dropped viewers from "everyone".
