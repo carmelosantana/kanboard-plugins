@@ -27,7 +27,7 @@
 #   KB_HELPER               a prebuilt git-credential-kanboard (default: cargo build from BROKER_DIR)
 # The identity step also reads AUTHENTIK_BOOTSTRAP_TOKEN from testing/git/authentik.env,
 # FORGEJO_ADMIN_TOKEN and FORGEJO_AUTHENTIK_SOURCE_ID from testing/git/.env and
-# GITHOST_HMAC_SECRET from testing/git/hmac.env (all gitignored, written by bootstrap.sh):
+# KANBOARD_TO_BROKER_SECRET / BROKER_TO_KANBOARD_SECRET from testing/git/hmac.env (all gitignored, written by bootstrap.sh):
 #   IDENTITY_USER           the Authentik/Kanboard test human (default idtest-human)
 #   IDENTITY_LOCAL_USER     a local Forgejo user with a known password (default idtest-local)
 #   IDENTITY_UNLINKED_USER  an Authentik user that is never provisioned (default idtest-unlinked)
@@ -726,9 +726,13 @@ if ($r = $s->fetch(PDO::FETCH_NUM)) { echo $r[0], " ", $r[1]; }' -- "$1" 2>/dev/
 
 # An HMAC-signed broker call (the broker has no host port, so it is sent from kb-suite, as
 # GitHost does). Prints the body, then the status on its own line.
-# The GitHost HMAC signature (hex) over <ts> <nonce> <method> <path-and-query> <body>.
-hmac_sig() { # hmac_sig <ts> <nonce> <method> <path> <body>
-  env_value GITHOST_HMAC_SECRET "$HERE/hmac.env" | python3 -I -c '
+# The GitHost HMAC signature (hex) over <ts> <nonce> <method> <path-and-query> <body>, with the
+# secret of the direction (GH-07): KANBOARD_TO_BROKER_SECRET to call the broker as the plugin,
+# BROKER_TO_KANBOARD_SECRET to call the plugin as the broker.
+hmac_sig() { # hmac_sig <secret-name> <ts> <nonce> <method> <path> <body>
+  local name="$1"
+  shift
+  env_value "$name" "$HERE/hmac.env" | python3 -I -c '
 import hashlib,hmac,sys
 ts,nonce,method,path,body=sys.argv[1:]
 msg="\n".join([ts,nonce,method,path,hashlib.sha256(body.encode()).hexdigest()])
@@ -739,7 +743,7 @@ broker_post() { # broker_post <path> <json>
   local ts nonce sig
   ts="$(date +%s)"
   nonce="scenario-$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
-  sig="$(hmac_sig "$ts" "$nonce" POST "$1" "$2")"
+  sig="$(hmac_sig KANBOARD_TO_BROKER_SECRET "$ts" "$nonce" POST "$1" "$2")"
   printf '%s' "$2" | docker exec -i "$KANBOARD_CONTAINER" curl -s --max-time 30 -w '\n%{http_code}' \
     -H 'Content-Type: application/json' -H "X-GitHost-Timestamp: $ts" -H "X-GitHost-Nonce: $nonce" \
     -H "X-GitHost-Signature: $sig" --data-binary @- "http://broker:8080$1"
@@ -1892,7 +1896,7 @@ kb_state() {
   ts="$(date +%s)"
   nonce="scenario-$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
   curl -s --max-time 15 -H "X-GitHost-Timestamp: $ts" -H "X-GitHost-Nonce: $nonce" \
-    -H "X-GitHost-Signature: $(hmac_sig "$ts" "$nonce" GET "$path" "")" "${KANBOARD_URL}${path}"
+    -H "X-GitHost-Signature: $(hmac_sig BROKER_TO_KANBOARD_SECRET "$ts" "$nonce" GET "$path" "")" "${KANBOARD_URL}${path}"
 }
 # What the five Forgejo teams must hold for the project's githost/state, one "<team> <logins,>"
 # line each, by the broker's rules: an agent's login is its username (lowercased); a human's is

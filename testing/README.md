@@ -182,7 +182,7 @@ Kanboard without the jsonrpc, Chicane, Bigboard and Pulse overlays. `testing/git
 
 ```bash
 bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
-bash testing/git/bootstrap.sh            # Forgejo admin + broker token -> testing/git/.env, HMAC secret -> testing/git/hmac.env,
+bash testing/git/bootstrap.sh            # Forgejo admin + broker token -> testing/git/.env, HMAC secrets -> testing/git/hmac.env,
                                          # Authentik (started here) + its secrets -> testing/git/authentik.env, OAuth2 plugin -> testing/git/vendor/
 bash testing/git/compose.sh up -d --no-deps kanboard   # once, after hmac.env or vendor/OAuth2 first appears (recreates kb-suite)
 bash testing/git/scenario.sh preflight   # expect "preflight: PASS (16/16)"
@@ -257,7 +257,8 @@ bash testing/git/scenario.sh 3 4 5c 6
   (`[webhook] ALLOWED_HOST_LIST = broker` in `app.ini.tmpl`); Traefik has no route to it.
 
 The overlay also wires Kanboard to the broker. It mounts `../GitHost` into `kb-suite`, and
-gives `kb-suite` only `testing/git/hmac.env` (`GITHOST_HMAC_SECRET`) plus
+gives `kb-suite` only `testing/git/hmac.env` (`KANBOARD_TO_BROKER_SECRET` and
+`BROKER_TO_KANBOARD_SECRET`, one per direction; each side holds both, as HMAC needs) plus
 `GITHOST_BROKER_URL=http://broker:8080`. The broker gets `testing/git/.env` (the Forgejo admin
 token), `hmac.env` and `KANBOARD_URL=http://kb-suite`. Kanboard's php-fpm passes only
 whitelisted variables to PHP, so the overlay replaces `/etc/php84/php-fpm.d/env.conf` with

@@ -6,8 +6,9 @@
 #   bash testing/git/compose.sh up -d --no-deps --build forgejo-db forgejo broker traefik
 #   bash testing/git/bootstrap.sh
 #
-# 0. Writes testing/git/hmac.env (gitignored, mode 600) with a random GITHOST_HMAC_SECRET, unless it
-#    already holds one. The broker and kb-suite both load it; kb-suite loads nothing else from here.
+# 0. Writes testing/git/hmac.env (gitignored, mode 600) with two random secrets, one per direction
+#    (KANBOARD_TO_BROKER_SECRET, BROKER_TO_KANBOARD_SECRET; GH-07), unless it already holds two that
+#    differ. The broker and kb-suite both load it; kb-suite loads nothing else from here.
 #    Writes testing/git/authentik.env (gitignored, mode 600) with Authentik's secret key, the akadmin
 #    password and API token, and the two OIDC client secrets, unless it exists. Runs
 #    fetch-oauth2.sh (the pinned, hash-checked OAuth2 plugin in testing/git/vendor/OAuth2).
@@ -67,13 +68,17 @@ token_status() {
       http://localhost:3000/api/v1/user
 }
 
-if grep -qE '^GITHOST_HMAC_SECRET=.{32,}$' "$HMAC_FILE" 2>/dev/null; then
-  echo "bootstrap: testing/git/hmac.env has a secret"
+hmac_out="$(sed -n 's/^KANBOARD_TO_BROKER_SECRET=//p' "$HMAC_FILE" 2>/dev/null || true)"
+hmac_in="$(sed -n 's/^BROKER_TO_KANBOARD_SECRET=//p' "$HMAC_FILE" 2>/dev/null || true)"
+if ((${#hmac_out} >= 32 && ${#hmac_in} >= 32)) && [[ "$hmac_out" != "$hmac_in" ]]; then
+  echo "bootstrap: testing/git/hmac.env has both direction secrets"
 else
-  (umask 077 && printf 'GITHOST_HMAC_SECRET=%s\n' "$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" >"$HMAC_FILE")
+  (umask 077 && printf 'KANBOARD_TO_BROKER_SECRET=%s\nBROKER_TO_KANBOARD_SECRET=%s\n' \
+    "$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" "$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')" >"$HMAC_FILE")
   echo "bootstrap: wrote testing/git/hmac.env; recreate kb-suite and the broker to load it:"
-  echo "  bash testing/git/compose.sh up -d kanboard broker"
+  echo "  bash testing/git/compose.sh up -d --no-deps kanboard broker"
 fi
+unset hmac_out hmac_in
 
 rand_hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
 if [[ -f "$AK_ENV" ]]; then

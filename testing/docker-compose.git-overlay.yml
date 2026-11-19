@@ -17,7 +17,7 @@
 # it with curl --resolve, or one optional /etc/hosts line (testing/README.md "Identity").
 # Its secrets are in testing/git/authentik.env (gitignored, written by bootstrap.sh).
 #
-# The HMAC secret shared by the broker and the GitHost plugin lives in testing/git/hmac.env
+# The two HMAC secrets of the broker <-> GitHost channel (one per direction) live in testing/git/hmac.env
 # (gitignored, written by bootstrap.sh). kb-suite loads only that file, never git/.env, which holds
 # the Forgejo admin token. Adding GitHost or the env to kb-suite recreates it once:
 #   bash testing/git/compose.sh up -d kanboard broker
