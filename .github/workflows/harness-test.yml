@@ -1,0 +1,45 @@
+# Tests the harness's own scripts: the plugin test runner (against fixture plugins and a
+# real Kanboard checkout) and package.sh.
+name: harness-test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check out Kanboard
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: kanboard/kanboard
+          ref: v1.2.47
+          path: testing/kanboard-src
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.4'
+          extensions: pdo_sqlite, gd, mbstring, zip, intl
+          coverage: none
+          tools: composer
+
+      - name: Install Kanboard dev dependencies
+        run: composer install -d testing/kanboard-src --no-interaction --no-progress --prefer-dist
+
+      - name: run-plugin-tests.test.sh
+        run: testing/run-plugin-tests.test.sh
+
+      - name: package.test.sh
+        run: scripts/package.test.sh

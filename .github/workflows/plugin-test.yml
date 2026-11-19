@@ -93,5 +93,11 @@ jobs:
           PLUGINS_ROOT: plugins
           KB_SRC: kanboard
           PLUGIN: ${{ steps.layout.outputs.name }}
+        # The runner never stops at the first failure, so PHPUnit's last line is the full
+        # count; it goes to the job summary too.
         run: |
-          KB_SRC="$PWD/$KB_SRC" harness/testing/run-plugin-tests.sh "$PLUGIN"
+          status=0
+          KB_SRC="$PWD/$KB_SRC" harness/testing/run-plugin-tests.sh "$PLUGIN" 2>&1 | tee phpunit.log || status=$?
+          summary="$(grep -E '^(OK|Tests:|No tests executed)' phpunit.log | tail -1 || true)"
+          echo "### $PLUGIN PHPUnit: ${summary:-no PHPUnit summary line}" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
