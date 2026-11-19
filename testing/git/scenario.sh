@@ -1869,6 +1869,12 @@ broker_recreate() { # broker_recreate <flag>
   wait_yes 60 broker_up >/dev/null
 }
 
+# "yes" once the broker's start-up log says the fault is armed. grep reads all of it: with
+# pipefail, grep -q could stop early and fail the pipeline on docker's SIGPIPE.
+fault_logged() {
+  docker logs --since 2m "$BROKER_CONTAINER" 2>&1 | grep 'fault injection armed' >/dev/null && echo yes || echo no
+}
+
 disarm_fault() {
   [[ -z "$FAULT_ARMED" ]] && return 0
   FAULT_ARMED=""
@@ -1963,8 +1969,9 @@ step_9() {
   FAULT_ARMED=1
   broker_recreate "$PROJECT_ID"
   check "the broker is back up with the flag" yes "$(broker_up)"
+  # Bounded: on a loaded host the start-up line can reach `docker logs` after /healthz answers.
   check "the broker says the fault is armed (feature fault-injection)" yes \
-    "$(docker logs --since 2m "$BROKER_CONTAINER" 2>&1 | grep -q 'fault injection armed' && echo yes || echo no)"
+    "$([[ "$(wait_yes 10 fault_logged)" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 
   # The loop's first sweep starts with the broker; let it pass project ${PROJECT_ID} first, or
   # it would pull the change itself and there would be no drift to repair. Each sweep deletes

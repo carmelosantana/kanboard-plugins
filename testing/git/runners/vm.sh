@@ -149,7 +149,7 @@ register() {
 up() {
   if running; then
     log "already running (pid $(cat "$PIDFILE"))"
-    grep -aq 'KB-RUNNER-READY' "$SERIAL" && return 0
+    grep -aqE 'KB-RUNNER-READY|declared successfully' "$SERIAL" && return 0
   else
     provision
     register
@@ -168,7 +168,9 @@ up() {
   fi
   local i
   for i in $(seq 1 180); do
-    grep -aq 'KB-RUNNER-READY' "$SERIAL" 2>/dev/null && { log "runner $VM_LABEL is waiting for jobs (${i} s)"; return 0; }
+    # The runner's own "declared successfully" counts too: getty's escape sequences on the shared
+    # serial console can clobber the marker line (seen in T18's scenario run).
+    grep -aqE 'KB-RUNNER-READY|declared successfully' "$SERIAL" 2>/dev/null && { log "runner $VM_LABEL is waiting for jobs (${i} s)"; return 0; }
     running || { log "qemu exited; see $SERIAL"; return 1; }
     sleep 1
   done
