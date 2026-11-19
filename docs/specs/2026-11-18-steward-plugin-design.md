@@ -38,14 +38,14 @@ the public what they are working on. Signed-in users have no project home page e
 
 | # | Decision | Settled |
 |---|---|---|
-| 1 | **One plugin, per-feature switches** (approach A). A switched-off feature registers no routes, hooks, ACL entries or assets. | Carmelo |
+| 1 | **One plugin, per-feature switches** (approach A). A switched-off feature registers no routes, hooks or assets, and its actions refuse (404); its ACL entries stay registered (§1). | Carmelo; ACL part from spec security review |
 | 2 | **Name:** Steward. | Carmelo |
 | 3 | **v1 features:** user switching + audit log, branding, Markdown, project Home + public page + directory, test email, announcement banner. Session management, health panel, enforced 2FA, maintenance mode, bulk users come later. | Carmelo |
 | 4 | **Branding moves from ShadcnTheme to Steward;** ShadcnTheme's upload page is retired in its next release. | Carmelo |
 | 5 | **Project pages: both** a signed-in Home and an opt-in public page. | Carmelo |
 | 6 | **Public activity is anonymous by default,** with a per-project toggle to show names. | Carmelo |
 | 7 | **Switching to another app admin is refused** (hard block, not a confirmation). Switching to yourself, to an inactive user, and from inside a switch are refused too. | Builder's call, stated to Carmelo (prior art: django-hijack default; GitLab nested-switch CVE-2021-39896) |
-| 8 | **Account-security changes are blocked while switched:** password, 2FA, API token, email, username, and all user-management/admin pages (the target is not an admin, so ACL already covers most). | Builder's call, stated to Carmelo |
+| 8 | **Account-security pages are blocked while switched, and writes fail closed:** password, 2FA, API token, email, username, avatar and sessions are refused for reading and writing; any state-changing request goes through only if its controller is on Steward's allow-list of everyday work controllers (§2). Other plugins' writes are refused unless they opt in. | Builder's call, stated to Carmelo; tightened by spec security review |
 | 9 | **The admin's identity lives only in `$_SESSION`.** No cookie, no hidden field, no URL carries it. | Brief |
 | 10 | **Test email goes only to the signed-in admin's own address.** No recipient field, so the button can't be used to send mail to others. | Builder's call |
 | 11 | **Public pages ride on core's per-project public access** (the token link) plus a second Steward toggle, so switching public board access on never publishes a landing page by accident. A project can additionally be *listed*, which gives it a clean URL and a directory entry; the directory itself is off until an admin enables it. | Builder's call, stated to Carmelo |
@@ -65,23 +65,35 @@ the public what they are working on. Signed-in users have no project home page e
   One section per feature with an on/off switch and that feature's settings. Admin only. Config keys are
   namespaced `steward_*`; the save action accepts **only an allow-list of known keys** (never pass the
   request through to `configModel->save()`), and calls `getValues()` once per request.
-- **Feature registry:** `Plugin::initialize()` reads the switches once and wires only the enabled features.
-  Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
+- **Feature registry:** `Plugin::initialize()` reads the switches once and wires only the enabled features'
+  routes, hooks and assets. Kanboard dispatches any controller named in the query string
+  (`?controller=…&plugin=Steward`) whether or not a route exists, so **every Steward action also checks its
+  feature switch first and returns 404 when it is off**, and ACL entries are registered for every controller
+  regardless of switches. Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
   admin opts in, except safer/richer Markdown).
 - **Ops kill switch:** `define('STEWARD_DISABLE_SWITCHING', true)` in `config.php` disables switching
   regardless of the UI switch, for an admin who loses UI access.
 - **ACL:** every Steward controller action is registered explicitly. Admin actions as `APP_ADMIN`; the
   switch-back action as `APP_USER` (checked further in §2); public pages as `APP_PUBLIC`. Unregistered plugin
   controllers default to `APP_USER`, so nothing is left to the default.
+- **Project ACL:** the project access map defaults to `PROJECT_VIEWER`, and core checks project access only
+  when `project_id` is in the query string. Every per-project Steward action (header, links, panels, Public
+  page, Listed, Show names) is registered in the **project** access map as `PROJECT_MANAGER`, reads
+  `project_id` from the route/query only (never the form body), reloads the project server-side, and
+  re-checks the manager role inside the action.
 - **Audit log table** `steward_audit` (Sqlite, Mysql, Postgres **and** Mssql schemas, `Schema/*.php`):
-  `id, created_at, event, actor_user_id, subject_user_id, ip, user_agent (truncated 255), details (JSON,
-  ≤ 4 KB)`. Index on `created_at` and on `event`.
+  `id, created_at, event, actor_user_id, subject_user_id, switch_id, ip, user_agent (truncated 255),
+  details (JSON, ≤ 4 KB)`. Index on `created_at`, `event` and `switch_id`. All values are escaped on the
+  audit page (usernames as typed and user agents are attacker-controlled).
 - **Events written in v1:** `switch.start`, `switch.end`, `switch.expired`, `switch.revoked` (original admin
-  lost admin/was disabled), `switch.refused` (with reason), `login.success`, `login.failure`,
-  `branding.changed`, `banner.changed`, `email.test`, `settings.changed` (keys only, never values of secret
-  settings), `public.changed` (a project's public/listed/names toggles).
+  lost admin/was disabled), `switch.refused` (with reason), `switch.action` (every state-changing request
+  made while switched: method, controller, action, and `task_id`/`project_id` when present),
+  `login.success`, `login.failure` (username as typed, truncated to 64 chars; failure rows are capped at
+  10,000, oldest dropped first), `branding.changed`, `banner.changed`, `email.test`, `settings.changed`
+  (keys only, never values of secret settings), `public.changed` (a project's public/listed/names toggles).
 - **Extension point:** `$this->container['stewardAudit']->log($event, $actorId, $subjectId, $details)` for
-  other suite plugins; and hook `steward:audit` fired after each write.
+  other suite plugins; events from it must be namespaced `plugin.<name>.<event>` (others rejected), so they
+  can't pass as Steward's own. Hook `steward:audit` fires after each write.
 - **Audit page:** `Settings → Steward → Audit log`, admin only: newest first, paginated, filter by event,
   user, date range. Read-only; no delete button. **Retention:** 180 days (setting), pruned at most once a
   day on write.
@@ -95,13 +107,14 @@ the public what they are working on. Signed-in users have no project home page e
    switched → actor's own session has passed 2FA if the actor uses 2FA → target exists, is active, is not
    an app admin, is not the actor. Any failure: one uniform message ("You can't switch to this user"),
    `switch.refused` audited with the real reason. Authorisation is checked **before** the target lookup.
-3. Switch: `session_regenerate_id(true)` (core's `UserSession::initialize` uses `false`, which keeps the old
-   session alive; Steward regenerates itself, with `true`), clear every session key except Steward's own,
-   set the user via `userSession->initialize($target)`, mark post-authentication (2FA) as validated, store
-   `steward_switch = {admin_id, admin_username, started_at, last_seen}`. Revoke the admin's remember-me
-   session for this browser (Decision 17). **Do not** dispatch
+3. Switch: write `switch.start` first, with a fresh random `switch_id` (32 bytes, `random_bytes`); if the
+   audit write fails, refuse the switch. Clear every session key, call `userSession->initialize($target)`
+   (which itself regenerates with `false`), **then** `session_regenerate_id(true)` so neither the old nor the
+   intermediate id stays alive, mark post-authentication (2FA) as validated (initialize resets it), and only
+   then store `steward_switch = {switch_id, admin_id, admin_username, started_at, last_seen}`. Revoke the
+   admin's remember-me session for this browser (Decision 17). **Do not** dispatch
    `auth.success` (it writes a `last_logins` row and may mint a remember-me cookie for the target) and
-   remove `hasRememberMe`. Audit `switch.start`. Redirect to the dashboard (old CSRF tokens die with the
+   remove `hasRememberMe`. Redirect to the dashboard (old CSRF tokens die with the
    old session id).
 4. **Banner** (`template:layout:top`, plus an item in `template:header:dropdown`): "You are viewing
    Kanboard as **Ana** — Switch back". Switch back is a POST with CSRF.
@@ -111,24 +124,43 @@ the public what they are working on. Signed-in users have no project home page e
    audit `switch.end`, redirect to the target's profile.
 
 **Guards on every request while switched** (a `before` hook on the dispatcher or `app.bootstrap`; builder
-to pick the earliest point that runs for HTML requests):
+to pick the earliest point that runs for HTML requests). `app.bootstrap` also fires for the API and queue
+workers, so the guard does nothing at all when there is no PHP session or no `steward_switch` key:
 - Re-check the original admin (exists, active, app admin) — else log out, `switch.revoked`.
-- Idle timeout (§Decision 15) — else log out, `switch.expired`.
-- Block the controllers/actions of Decision 8 with a 403 page explaining "not while switched".
-- Core's `checkCurrentSession` wipes the session if the target's role or active flag changes; that ends the
-  switch by logging out, which is safe. Document it.
+- Idle timeout (§Decision 15) — else log out, `switch.expired`. `last_seen` moves only on non-AJAX
+  requests, so the board's auto-refresh polling can't keep an unattended switch alive.
+- **Always refused (read and write), 403 "not while switched":** `UserModificationController`,
+  `UserCredentialController`, `UserApiAccessController`, `TwoFactorController`, `AvatarFileController`
+  (upload/remove), `UserViewController` session/password-reset/integration/external pages, every
+  `User*`/`Config*`/`Plugin*` admin controller, and Steward's own settings.
+- **Writes fail closed:** a non-GET request (or a GET to a known state-changing action) is allowed only when
+  its controller is on Steward's allow-list of everyday work controllers (board, task, subtask, comment,
+  task file, link, tag, project settings the target could already change). Other plugins' controllers are
+  refused for writes unless the plugin registers them with `stewardSwitching->allowWrites([...])`. The full
+  allow-list is enumerated in the plan and tested against core's controller list.
+- **Other plugins can tell:** `$this->container['stewardSwitching']->isSwitched()` and a `steward:switch`
+  hook let plugins holding secrets (e.g. Vault) refuse to unlock while switched; Vault should adopt it.
+- Core's `checkCurrentSession` wipes the session if the target's role or active flag changes, then runs
+  pre-authentication. With the admin's remember-me revoked (Decision 17) that leaves the browser logged out,
+  which is safe. Document it.
+- **Reverse-proxy auth:** when `REVERSE_PROXY_AUTH` is on, core re-authenticates from the proxy header on
+  every request, which would undo a switch. Switching is unavailable in that mode (button hidden, action
+  refused with a clear message). Database, LDAP and OAuth logins are tested individually.
 
 **Logout while switched** ends everything (no return to admin). A real login clears any leftover
 `steward_switch`. The API and JSON-RPC never open a PHP session, so they are unaffected; a test proves it.
 
 **Attribution:** actions taken while switched are recorded by core as the target user (that is what
-"viewing as" means). The audit log brackets them with `switch.start`/`switch.end`, giving the time window.
-The banner and the modal both say so.
+"viewing as" means). The audit log brackets them with `switch.start`/`switch.end` and records each
+state-changing request as `switch.action` under the same `switch_id`, so the admin's actions can be told
+apart from the target's own, made at the same time in another browser. The banner and the modal both say so.
 
 ## 3. Branding
 
-- **Settings:** site logo, favicon, site name. Upload PNG/JPEG/WebP/GIF ≤ 2 MB; checked by
-  `getimagesize`/GD decode, not extension. Re-encoded to PNG through GD (`Thumbnail`): logo fit within
+- **Settings:** site logo, favicon, site name (plain text, ≤ 60 chars, escaped everywhere). Upload
+  PNG/JPEG/WebP/GIF ≤ 2 MB; checked by `getimagesize` **before** GD decodes it: reject zero/invalid
+  dimensions, either side > 4096 px, or > 16 megapixels, and any format the installed GD can't read. The
+  new asset replaces the old one only after a successful decode **and** PNG encode. Re-encoded to PNG through GD (`Thumbnail`): logo fit within
   512×128, favicon to 32×32 and 180×180 (apple-touch). SVG and ICO rejected with a clear message. Stored in
   ObjectStorage under `steward/branding/`; config keeps paths and a content hash.
 - **Serving:** `BrandingController::image` (`APP_PUBLIC`, so the login page works), slot from an allow-list,
@@ -148,9 +180,15 @@ Steward re-registers the `text` helper in `initialize()` (`$this->helper->regist
 subclass whose `markdown()` uses a Steward parser extending core's `Kanboard\Core\Markdown`. This one swap
 covers templates, notification emails and the editor preview.
 
-- **Safety (always on):** keep `setMarkupEscaped(true)`, and **turn on** `setSafeMode(true)` (blocks
-  `javascript:`/`data:` link and image URLs, including in emails where CSP doesn't apply). This matches
-  upstream 1.2.57's safe mode, so behaviour doesn't regress on either version.
+- **Safety (always on):** keep `setMarkupEscaped(true)` and **turn on** `setSafeMode(true)` (matches
+  upstream 1.2.57, so behaviour doesn't regress on either version). Safe mode alone still allows
+  `data:image/png|gif|jpeg;base64` URLs, so Steward's parser also **overrides URL filtering with its own
+  scheme allow-list: `http`, `https`, `mailto` and relative URLs only**, for links and images; anything else
+  becomes plain text. This holds in emails, where CSP doesn't apply.
+- **Public-mode `#N` links:** core's public-link mode links `#N` using the token of *whichever* project
+  owns task N. Steward's parser links `#N` in public mode only when the task's project token equals the
+  token of the page being served (from the request); otherwise `#N` stays plain text. On Steward's own
+  public pages `#N` and `@user` are always plain text (§5.3).
 - **Fixes:** a heading containing `#N` keeps its text (core's unanchored regex in `blockCustomHeader` drops
   it).
 - **Additions:** task lists (`- [ ]` / `- [x]` → disabled checkboxes); heading ids with a slug and a hover
@@ -198,14 +236,21 @@ Per-project settings (project managers and admins, under the project's settings 
 - **Panels** from a smaller public-safe set: header, description, progress, board snapshot, recently
   completed, activity. Never files, comments, member lists, emails, due dates of hidden fields, or task
   descriptions.
-- **Description** renders with core's public-link mode (`markdown($text, true)`), so `#N` and `@user`
-  never point into private pages.
+- **Description** renders with Steward's public mode: `#N` and `@user` are **plain text**, never links.
+- **No core token on a Steward public page.** No link, panel or snapshot points into core's
+  `/public/task`, `/public/board`, feed or iCal URLs, and the token appears nowhere in a listed page's HTML.
+  The board snapshot's task titles are not links.
+- **The toggle says what core public access already exposes.** Beside the Public page switch: core's public
+  access, needed underneath, also publishes the read-only board (with assignees), RSS feed, iCal and task
+  pages (with comments and subtasks) to anyone who has the token link. Steward's page doesn't share the
+  token, but whoever already has it sees all that.
 - **Activity** is Steward's own minimal rendering of a safe subset of events (task created, moved, closed,
   reopened): "*Login fix* moved to *Done*". **Names hidden by default**; a per-project **Show names**
   toggle adds the actor's display name (never username or email).
 - Public pages carry `X-Robots-Tag: noindex` unless the project is *listed* (§5.4).
-- Turning off core public access, or regenerating the token, takes the page down / moves it, as core does
-  for the public board.
+- Turning off core public access clears the token and takes the page down; turning it back on issues a new
+  token, so the old link stops working (core has no separate "regenerate"). A listed project's
+  `/explore/:identifier` URL comes back with it.
 
 ### 5.4 Listed projects and directory (opt-in)
 
@@ -238,12 +283,17 @@ load there; branding (favicon, logo, site name) applies.
 
 On core's **Settings → Email** page (`template:config:email`) and in Steward settings: **Send test email**
 (POST, CSRF, admin only). Sends a short message synchronously through the active transport (Decision 19)
-to the signed-in admin's own email; shows the outcome or the caught error (trimmed, no secrets) as a flash; audits `email.test` with the
-transport name and outcome. Disabled with an explanation if the admin's profile has no email address.
+to the signed-in admin's own email. On failure the flash shows only a generic message and a short
+correlation id; the exception detail goes to the server log, with anything resembling a credential (SMTP
+user/password, API keys, `Authorization` values) redacted. Audits `email.test` with the transport name,
+outcome and correlation id. One send per admin per 30 seconds. Disabled with an explanation if the admin's
+profile has no email address.
 
 ## 7. Announcement banner
 
-- Admin sets: message (Markdown, inline subset, through the safe renderer), level (info / warning),
+- Admin sets: message (≤ 500 chars; rendered by an inline-only renderer whose output allow-list is text,
+  emphasis, strong, inline code and `http(s)` links; images, HTML, headings, lists, code blocks and Mermaid
+  are escaped as text), level (info / warning),
   optional start and end time, where it shows (signed-in pages; optionally also the login page and
   Steward's public pages, Decision 20), and whether users may dismiss it.
 - Renders via `template:layout:top` (and `template:auth:login-form:before` for the login page), sharing the
@@ -265,13 +315,25 @@ Steward changes who is who, and it can publish project data, so it gets the same
   with one message; CSRF missing/invalid refused; GET refused; session id changes on start and end; old
   session id is dead afterwards (with `SESSION_HANDLER=db`); `last_logins` untouched and no remember-me
   cookie; 2FA target not prompted; switch back restores the admin; admin demoted/disabled mid-switch →
-  logout; idle expiry → logout; admin's remember-me revoked at switch start (no silent re-login after expiry); blocked pages 403 while switched; logout ends everything; JSON-RPC
-  unaffected; every path audited.
-- **Branding tests:** SVG, ICO, polyglot (PNG header + script), oversize, non-image rejected; served
+  logout; idle expiry → logout; board polling doesn't extend idle; admin's remember-me revoked at switch
+  start (no silent re-login after expiry); both the old and the intermediate session ids are dead;
+  account-security pages 403 for read and write; writes to a non-allow-listed core or plugin controller
+  refused; every state-changing request audited as `switch.action` with the `switch_id`; audit-write
+  failure refuses the switch; reverse-proxy mode refuses switching; the guard is a no-op for JSON-RPC and
+  the queue worker; logout ends everything; every path audited.
+- **Feature-switch tests:** with each feature off, every one of its actions returns 404 when called by
+  query string (`?controller=…&action=…&plugin=Steward`) as admin, user and anonymous.
+- **Project ACL tests:** a project viewer and a member each get 403 on every per-project Steward action; a
+  POST whose body `project_id` differs from the query's is refused.
+- **Branding tests:** SVG, ICO, polyglot (PNG header + script), oversize file, oversize dimensions /
+  pixel-count (decompression bomb), non-image rejected; failed encode keeps the old asset; served
   headers; fallback; non-admin can't reach settings or upload; settings save ignores unknown keys.
-- **Markdown tests:** escaping on; `javascript:` links neutralised; `#N` heading fix; task lists; heading
-  ids unique; mermaid/code classes; public-link mode.
-- **Project pages tests:** public page 404 unless both toggles on; token regenerate moves it; no files,
+- **Markdown tests:** escaping on; `javascript:`, `vbscript:`, `data:` (including the base64 image forms)
+  neutralised in links and images, with mixed case, entities, whitespace/control characters and
+  protocol-relative variants; `#N` heading fix; task lists; heading ids unique; mermaid/code classes;
+  public mode never emits another project's token; banner renderer drops images/HTML/blocks.
+- **Project pages tests:** public page 404 unless both toggles on; disabling and re-enabling public access
+  kills the old link; a listed page's HTML contains no token string; no files,
   comments, emails or names leak (names only with the toggle); listed URL and directory only when enabled;
   Home never shows what the viewer can't see.
 - **Live:** on :8081 (admin/admin, curl cookie jar) and on a 1.2.57 stack, in a browser for banner, favicon,
