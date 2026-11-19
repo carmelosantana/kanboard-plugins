@@ -10,18 +10,25 @@ the :8081 dev stack. Every number below was measured there. The raw tables are i
 **Verdict.** The chosen topology works. Kanboard project membership is the only authority for git
 access, and it is checked live on every git and repo-API request. Revocation takes effect on the
 next git operation, in 31-63 ms. Agents get 1-hour tokens limited to their project's repos. Their
-branch pushes are confined to `agent/<login>/**`; since Task 18 they are also kept off every tag and
-every ref outside branches and tags. Merges to
-`main` need CI, a reviewer agent and, for high-risk paths, a human. The second-model security review
+branch writes are confined to `agent/<login>/**`: pushes from the start, and PR merges only since
+the final review's fix (I1; before it an agent could merge a PR into another agent's prefix or a
+human's branch, seen live). Since Task 18 they are also kept off every tag and every ref outside
+branches and tags. An agent never gets Forgejo repo admin, whatever its Kanboard role (I2). Merges
+to `main` need CI, an approval from a reviewer agent and, for high-risk paths, a human. Before the
+final review's fix (C1) the reviewer's approval of an older head still counted, so an author could
+push unreviewed code after approval and have it merged (seen live in the IT); `main` now dismisses
+stale approvals. One Forgejo rule remains: a push that only drops part of an approved change keeps
+the approval (see [Final whole-branch review](#final-whole-branch-review)). The second-model security review
 found six High issues. Five are fixed, test-first (GH-01, 02, 03, 05, 06): GH-03 by tag protection
 and, for notes, custom refs and AGit, by Forgejo configuration. GH-04 affects only the dev runner and has no
 production counterpart. Five Medium issues were found: four are fixed, and the fifth (GH-10) is a
 production network requirement, recorded below. The one Low issue is fixed. The worst
 operational defect P1 found was the ForwardAuth deny storm under load, caused by the Kanboard
 session write. It is fixed: at 50 concurrent agents every clone and push now succeeds through
-ForwardAuth. Three things are left for the MVP spec. Refs outside branches and tags are refused
-for humans too (AGit is off). ForwardAuth does not see web UI cookie sessions. The production network must be
-segmented.
+ForwardAuth. Four things are left for the MVP spec. Refs outside branches and tags are refused
+for humans too (AGit is off). ForwardAuth does not see web UI cookie sessions, and after a project
+identifier change the old org's web-UI rights are never revoked. The production network must be
+segmented. The final whole-branch review's fixes and what it left open are at the end.
 
 ## Metrics
 
@@ -39,7 +46,7 @@ purpose.
 | Loaded RAM, N=50 peak | measured | Forgejo 1279 MiB, its Postgres 187, Traefik 50, broker 11, Kanboard 60. Authentik flat |
 | CI cold start, setup p50 / p95 | measured | (a) `vm-gvisor` 0.63 s / 1.25 s; (c) `kvm-kata` 17.39 s / 18.44 s (nested KVM); (b) PARKED |
 | Revocation lag, git | next operation | 31-63 ms after `removeProjectUser`; no operation succeeded after removal (5 runs) |
-| Revocation lag, web UI | measured | the private repo page turns 404 625-756 ms after removal (plugin nudge, then team sync); bound: one reconcile tick (30 s) if the nudge is lost. The cookie session itself is never revoked |
+| Revocation lag, web UI | measured | the private repo page turns 404 625-756 ms after removal (plugin nudge, then team sync); bound: one reconcile tick (30 s) if the nudge is lost, **except after a project identifier change**: the old `kb-<old>` org's teams are never emptied, so a member removed later keeps web-UI access to the old org's repos with no time limit (T8 gap, open decision 8). The cookie session itself is never revoked |
 | Drift repaired after an injected sync failure | 100 % within one sweep | 2 of 3 recorded runs within the 35 s bound (25 s each); the third took 46 s because a token-delete backlog held up the sweep. After the backlog drained, every run repaired in 24-25 s |
 | Agent tool calls, ticket to merged | measured | 10 (author 8, reviewer 2); the credential helper costs none |
 | Setup | measured | four commands plus one env file; broker 8,945 lines of Rust in `src/`, plugin 2,208 lines of PHP, compose and config 735 lines, setup scripts 432 lines (T17 counts) |
@@ -117,11 +124,22 @@ Carried from Task 16 for the MVP:
 ## Web UI cookie sessions: decision
 
 **Measured.** ForwardAuth checks every git and repo-API request, but not Forgejo pages served on a
-session cookie (spec non-goal). After `removeProjectUser`, the human's API token is refused at once.
+session cookie (spec non-goal). Since the final review (I3) that includes the web UI's Raw, Download
+ZIP, README images and LFS files (`raw/`, `archive/`, `media/`) when they carry no credential: before,
+Traefik sent them through ForwardAuth, whose 401 made a signed-in browser show a Basic prompt (seen
+live: 401 `realm="Kanboard git"` on all three). Now a cookie-only request reaches Forgejo's own
+session check (200 for the signed-in member), an anonymous one gets Forgejo's 404 for a private repo,
+and the same routes with a token are still checked by the broker (scenario preflight, identity and
+step 2). Smart-HTTP and the git-lfs API stay behind ForwardAuth with or without a credential. After `removeProjectUser`, the human's API token is refused at once.
 The private repo page in the signed-in browser turns 404 625-756 ms later, once the plugin's nudge
 has made the broker drop the team membership. If the nudge is lost, the bound is one reconcile tick
 (30 s). The session itself stays signed in. Forgejo is never told, and the user still sees every
-repo they can still reach.
+repo they can still reach. The 30 s bound does not hold after a project identifier change (T8):
+the broker syncs only the new `kb-<new>` org, and the old org, still a known org of a project that
+exists, is never emptied (`reconcile.rs` `empty_dropped` skips present projects). Members removed
+after the change keep their team rights on the old org's repos in the web UI, `managers` admin
+included, with no time limit. Git and API access are unaffected (ForwardAuth asks Kanboard live).
+Read from the code, not reproduced live.
 
 **Recommendation: do not extend ForwardAuth to cookie sessions in the MVP.** Close the remaining
 gap with offboarding instead:
@@ -190,7 +208,41 @@ Also from the Task 17 carry-overs. `BROKER_FAULT_SYNC_ONCE` now names the projec
 8. **Org lifecycle.** An org now belongs to one project for good. A deleted project's identifier
    cannot be reused by a new project (409) until an operator moves or deletes the org. Orgs created
    before Task 18 were carried over on trust (their id learnt at the next sync). The MVP needs an
-   operator verb for this, and a clean migration.
+   operator verb for this, and a clean migration. **Identifier changes** leave the old org's teams
+   populated for good (T8 gap above): web-UI rights of later-removed members, admin included, are
+   never revoked there. Cheap P1-level mitigation: the plugin refuses identifier changes for
+   projects with repos. The MVP should rename or empty the old org.
 9. **Plugin and broker repo drift.** The dev plugin has a repo row (`kb-ghe2e/githost-e2e`) that
    neither the broker nor Forgejo has. Reconcile should report repo rows on either side that the
    other lacks.
+10. **Stale approvals: partial reverts.** Forgejo 15 dismisses an approval on push only when the
+    new head differs, on some path, from both the approved head and the base. A push that only
+    drops part of the approved change keeps the approval and merges (seen live, scenario PR #141).
+    Each file is then one the reviewer saw, but the combination is not what they approved. If that
+    matters, the broker's gate could stay `pending` until an official approval names the current
+    head (the auto-merge restore already requires that).
+11. **Authenticated authz answers** (final review M1). The broker signs its authz request to
+    Kanboard, but not Kanboard's `{allow}` reply. On GH-10's flat network anything that can answer
+    as `kb-suite` can say "allow". Sign the reply over the request nonce, or make GH-10's
+    segmentation a hard requirement.
+12. **Minted tokens and admin API paths.** Defence in depth: the broker could deny minted tokens on
+    `branch_protections`, `tag_protections`, `hooks`, `collaborators` and repo `PATCH`/`DELETE`,
+    whatever the agent's Forgejo rights.
+
+## Final whole-branch review
+
+The final review (read-only) found one Critical and four Important issues. Each was reproduced on
+the dev stack before the fix, and each fix has a failing test first.
+
+| ID | Finding | Seen before the fix | Disposition |
+| --- | --- | --- | --- |
+| C1 | Stale approvals counted on `main`, and the broker's auto-merge restore re-scheduled without checking them | IT: rev scheduled and approved head X, dev pushed Y adding a file, CI and gate green on Y: the PR merged, by rev | **Fixed** broker `278e659` (the restore needs an official approval of the current head; unit test with no, older-head, stale, unofficial and rejecting reviews) and `d6cbca3` (`main`: `dismiss_stale_approvals` and `ignore_stale_approvals`). The IT and scenario step 3 now check that Y stays open, that the author's own merge is 405, and that r1's approval of Y merges it. Partial reverts: open decision 10 |
+| I1 | Agents could merge PRs into other protected branches (no merge allowlists) | IT: dev's PR into `agent/<rev>/target` merged, 200 | **Fixed** broker `d6cbca3`: every glob rule's merge allowlist is its push allowlist (catch-all: the human writers, or nobody). IT: dev's merges into rev's prefix and into a human's branch are refused, the owners' merges allowed. Scenario 5a through Traefik: `405 User not allowed to merge PR`, a2's branch unchanged |
+| I2 | An agent with the Kanboard project-manager role became a Forgejo repo admin (`managers`) | `StateBuilderTest` pinned an agent in `managers` | **Fixed** GitHost `3759188` (an agent manager is listed in `members`; managers and humans_high_risk hold humans only) and broker `f6796fc` (defence in depth: sync never puts an agent principal in `managers` or `humans-high-risk`; one listed as a manager gets `members`) |
+| I3 | Signed-in humans got a Basic prompt on raw, archive and media | without a credential: 401 `realm="Kanboard git"`; with a session cookie: 401 | **Fixed** harness `8ca8321` (Traefik): those routes reach ForwardAuth only with a credential. Scenario: anonymous 404, cookie 200, agent token 200 with an `ok` audit line |
+| I4 | This document overclaimed | | Corrected above (verdict, web-UI bound, open decisions 8 and 10-12) |
+| M3 | An active repo deleted in Forgejo fails its project's sync on every tick; the sync comment said it is dropped | | Comment fixed, broker `f6796fc`; logic left for the MVP (fails closed) |
+| M4 | A token create's unexpected-status error echoed Forgejo's body, which carries the token | unit test: the mint answer held the token's `sha1` | **Fixed** broker `cd3dec3`: token-endpoint errors carry a redacted body |
+| M1, M2 | Unsigned authz replies; the authz timeout audit line drops principal and repo | | Recorded: open decision 11; M2 for the MVP (the fallback needs `parse_target`'s result threaded out) |
+| M5 | `githost_repos.forgejo_full_name` is unique case-sensitively on SQLite and Postgres | | Recorded. **The MySQL and Postgres schema (`GitHost/Schema/Mysql.php`, `Postgres.php`) has never been executed**: P1 ran SQLite only. Run it once before any non-SQLite install |
+| T14 | An older, narrower Forgejo admin token was still valid on the dev stack | | Deleted (its Forgejo `access_token` row); the current token in `testing/git/.env` still answers 200 |
