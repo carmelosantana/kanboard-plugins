@@ -38,7 +38,7 @@ the public what they are working on. Signed-in users have no project home page e
 
 | # | Decision | Settled |
 |---|---|---|
-| 1 | **One plugin, per-feature switches** (approach A). A switched-off feature registers no routes, hooks or assets, and its actions refuse (404); its ACL entries stay registered (§1). | Carmelo; ACL part from spec security review |
+| 1 | **One plugin, per-feature switches** (approach A). A switched-off feature registers no hooks or assets, and its actions refuse (404); its ACL entries stay registered (§1). (as built) Its routes stay registered too and answer the same fixed 404. | Carmelo; ACL part from spec security review |
 | 2 | **Name:** Steward. | Carmelo |
 | 3 | **v1 features:** user switching + audit log, branding, Markdown, project Home + public page + directory, test email, announcement banner. Session management, health panel, enforced 2FA, maintenance mode, bulk users come later. | Carmelo |
 | 4 | **Branding moves from ShadcnTheme to Steward;** ShadcnTheme's upload page is retired in its next release. | Carmelo |
@@ -67,8 +67,9 @@ the public what they are working on. Signed-in users have no project home page e
   namespaced `steward_*`; the save action accepts **only an allow-list of known keys** (never pass the
   request through to `configModel->save()`), and calls `getValues()` once per request.
 - **Feature registry:** `Plugin::initialize()` reads the switches once and wires only the enabled features'
-  routes, hooks and assets. Kanboard dispatches any controller named in the query string
-  (`?controller=…&plugin=Steward`) whether or not a route exists, and runs ACL middleware before the
+  hooks and assets. (as built) Every route is registered whatever the switches say, so a disabled feature's
+  pretty URL gets the gate's fixed 404 rather than core's fallthrough. Kanboard dispatches any controller
+  named in the query string (`?controller=…&plugin=Steward`) whether or not a route exists, and runs ACL middleware before the
   action. So a disabled feature's actions are rejected with a uniform **404 from `app.bootstrap`**, using a
   complete `controller::action → feature` map, before ACL runs (for anonymous, user and admin alike); each
   action repeats the check as defence in depth; and ACL entries are registered for every controller
@@ -185,7 +186,8 @@ apart from the target's own, made at the same time in another browser. The banne
 - **Settings:** site logo, favicon, site name (plain text, ≤ 60 chars, escaped everywhere). Upload
   PNG/JPEG/WebP/GIF ≤ 2 MB; checked by `getimagesize` **before** GD decodes it: reject zero/invalid
   dimensions, either side > 4096 px, or > 16 megapixels, and any format the installed GD can't read. The
-  new asset replaces the old one only after a successful decode **and** PNG encode. Re-encoded to PNG through GD (`Thumbnail`): logo fit within
+  new asset replaces the old one only after a successful decode **and** PNG encode. Re-encoded to PNG through GD
+  (as built: GD directly, not core's `Thumbnail`, which decodes before the size check and upscales): logo fit within
   512×128, favicon to 32×32 and 180×180 (apple-touch). SVG and ICO rejected with a clear message. Stored in
   ObjectStorage under `steward/branding/`; config keeps paths and a content hash.
 - **Serving:** `BrandingController::image` (`APP_PUBLIC`, so the login page works), slot from an allow-list,
@@ -194,7 +196,8 @@ apart from the target's own, made at the same time in another browser. The banne
 - **Applying:** favicon links via `template:layout:head` (after core's, which browsers then prefer; verify in
   Chrome and Firefox; fall back to a `layout` override only if a browser picks core's). Logo and site name
   via a `header/title` template override and on the login page via `template:auth:login-form:before`.
-  `<title>` uses the site name instead of "Kanboard" where core falls back to it.
+  `<title>` uses the site name instead of "Kanboard" where core falls back to it (as built: a thin
+  `Template/layout.php` override, since core's layout has no hook for the title).
 - **Fallback:** any missing slot falls back to core's default.
 - **Helper for other plugins:** `$this->helper->stewardBranding->logoUrl() / faviconUrl() / siteName()`
   returning `''` when unset, so ShadcnTheme can use the logo in its login card.
@@ -239,6 +242,11 @@ Per-project settings (project managers and admins, under the project's settings 
 (plain text, ≤ 160 chars) and up to **five links** (label + `http(s)` URL, validated). The header block
 (name, tagline, links) shows on the project Home and the public page.
 
+(as built) These settings, with the panels and the public/listed/names toggles (§5.2–5.4), live in Steward's own
+table `steward_project_page`, not project metadata: core 1.2.47's API lets project viewers write project
+metadata. Every value is checked again on read; anything invalid is dropped, and public/listed hold only while
+core public access and the identifier still allow them.
+
 ### 5.2 Home (signed in)
 
 - A **Home** entry in the project view switcher (`template:project-header:view-switcher-before-project-overview`).
@@ -272,9 +280,11 @@ Per-project settings (project managers and admins, under the project's settings 
 - **Activity** is Steward's own minimal rendering of a safe subset of events (task created, moved, closed,
   reopened): "*Login fix* moved to *Done*". **Names hidden by default**; a per-project **Show names**
   toggle adds the actor's display name (never username or email).
-- Public pages carry `X-Robots-Tag: noindex` unless the project is *listed* (§5.4), and always
-  `Referrer-Policy: no-referrer`, so a token in the page URL never leaves in a `Referer` header (remote
-  images in descriptions are allowed by core's CSP).
+- Public pages always send `Referrer-Policy: no-referrer`, so a token in the page URL never leaves in a
+  `Referer` header (remote images in descriptions are allowed by core's CSP). (as built) The token page
+  `/public/project/:token` is always `noindex`, listed or not; only `/explore` and `/explore/:identifier` of a
+  listed project may be indexed, so an indexable URL never holds a token. Any copy of the project's token in a
+  Steward public page (e.g. pasted into the description) is replaced with `[hidden]`.
 - Turning off core public access clears the token and takes the page down; turning it back on issues a new
   token, so the old link stops working (core has no separate "regenerate"). A listed project's
   `/explore/:identifier` URL comes back with it.
@@ -284,7 +294,8 @@ Per-project settings (project managers and admins, under the project's settings 
 - A project with a public page can also be **Listed** (manager toggle): clean URL `/explore/:identifier`
   (the project identifier; listing requires one) and an entry in the directory.
 - **Directory** at `/explore` (Decision 18), off by default, enabled by
-  an admin in Steward settings: listed projects with name, tagline and link. Nothing else.
+  an admin in Steward settings: listed projects with name, tagline and link. Nothing else. (as built) Archived
+  (inactive) projects are left out of the directory.
 - Toggling public/listed/names is audited (`public.changed`).
 
 ### 5.5 Rendering on public pages
@@ -302,7 +313,9 @@ load there; branding (favicon, logo, site name) applies.
   `stewardBranding->logoUrl()` when Steward is present, else the product name. `recommends` Steward ≥ 1.0.0.
   It leaves its old config keys and files in place (Steward's import reads them), with a changelog note.
 - Only Steward overrides `header/title` after that, so the two plugins never fight over one template.
-- **Until ShadcnTheme 1.2.0 ships,** both override `header/title` and Steward's wins (loads later). With
+- **Until ShadcnTheme 1.2.0 ships,** both override `header/title` and Steward's wins. (as built) Plugin load
+  order is unsorted, so Steward applies its branding overrides late in `app.bootstrap`, after every plugin's
+  `initialize()`, rather than relying on loading later. With
   Steward branding on, an empty logo slot and the import not yet run, Steward's override falls back to
   ShadcnTheme's logo, so nobody's logo disappears in between.
 
@@ -312,7 +325,12 @@ On core's **Settings → Email** page (`template:config:email`) and in Steward s
 (POST, CSRF, admin only). Sends a short message synchronously through the active transport (Decision 19)
 to the signed-in admin's own email. On failure the flash shows only a generic message and a short
 correlation id; the exception detail goes to the server log, with anything resembling a credential (SMTP
-user/password, API keys, `Authorization` values) redacted. Audits `email.test` with the transport name,
+user/password, API keys, `Authorization` values) redacted. (as built) Redacted shapes: the whole
+`Authorization`/`Proxy-Authorization` value (scheme and credentials); values of password, passwd, pass, pwd,
+secret, token, api key, credential(s), username and user keys, compound ones too (`access_token`, `x-api-key`,
+`authToken`), after `=` or `:`, bare, quoted or JSON-quoted (escaped quotes included); URL user info
+(`scheme://user:pass@`); SMTP `AUTH` lines with an initial response and base64 answers to a `334` challenge;
+and the configured SMTP username and password wherever they appear. Keys stay visible (`password=[redacted]`). Audits `email.test` with the transport name,
 outcome and correlation id. One send per admin per 30 seconds. Disabled with an explanation if the admin's
 profile has no email address.
 
