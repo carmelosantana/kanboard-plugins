@@ -68,7 +68,6 @@ else
 fi
 
 # 2. A path argument tests that checkout (a worktree) in place of PLUGINS_ROOT/<Name>.
-before="$(readlink "$KB/plugins/RptFixture" || true)"
 out="$(run "$TMP/wt/fixture-branch")"
 if grep -q "Source        : $TMP/wt/fixture-branch" <<<"$out" \
    && grep -qE 'Tests: 3, Assertions: 3, Failures: 1\.' <<<"$out"; then
@@ -77,12 +76,12 @@ else
   fail "path argument runs the worktree's code" "$out"
 fi
 
-# 3. The shared plugins/ symlink is left as it was.
-after="$(readlink "$KB/plugins/RptFixture" || true)"
-if [[ "$before" == "$after" && "$after" == "$ROOT/RptFixture" ]]; then
-  pass "shared symlink untouched ($after)"
+# 3. The shared kanboard-src/plugins/ is never written: each run links into its own dir.
+left="$(ls -A "$KB/plugins")"
+if [[ -z "$left" ]]; then
+  pass "shared plugins/ untouched"
 else
-  fail "shared symlink untouched" "before=$before after=$after"
+  fail "shared plugins/ untouched" "$left"
 fi
 
 # 4. --all reports the full count in its table too.
@@ -108,7 +107,11 @@ if [[ "$(git -C "$HERE" rev-parse --git-dir)" != "$(git -C "$HERE" rev-parse --g
   else
     fail "linked worktree uses $REAL_KB" "$out"
   fi
-  rm -f "$REAL_KB/plugins/RptFixture"   # the fallback run linked the fixture there
+  if [[ ! -e "$REAL_KB/plugins/RptFixture" ]]; then
+    pass "linked worktree left $REAL_KB/plugins alone"
+  else
+    rm -f "$REAL_KB/plugins/RptFixture"; fail "linked worktree left $REAL_KB/plugins alone" "RptFixture link created"
+  fi
 else
   echo "skip - linked-worktree fallback (not run from a linked worktree)"
 fi

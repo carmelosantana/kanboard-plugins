@@ -4,15 +4,14 @@
 # Usage (from repo root):
 #   ./testing/run-plugin-tests.sh <PluginName>   # one suite, PHPUnit output as-is
 #   ./testing/run-plugin-tests.sh <path>         # one suite from another checkout of a
-#                                                # plugin (a git worktree, a scratch clone);
-#                                                # the shared plugins/ links are left alone
+#                                                # plugin (a git worktree, a scratch clone)
 #   ./testing/run-plugin-tests.sh --all          # every suite to completion, then a
 #                                                # pass/fail table; exit 1 if any failed
 #   ./testing/run-plugin-tests.sh --list         # print the discovered plugin names
 #
 # A plugin is any directory under PLUGINS_ROOT that holds a plugin.json — there is no
-# hand-kept list. Each one is symlinked into kanboard-src/plugins/ and its namespace is
-# registered by the generated PHPUnit bootstrap.
+# hand-kept list. Each run links them into a temp plugins dir (Kanboard reads PLUGINS_DIR
+# from the environment) and the generated PHPUnit bootstrap registers their namespaces.
 #
 # Every suite runs to completion. Kanboard's own units.sqlite.xml sets stopOnFailure, which
 # cut runs short and hid the real test count, so this script runs PHPUnit with a copy of
@@ -47,7 +46,6 @@ compgen -G "${REPO_ROOT}/*/plugin.json" > /dev/null || default_plugins_root="$MA
 
 PLUGINS_ROOT="$(cd "${PLUGINS_ROOT:-$default_plugins_root}" && pwd)"
 KB_SRC="${KB_SRC:-$default_kb_src}"
-PLUGINS_DIR="${KB_SRC}/plugins"
 BOOTSTRAP="${KB_SRC}/tests/plugin-bootstrap.php"
 PHPUNIT="${KB_SRC}/vendor/bin/phpunit"
 CORE_CONFIG="${KB_SRC}/tests/units.sqlite.xml"
@@ -114,46 +112,30 @@ tmp_config="$(mktemp "${CONFIG}.XXXXXX")"
 sed -E 's/[[:space:]]+stopOn(Error|Failure)="[^"]*"//g' "$CORE_CONFIG" > "$tmp_config"
 mv "$tmp_config" "$CONFIG"
 
-# ── Ensure plugin symlinks exist ───────────────────────────────────────────────
-mkdir -p "$PLUGINS_DIR"
-for p in "${PLUGINS[@]}"; do
-  if [[ ! -e "${PLUGINS_DIR}/${p}" ]]; then
-    ln -s "${PLUGINS_ROOT}/${p}" "${PLUGINS_DIR}/${p}"
-    echo "Created symlink: ${PLUGINS_DIR}/${p} -> ${PLUGINS_ROOT}/${p}"
-  fi
-done
+# ── A plugins dir of our own for this run ─────────────────────────────────────
+# Kanboard reads PLUGINS_DIR from the environment, so each run links every plugin under
+# PLUGINS_ROOT into a temp directory instead of editing kanboard-src/plugins, which other
+# sessions share. A path argument points its plugin's link at that path.
+PLUGINS_DIR="$(mktemp -d)"
+trap 'rm -rf "$PLUGINS_DIR"' EXIT
+for p in "${PLUGINS[@]}"; do ln -s "${PLUGINS_ROOT}/${p}" "${PLUGINS_DIR}/${p}"; done
 
-# run_suite <Name> [plugins-dir]: PHPUnit on <plugins-dir>/<Name>/Test/.
 run_suite() {
-  local dir="${2:-$PLUGINS_DIR}"
-  ( cd "$KB_SRC" && PLUGINS_DIR="$dir" "$PHPUNIT" --bootstrap "$BOOTSTRAP" -c "$CONFIG" \
-      "$dir/$1/Test/" --no-coverage )
+  ( cd "$KB_SRC" && PLUGINS_DIR="$PLUGINS_DIR" "$PHPUNIT" --bootstrap "$BOOTSTRAP" -c "$CONFIG" \
+      "$PLUGINS_DIR/$1/Test/" --no-coverage )
 }
 
-# ── A path: test that checkout through a per-run plugins dir ─────────────────
-# Kanboard reads PLUGINS_DIR from the environment, so the run gets its own directory of
-# links (every plugin, with this one pointing at the given path) and the shared
-# kanboard-src/plugins links that other sessions rely on are never rewritten.
+SRC=""
 if [[ "$ARG" == */* && -f "${ARG}/plugin.json" ]]; then
   SRC="$(cd "$ARG" && pwd)"
-  NAME="$(sed -nE 's/^namespace Kanboard\\Plugin\\([A-Za-z0-9_]+);.*/\1/p' "$SRC/Plugin.php" 2>/dev/null | head -1)"
-  [[ -n "$NAME" ]] || { echo "ERROR: no 'namespace Kanboard\\Plugin\\X;' in ${SRC}/Plugin.php"; exit 1; }
-  [[ -d "$SRC/Test" ]] || { echo "No Test/ directory in ${SRC} — nothing to run."; exit 0; }
-  RUN_DIR="$(mktemp -d)"
-  trap 'rm -rf "$RUN_DIR"' EXIT
-  for p in "${PLUGINS[@]}"; do ln -s "${PLUGINS_ROOT}/${p}" "${RUN_DIR}/${p}"; done
-  ln -sfn "$SRC" "${RUN_DIR}/${NAME}"
-  echo "Running tests for plugin: ${NAME}"
-  echo "  Source        : ${SRC}"
-  echo "  Kanboard root : ${KB_SRC}"
-  echo ""
-  run_suite "$NAME" "$RUN_DIR"
-  exit $?
+  ARG="$(sed -nE 's/^namespace Kanboard\\Plugin\\([A-Za-z0-9_]+);.*/\1/p' "$SRC/Plugin.php" 2>/dev/null | head -1)"
+  [[ -n "$ARG" ]] || { echo "ERROR: no 'namespace Kanboard\\Plugin\\X;' in ${SRC}/Plugin.php"; exit 1; }
+  ln -sfn "$SRC" "${PLUGINS_DIR}/${ARG}"
 fi
 
 # ── Single plugin ──────────────────────────────────────────────────────────────
 if [[ "$ARG" != "--all" ]]; then
-  if [[ ! -f "${PLUGINS_ROOT}/${ARG}/plugin.json" ]]; then
+  if [[ ! -f "${PLUGINS_DIR}/${ARG}/plugin.json" ]]; then
     echo "ERROR: no plugin.json under ${PLUGINS_ROOT}/${ARG}"
     usage
     exit 1
@@ -163,6 +145,7 @@ if [[ "$ARG" != "--all" ]]; then
     exit 0
   fi
   echo "Running tests for plugin: ${ARG}"
+  [[ -n "$SRC" ]] && echo "  Source        : ${SRC}"
   echo "  Kanboard root : ${KB_SRC}"
   echo ""
   run_suite "$ARG"

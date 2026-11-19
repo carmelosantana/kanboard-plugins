@@ -186,7 +186,7 @@ composer install -d testing/kanboard-src
 ```
 
 `testing/kanboard-src/` is gitignored — it is large and not part of this repo.
-Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically by the runner.
+The runner links the plugins into a temp directory per run; `testing/kanboard-src/plugins/` is not used.
 
 ### Running a plugin's tests
 
@@ -201,18 +201,17 @@ Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically b
 The script:
 1. Finds the plugins: every directory beside `testing/` that holds a `plugin.json`.
 2. Verifies `vendor/bin/phpunit` is present in `kanboard-src/`.
-3. Symlinks each plugin into `kanboard-src/plugins/` if missing, and writes a bootstrap that
-   registers every plugin's PSR-4 namespace.
+3. Links each plugin into a temp plugins directory for this run (Kanboard reads `PLUGINS_DIR` from
+   the environment), and writes a bootstrap that registers every plugin's PSR-4 namespace.
 4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/plugin-units.sqlite.xml`: a copy
    of Kanboard's `tests/units.sqlite.xml` (in-memory SQLite) without `stopOnError` and
    `stopOnFailure`. Kanboard's own config stops at the first failure, which hid the real test count
    (one suite showed 20 tests), so every run now finishes and prints the full count.
 
 **Testing a worktree or another checkout.** Pass a path instead of a name. The plugin name comes
-from the `namespace Kanboard\Plugin\X;` line in its `Plugin.php`, and the run gets its own temp
-plugins directory (Kanboard reads `PLUGINS_DIR` from the environment) where that name points at
-your path. The shared `kanboard-src/plugins/` links stay as they are, so you never switch branches
-in a shared plugin checkout to test a change. The :8081 stack still mounts `../<Plugin>`, so a live
+from the `namespace Kanboard\Plugin\X;` line in its `Plugin.php`, and that name points at your
+path in this run's plugins directory, so you never switch branches in a shared plugin checkout to
+test a change. The :8081 stack still mounts `../<Plugin>`, so a live
 check of a worktree needs its own overlay (not provided yet).
 
 **Running from a harness worktree.** In a linked worktree of this repo, the runner falls back to
