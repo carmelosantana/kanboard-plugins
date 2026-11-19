@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review round 1 resolved, round 2 pending
+- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–2 resolved, round 3 pending
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -68,8 +68,10 @@ the public what they are working on. Signed-in users have no project home page e
   request through to `configModel->save()`), and calls `getValues()` once per request.
 - **Feature registry:** `Plugin::initialize()` reads the switches once and wires only the enabled features'
   routes, hooks and assets. Kanboard dispatches any controller named in the query string
-  (`?controller=…&plugin=Steward`) whether or not a route exists, so **every Steward action also checks its
-  feature switch first and returns 404 when it is off**, and ACL entries are registered for every controller
+  (`?controller=…&plugin=Steward`) whether or not a route exists, and runs ACL middleware before the
+  action. So a disabled feature's actions are rejected with a uniform **404 from `app.bootstrap`**, using a
+  complete `controller::action → feature` map, before ACL runs (for anonymous, user and admin alike); each
+  action repeats the check as defence in depth; and ACL entries are registered for every controller
   regardless of switches. Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
   admin opts in, except safer/richer Markdown).
 - **Ops kill switch:** `define('STEWARD_DISABLE_SWITCHING', true)` in `config.php` disables switching
@@ -136,11 +138,17 @@ workers, so the guard does nothing at all when there is no PHP session or no `st
   `UserCredentialController`, `UserApiAccessController`, `TwoFactorController`, `AvatarFileController`
   (upload/remove), `UserViewController` session/password-reset/integration/external pages, every
   `User*`/`Config*`/`Plugin*` admin controller, and Steward's own settings.
-- **Writes fail closed:** a non-GET request (or a GET to a known state-changing action) is allowed only when
-  its controller is on Steward's allow-list of everyday work controllers (board, task, subtask, comment,
-  task file, link, tag, project settings the target could already change). Other plugins' controllers are
-  refused for writes unless the plugin registers them with `stewardSwitching->allowWrites([...])`. The full
-  allow-list is enumerated in the plan and tested against core's controller list.
+- **`OAuthController` is always refused** (its GET callback links an external identity to the logged-in
+  user, and `unlink` mutates by GET), as are any account-link callbacks.
+- **Writes fail closed, per action.** Core mutates on GET in many places (task assign/start, close/open,
+  subtask status and timer, board collapse/expand), so "GET is safe" is never assumed. The plan carries a
+  table of every core `(controller, action)` pair classified **read**, **write-allowed** (everyday work:
+  board, task, subtask, comment, task file, link, tag, and project settings the target could already
+  change) or **blocked**, including actions that mutate conditionally. Any pair not in the table is blocked
+  while switched. Every pair is table-tested for allow/block and for its `switch.action` audit row.
+- **Other plugins default to blocked** while switched, reads included: a plugin's actions run only if it
+  registers them with `stewardSwitching->allow(['Controller::action' => 'read'|'write', ...])`. Steward ships
+  registrations for the suite plugins' plain view pages; others opt in.
 - **Other plugins can tell:** `$this->container['stewardSwitching']->isSwitched()` and a `steward:switch`
   hook let plugins holding secrets (e.g. Vault) refuse to unlock while switched; Vault should adopt it.
 - Core's `checkCurrentSession` wipes the session if the target's role or active flag changes, then runs
@@ -321,12 +329,14 @@ Steward changes who is who, and it can publish project data, so it gets the same
   admin signs in returns to the target's profile (no path restores the admin without a login); admin demoted/disabled mid-switch →
   logout; idle expiry → logout; board polling doesn't extend idle; admin's remember-me revoked at switch
   start (no silent re-login after expiry); both the old and the intermediate session ids are dead;
-  account-security pages 403 for read and write; writes to a non-allow-listed core or plugin controller
-  refused; every state-changing request audited as `switch.action` with the `switch_id`; audit-write
+  account-security pages 403 for read and write; every core `(controller, action)` pair table-tested
+  (read / write-allowed / blocked, unknown pairs blocked); `OAuthController` refused; an unregistered
+  plugin action refused, read or write; every state-changing request audited as `switch.action` with the `switch_id`; audit-write
   failure refuses the switch; reverse-proxy mode refuses switching; the guard is a no-op for JSON-RPC and
   the queue worker; logout ends everything; every path audited.
-- **Feature-switch tests:** with each feature off, every one of its actions returns 404 when called by
-  query string (`?controller=…&action=…&plugin=Steward`) as admin, user and anonymous.
+- **Feature-switch tests:** with each feature off, every one of its actions returns the same 404 (from
+  `app.bootstrap`, before ACL) when called by query string (`?controller=…&action=…&plugin=Steward`) as
+  admin, user and anonymous.
 - **Project ACL tests:** a project viewer and a member each get 403 on every per-project Steward action; a
   POST whose body `project_id` differs from the query's is refused.
 - **Branding tests:** SVG, ICO, polyglot (PNG header + script), oversize file, oversize dimensions /
