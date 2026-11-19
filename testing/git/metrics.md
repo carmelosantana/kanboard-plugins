@@ -214,3 +214,63 @@ Setup takes four commands: compose up, `bootstrap.sh`, recreate kb-suite once, a
 (testing/README.md). It also takes one manual step, `testing/git/scenario.env` with the Kanboard
 admin and agent API credentials. The runner VMs of Task 16 need their own `up.sh`, and option
 (b) needs root.
+
+## Load through ForwardAuth after the session fix (Task 18, 2026-11-19)
+
+Task 17's 403s came from kb-suite, not from ForwardAuth itself. Kanboard opened and wrote a PHP
+session for every HMAC authz call, and under concurrency the SQLite session INSERT failed with
+"database is locked" after the JSON had been sent. GitHost `695a1dd` starts no session on the four
+broker routes. It also turns `display_errors` off and answers any exception with a bodyless 503,
+and the broker stays fail-closed on malformed bodies. Before the fix, each signed authz call set a
+`KB_SID` cookie and added a `sessions` row (210 → 211). After it, there is no cookie and the count
+is unchanged.
+
+Same command, agents and repo as Task 17: `bash testing/git/load.sh run <N> traefik traefik-net
+direct`, `LOAD_ROUNDS` 5 at N=10 and 2 at N=50. The stack also had Task 18's broker changes: org
+ownership, tag protection, stored nonces and one secret per direction. **The host was much busier
+than in Task 17**: load average 27-29 on 14 threads (other sessions; kb-suite alone at 87 % CPU).
+So absolute latencies rose for every target, the direct baseline included. Compare targets within
+one run, not across runs.
+
+| N | target | credential p50 / p95 | clone p50 / p95 | push p50 / p95 | clone ok | clone+push ok | T17 clone+push ok |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | traefik | 1699 / 3038 | 1335 / 1775 | 2241 / 2969 | 50/50 | 50/50 | 21/50 |
+| 10 | traefik-net | 1937 / 2851 | 1429 / 2732 | 1965 / 3678 | 50/50 | 50/50 | 25/50 |
+| 10 | direct | 1700 / 2868 | 1169 / 1651 | 1751 / 2546 | 50/50 | 50/50 | 50/50 |
+| 50 | traefik | 3820 / 7075 | 3130 / 4420 | 5485 / 6629 | 100/100 | 100/100 | 49/100 |
+| 50 | traefik-net | 5001 / 7662 | 4526 / 6516 | 7957 / 9732 | 100/100 | 100/100 | 48/100 |
+| 50 | direct | 5663 / 8387 | 5355 / 8371 | 8885 / 10295 | 100/100 | 100/100 | 100/100 |
+
+**Every clone and push succeeded through ForwardAuth at N=10 and N=50** (0 `kanboard_unreachable`;
+T17: 29 and 51). Every credential was minted. The highest level that passes through Traefik is now
+N=50, the highest measured.
+
+**Overhead** (`traefik-net` vs `direct`, same client and network):
+
+- N=10: clone p50 +22 % (p95 +65 %), push p50 +12 % (p95 +44 %).
+- N=50: Traefik was faster than direct: clone p50 -15 %, push p50 -10 %. ForwardAuth paces the
+  requests that reach Forgejo; at N=50 the direct run is the most contended for Forgejo.
+
+The < 20 % target holds at p50 for push and is just missed for clone at N=10. The p95s are not
+comparable on a host this loaded.
+
+ForwardAuth decision latency (broker audit `latency_ms`, every authz line in the run's window):
+
+| N | target | n | p50 | p95 | max | decisions |
+| --- | --- | --- | --- | --- | --- | --- |
+| 10 | traefik | 350 | 31 ms | 77 ms | 114 ms | allow/ok 250, deny/no_principal 100 |
+| 10 | traefik-net | 350 | 33 ms | 81 ms | 182 ms | allow/ok 250, deny/no_principal 100 |
+| 50 | traefik | 700 | 40 ms | 196 ms | 379 ms | allow/ok 500, deny/no_principal 200 |
+| 50 | traefik-net | 700 | 40 ms | 156 ms | 237 ms | allow/ok 500, deny/no_principal 200 |
+
+p95 < 50 ms fails at N=10 and N=50 on this host. Every authz call now reaches Kanboard and returns
+a full answer (no early deny), and Kanboard is the dev image with five php-fpm workers on a
+saturated host. The `no_principal` lines are git's credential-less first request: two per agent,
+exactly as expected.
+
+RAM peaks (MiB, highest over the three targets): Forgejo 496 (N=10) and 1279 (N=50; T17: 1115
+direct); Forgejo's Postgres 136 / 187; Traefik 34 / 50; broker 12 / 11; kb-suite 45 / 60. Authentik
+stayed flat (server about 390-400, worker about 265-280, db 66-78).
+
+After the run, `load.sh teardown 50` removed load-a1..50 from project 28. The users stay, as in
+Task 17.
