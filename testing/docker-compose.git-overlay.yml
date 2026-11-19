@@ -68,6 +68,9 @@ services:
   broker:
     build:
       context: ../../kanboard-git-broker
+      # Dev stack only (ruling F9): the cargo feature behind BROKER_FAULT_SYNC_ONCE.
+      args:
+        CARGO_FEATURES: fault-injection
     image: kanboard-git-broker:dev
     container_name: kb-git-broker
     restart: unless-stopped
@@ -79,6 +82,9 @@ services:
     environment:
       # Pulls githost/state (HMAC-signed) every BROKER_RECONCILE_SECS (default 30).
       KANBOARD_URL: http://kb-suite
+      # Empty normally. Scenario step 9 recreates the broker with 1: the next nudge sync fails
+      # once (500) and the reconcile loop must repair the drift.
+      BROKER_FAULT_SYNC_ONCE: ${BROKER_FAULT_SYNC_ONCE:-}
     volumes:
       # SQLite store (principals, tokens) and the JSONL audit log.
       - kb-git-broker-data:/var/lib/broker

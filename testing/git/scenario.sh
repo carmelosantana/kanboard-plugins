@@ -172,7 +172,7 @@ step_preflight() {
 
 WORK=""
 cleanup_work() { [[ -n "$WORK" && -d "$WORK" ]] && rm -rf "$WORK"; }
-on_exit() { restore_membership; cleanup_work; }
+on_exit() { restore_membership; restore_member9; disarm_fault; cleanup_work; }
 trap on_exit EXIT
 
 need_creds() {
@@ -1810,6 +1810,123 @@ if rows:
   done
 }
 
+# ---------------------------------------------------------------------------------------------
+# Step 9: drift repair. The broker image the overlay builds has the cargo feature
+# fault-injection (dev only, ruling F9); started with BROKER_FAULT_SYNC_ONCE=1 it fails the next
+# nudge sync with a 500 before it touches Forgejo, once, then syncs normally. The step recreates
+# the broker with the flag, removes a2 from the project (the plugin nudges, the nudge fails, so
+# Forgejo still has a2 in `members`), and expects the reconcile loop to repair it within one tick
+# (BROKER_RECONCILE_SECS, 30 s). Then it re-adds a2 (a normal nudge: the flag cleared) and
+# recreates the broker without the flag, also from the EXIT trap.
+
+RECONCILE_SECS="${RECONCILE_SECS:-30}"
+FAULT_ARMED=""
+REMOVED9_ROLE=""
+REMOVED9_ID=""
+
+broker_health() {
+  docker exec "$KANBOARD_CONTAINER" curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://broker:8080/healthz 2>/dev/null
+}
+broker_up() { [[ "$(broker_health)" == 200 ]] && echo yes || echo no; }
+
+# Recreates the broker container with BROKER_FAULT_SYNC_ONCE=<1|empty>; waits for /healthz.
+broker_recreate() { # broker_recreate <flag>
+  BROKER_FAULT_SYNC_ONCE="$1" bash "$HERE/compose.sh" up -d --no-deps broker >/dev/null 2>&1
+  wait_yes 60 broker_up >/dev/null
+}
+
+disarm_fault() {
+  [[ -z "$FAULT_ARMED" ]] && return 0
+  FAULT_ARMED=""
+  broker_recreate ""
+}
+
+restore_member9() {
+  [[ -z "$REMOVED9_ROLE" ]] && return 0
+  rpc_admin addProjectUser \
+    "{\"project_id\":$PROJECT_ID,\"user_id\":$REMOVED9_ID,\"role\":\"$REMOVED9_ROLE\"}" >/dev/null
+  REMOVED9_ROLE=""
+}
+
+# Every audit line since <epoch> with verb <verb> and target <target>: "<epoch> <status>" each.
+audit_lines_for() { # audit_lines_for <since-epoch> <verb> <target>
+  docker cp "$BROKER_CONTAINER:/var/lib/broker/audit" - 2>/dev/null | tar -xO 2>/dev/null |
+    python3 -I -c '
+import json,sys,datetime
+since,verb,target=int(sys.argv[1]),sys.argv[2],sys.argv[3]
+for l in sys.stdin:
+    try: e=json.loads(l)
+    except ValueError: continue
+    ts=int(datetime.datetime.strptime(e["ts"],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp())
+    if e.get("verb")==verb and e.get("target")==target and ts>=since: print(ts, e["status"])' "$1" "$2" "$3"
+}
+# "yes" once a nudge line for the project has been written since <epoch>.
+nudge_logged() { [[ -n "$(audit_lines_for "$1" nudge "project_id=$PROJECT_ID")" ]] && echo yes || echo no; }
+reconcile_logged() { [[ -n "$(audit_lines_for "$1" sync "project_id=${PROJECT_ID}&trigger=reconcile")" ]] && echo yes || echo no; }
+not_in_team() { [[ "$(in_team "$1" "$2")" == no ]] && echo yes || echo no; }
+
+step_9() {
+  echo "9: a failed sync (broker 500 once, BROKER_FAULT_SYNC_ONCE) leaves drift; the reconcile loop repairs it within one ${RECONCILE_SECS} s tick"
+  need_creds || { check "credentials and helper present" yes no; return; }
+  ensure_reviewers || { check "agents r1 and a2 in the project and its teams" yes no; return; }
+  local a2="$OTHER_AGENT_USERNAME" id role since t_fail t_fix waited lines n
+  id="${AGENT_IDS[$a2]}"
+  check "a2 (${a2}) is in team members before the change" yes "$(in_team members "$a2")"
+
+  echo "  \$ BROKER_FAULT_SYNC_ONCE=1 compose.sh up -d --no-deps broker"
+  since="$(date +%s)"
+  FAULT_ARMED=1
+  broker_recreate 1
+  check "the broker is back up with the flag" yes "$(broker_up)"
+  check "the broker says the fault is armed (feature fault-injection)" yes \
+    "$(docker logs --since 2m "$BROKER_CONTAINER" 2>&1 | grep -q 'fault injection armed' && echo yes || echo no)"
+
+  # The loop's first sweep starts with the broker; let it pass project ${PROJECT_ID} first, or
+  # it would pull the change itself and there would be no drift to repair.
+  check "the broker's start-up sweep has synced project ${PROJECT_ID}" yes \
+    "$([[ "$(wait_yes 60 reconcile_logged "$since")" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+
+  role="$(rpc_admin getProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$id}" | json_get 'd["result"]')"
+  [[ "$role" == project-* ]] || { check "a2 is a direct project member" yes "no ($role)"; return; }
+  since="$(date +%s)"
+  REMOVED9_ROLE="$role"
+  REMOVED9_ID="$id"
+  echo "  \$ removeProjectUser(${PROJECT_ID}, ${id}): $(rpc_admin removeProjectUser "{\"project_id\":$PROJECT_ID,\"user_id\":$id}")"
+  wait_yes 20 nudge_logged "$since" >/dev/null
+  lines="$(audit_lines_for "$since" nudge "project_id=$PROJECT_ID")"
+  echo "  audit nudge lines: ${lines//$'\n'/; }"
+  check "audit: the nudge's sync failed with 500 (fault injected)" 500 "$(head -1 <<<"$lines" | cut -d' ' -f2)"
+  check "audit: sync project_id=${PROJECT_ID}&trigger=nudge 500" yes \
+    "$(grep -q ' 500$' <<<"$(audit_lines_for "$since" sync "project_id=${PROJECT_ID}&trigger=nudge")" && echo yes || echo no)"
+  t_fail="$(date +%s)"
+  check "drift: Forgejo still has a2 in members after the failed sync" yes "$(in_team members "$a2")"
+
+  waited="$(wait_yes $((RECONCILE_SECS + 15)) not_in_team members "$a2")"
+  t_fix="$(date +%s)"
+  echo "  drift repaired $((t_fix - t_fail)) s after the failed sync (poll every 2 s)"
+  check "the reconcile loop removed a2 from members within one tick (<= ${RECONCILE_SECS} s + 5 s sweep)" yes \
+    "$([[ "$waited" =~ ^[0-9]+$ ]] && ((t_fix - t_fail <= RECONCILE_SECS + 5)) && echo yes || echo "no ($waited)")"
+  n="$(audit_lines_for "$t_fail" sync "project_id=${PROJECT_ID}&trigger=reconcile" | awk '$2 == 200' | wc -l)"
+  check "audit: a reconcile sync of project ${PROJECT_ID} answered 200 after the fault" yes "$( ((n >= 1)) && echo yes || echo "no ($n)")"
+  echo "  DRIFT|$((t_fix - t_fail))"
+
+  echo "  \$ addProjectUser(${PROJECT_ID}, ${id}, ${role})   (the flag has cleared: a normal nudge)"
+  since="$(date +%s)"
+  restore_member9
+  waited="$(wait_yes 15 in_team members "$a2")"
+  check "the nudge after the fault syncs again: a2 back in members within 15 s" yes \
+    "$([[ "$waited" =~ ^[0-9]+$ ]] && echo yes || echo "no ($waited)")"
+  wait_yes 15 nudge_logged "$since" >/dev/null
+  check "audit: that nudge answered 200" yes \
+    "$(grep -q ' 200$' <<<"$(audit_lines_for "$since" nudge "project_id=$PROJECT_ID")" && echo yes || echo no)"
+
+  echo "  \$ compose.sh up -d --no-deps broker   (without the flag)"
+  disarm_fault
+  check "the broker is back up without the flag" yes "$(broker_up)"
+  check "BROKER_FAULT_SYNC_ONCE is empty in the broker container" "" \
+    "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$BROKER_CONTAINER" | sed -n 's/^BROKER_FAULT_SYNC_ONCE=//p')"
+}
+
 # Dispatch table, in run order for `all`: <name> <function> <description>. The spec's numeric
 # step ids only (ruling F10).
 STEPS=(
@@ -1824,6 +1941,7 @@ STEPS=(
   "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"
   "7         step_7         removeProjectUser: next fetch denied; re-add; closeTask: token dead (token_revoked/task_closed)"
   "8         step_8         docker pause kb-suite: fetch denied (kanboard_unreachable); unpause: allowed"
+  "9         step_9         BROKER_FAULT_SYNC_ONCE: removing a2 fails its nudge sync (500), Forgejo drifts; the reconcile loop repairs it within one 30 s tick"
   # Not a numbered spec step: the spec's sequencing exit for identity (Task 13).
   "identity  step_identity  Authentik OIDC: Kanboard oauth2_user_id = sub; Forgejo login lands in the pre-provisioned user; no password web login"
 )
