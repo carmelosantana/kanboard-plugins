@@ -528,7 +528,50 @@ step_5a() {
       -d "{\"tag_name\":\"${tag}\",\"target\":\"main\"}")"; [[ "$c" == 2* ]] && echo "yes ($c)" || echo no)"
   check "  ... the tag was not created" "" \
     "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "refs/tags/${tag}" 2>/dev/null)"
+  merge_into_other_prefix
   show_audit "$CORE_TASK" "$since"
+}
+
+# Final review I1: the agent cannot write into another agent's prefix through a PR merge either.
+# a2 makes agent/<a2>/scenario-5a-target-...; the agent opens a PR into it from its own branch and
+# merges it: refused (the rule's merge allowlist is a2 alone), and a2's branch does not move.
+merge_into_other_prefix() {
+  local ts target inject a2 n out before i
+  ensure_reviewers || { check "setup: a2 (${OTHER_AGENT_USERNAME}) is a project agent" yes no; return 1; }
+  a2="$(fj_login_of "$OTHER_AGENT_USERNAME")"
+  ts="$(date +%Y%m%d%H%M%S)-$$"
+  target="agent/${a2}/scenario-5a-target-${ts}"
+  inject="agent/${FJ_USER}/scenario-5a-inject-${ts}"
+  agent_hdr "$OTHER_AGENT_USERNAME" "${AGENT_TASKS[$OTHER_AGENT_USERNAME]}" "$WORK/hdr.a2"
+  agent_hdr "$AGENT_USERNAME" "$CORE_TASK" "$WORK/hdr.a1"
+  new_branch_file() { # new_branch_file <hdr> <branch> <path>
+    api "$1" POST "/repos/${REPO}/contents" "$(python3 -I -c '
+import base64,json,sys
+print(json.dumps({"branch": "main", "new_branch": sys.argv[1], "message": "scenario 5a: " + sys.argv[2],
+  "files": [{"operation": "create", "path": sys.argv[2], "content": base64.b64encode(sys.argv[1].encode()).decode()}]}))' "$2" "$3")"
+  }
+  check "a2 makes its branch ${target%-*}... (through Traefik)" 201 \
+    "$(code_of "$(new_branch_file "$WORK/hdr.a2" "$target" "scenario/5a-target-${ts}.txt")")"
+  check "the agent makes its branch ${inject%-*}..." 201 \
+    "$(code_of "$(new_branch_file "$WORK/hdr.a1" "$inject" "scenario/5a-inject-${ts}.txt")")"
+  before="$(fj_api "/api/v1/repos/${REPO}/branches/$(urlencode "$target")" | json_get 'd["commit"]["id"]')"
+  out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/pulls" "$(python3 -I -c '
+import json,sys; print(json.dumps({"head": sys.argv[1], "base": sys.argv[2], "title": "scenario 5a: into another prefix"}))' "$inject" "$target")")"
+  check "the agent opens a PR into a2's branch" 201 "$(code_of "$out")"
+  n="$(body_of "$out" | json_get 'd["number"]')"
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  # Right after opening, Forgejo may still be checking the PR ("try again later").
+  for i in $(seq 1 15); do
+    out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/pulls/${n}/merge" '{"Do":"merge"}')"
+    [[ "$(body_of "$out")" == *"again later"* ]] || break
+    sleep 1
+  done
+  echo "    merge into ${target}: $(code_of "$out") $(body_of "$out" | json_get 'd.get("message","")' | head -c 120)"
+  check "  ... and its merge is refused (405)" 405 "$(code_of "$out")"
+  check "  ... a2's branch did not move" "$before" \
+    "$(fj_api "/api/v1/repos/${REPO}/branches/$(urlencode "$target")" | json_get 'd["commit"]["id"]')"
+  api "$WORK/hdr.a1" PATCH "/repos/${REPO}/pulls/${n}" '{"state":"closed"}' >/dev/null
+  rm -f "$WORK/hdr.a2"
 }
 
 # Step 7 removes the agent from the project; this puts it back, from the step or the EXIT trap.
@@ -1382,6 +1425,62 @@ print("yes" if ok("/reviews") and ok("/merge") else "no")')"
   check "  ... merged by r1" "${REVIEWER_USERNAME}" "$(pr_field "$n" '(d.get("merged_by") or {}).get("login","")')"
   t="$(wait_yes 60 panel_is "$CORE_TASK" "$branch" githost_pr_state merged)"
   check "task panel: PR #${n} shows merged on task ${CORE_TASK} (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  stale_flow
+}
+
+pr_head_is() { [[ "$(pr_head "$1")" == "$2" ]] && echo yes || echo no; } # pr_head_is <n> <sha>
+
+# Final review C1: an approval counts only for the head it approved. Head X adds package.json
+# (high risk), so the risk gate holds it while r1 schedules auto-merge and approves X. The agent
+# then pushes Y, which drops package.json and adds a file r1 never saw: Y's net change is low
+# risk, so the gate and CI go green on Y. The PR must stay open (main dismisses stale approvals,
+# and the broker's restore needs an approval of the current head); the agent's own merge is
+# refused; r1's approval of Y merges it.
+# Y must add something new: Forgejo 15 dismisses an approval only when the new head differs, on
+# some path, from both the approved head and the base. A push that only drops part of the
+# approved change keeps the approval (seen live on PR #141, see the P1 findings).
+stale_flow() {
+  local clone="clone-3s" branch n x y out t
+  echo "  3 (stale approval): r1 approves head X, the agent pushes Y, Y must not merge on that approval"
+  fresh_clone "$CORE_TASK" "$clone" || { check "stale: clone main" yes no; return 1; }
+  branch="agent/${FJ_USER}/scenario-3s-$(date +%Y%m%d%H%M%S)-$$"
+  git -C "$WORK/$clone" checkout --quiet -b "$branch"
+  mkdir -p "$WORK/$clone/scenario"
+  printf 'stale %s\n' "$branch" >"$WORK/$clone/scenario/step3s-$(date +%s%N).txt"
+  printf '{"name": "scenario-3s"}\n' >"$WORK/$clone/package.json"
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario 3s: X (package.json)" >/dev/null 2>&1
+  n="$(push_and_open "$WORK/$clone" "$branch" "scenario 3s: stale approval")"
+  check "stale: agent opens a PR whose head X adds package.json" yes "$([[ "$n" =~ ^[0-9]+$ ]] && echo yes || echo "no ($n)")"
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  x="$(pr_head "$n")"
+  t="$(wait_yes 60 status_is "$x" "$RISK_GATE" pending)"
+  check "stale: ${RISK_GATE} holds X (pending, ${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  out="$(r1_approve_and_schedule "$n")"
+  check "stale: r1 schedules auto-merge and approves X" "approve=200 schedule=ok" "$out"
+  git -C "$WORK/$clone" rm --quiet package.json
+  printf 'not reviewed %s\n' "$branch" >"$WORK/$clone/scenario/step3s-y-$(date +%s%N).txt"
+  git -C "$WORK/$clone" add -A
+  git_helper "$CORE_TASK" -C "$WORK/$clone" commit --quiet -m "scenario 3s: Y (drop package.json, add an unreviewed file)" >/dev/null 2>&1
+  out="$(run_git git_helper "$CORE_TASK" -C "$WORK/$clone" push --quiet origin "HEAD:refs/heads/$branch")"
+  check "stale: the agent pushes Y after the approval" exit=0 "$(last_exit "$out")"
+  y="$(git -C "$WORK/$clone" rev-parse HEAD)"
+  wait_yes 60 pr_head_is "$n" "$y" >/dev/null
+  echo "  PR #${n}: X ${x:0:7} approved, head now Y ${y:0:7}"
+  t="$(wait_yes 60 status_is "$y" "$RISK_GATE" success)"
+  check "stale: ${RISK_GATE} is success on Y (net change low risk, ${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  t="$(wait_yes "$GATE_WAIT" status_is "$y" "$CI_PR_CONTEXT" success)"
+  check "stale: CI is green on Y (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  # Longer than the broker's restore grace (15 s) plus one reconcile period (30 s).
+  sleep 50
+  check "stale: with CI and the gate green on Y and only r1's approval of X, the PR stays open" no "$(pr_merged "$n")"
+  out="$(api "$WORK/hdr.a1" POST "/repos/${REPO}/pulls/${n}/merge" '{"Do":"squash"}')"
+  echo "    merge as the author: $(code_of "$out") $(body_of "$out" | json_get 'd.get("message","")' | head -c 120)"
+  check "stale: the author's own merge is refused (405) and the PR stays open" "405 no" "$(code_of "$out") $(pr_merged "$n")"
+  out="$(api "$WORK/hdr.r1" POST "/repos/${REPO}/pulls/${n}/reviews" '{"event":"APPROVED","body":"r1: Y looks good"}')"
+  check "stale: r1 approves Y" 200 "$(code_of "$out")"
+  t="$(wait_yes 120 pr_merged "$n")"
+  check "stale: with r1's approval of Y the PR merges (${t} s)" yes "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 }
 
 step_4() {
@@ -2082,9 +2181,9 @@ STEPS=(
   "preflight step_preflight stack invariants: no Forgejo port, every repo route behind ForwardAuth"
   "1         step_1         the agent claims an open task; git-credential-kanboard get prints username, password, expiry"
   "2         step_2         clone through Traefik with the helper, branch agent/<login>/scenario-<ts>, commit, push accepted"
-  "3         step_3         low-risk PR on agent/<login>/<task>-...: CI green, risk gate success, task panel set; a2's approval does not count; r1 approves + auto-merge -> merged (panel: merged)"
+  "3         step_3         low-risk PR on agent/<login>/<task>-...: CI green, risk gate success, task panel set; a2's approval does not count; r1 approves + auto-merge -> merged (panel: merged); a push after r1's approval does not merge until r1 approves it"
   "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
-  "5a        step_5a        push to another agent's prefix, to main and to tags denied by branch/tag protection (authz ok); other refs hidden; status post 403"
+  "5a        step_5a        push to another agent's prefix, to main and to tags denied by branch/tag protection (authz ok); other refs hidden; status post 403; a PR merge into another agent's prefix refused"
   "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
   "5d        step_5d        agent-branch workflow dumping all secrets/vars sees no deploy secret (fallback: deploy repo only); job cgroup CPU 2 / 4 GiB / 1024 pids; no internet, allowlist proxy and Traefik only; per option in CI_OPTIONS"
   "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"
