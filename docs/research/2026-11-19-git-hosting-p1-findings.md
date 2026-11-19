@@ -10,16 +10,17 @@ the :8081 dev stack. Every number below was measured there. The raw tables are i
 **Verdict.** The chosen topology works. Kanboard project membership is the only authority for git
 access, and it is checked live on every git and repo-API request. Revocation takes effect on the
 next git operation, in 31-63 ms. Agents get 1-hour tokens limited to their project's repos. Their
-pushes are confined to `agent/<login>/**`, and since Task 18 also kept off every tag. Merges to
+branch pushes are confined to `agent/<login>/**`; since Task 18 they are also kept off every tag and
+every ref outside branches and tags. Merges to
 `main` need CI, a reviewer agent and, for high-risk paths, a human. The second-model security review
-found six High issues. Four are fixed, test-first (GH-01, 02, 05, 06). GH-03 is fixed for tags,
-but notes, custom refs and AGit pushes stay open. GH-04 affects only the dev runner and has no
+found six High issues. Five are fixed, test-first (GH-01, 02, 03, 05, 06): GH-03 by tag protection
+and, for notes, custom refs and AGit, by Forgejo configuration. GH-04 affects only the dev runner and has no
 production counterpart. Five Medium issues were found: four are fixed, and the fifth (GH-10) is a
 production network requirement, recorded below. The one Low issue is fixed. The worst
 operational defect P1 found was the ForwardAuth deny storm under load, caused by the Kanboard
 session write. It is fixed: at 50 concurrent agents every clone and push now succeeds through
-ForwardAuth. Three things are left for the MVP spec. Refs outside branches and tags are still
-writable. ForwardAuth does not see web UI cookie sessions. The production network must be
+ForwardAuth. Three things are left for the MVP spec. Refs outside branches and tags are refused
+for humans too (AGit is off). ForwardAuth does not see web UI cookie sessions. The production network must be
 segmented.
 
 ## Metrics
@@ -153,7 +154,7 @@ fix has a failing test first.
 | --- | --- | --- | --- | --- |
 | GH-01 | High | Broker adopts any pre-existing `kb-<identifier>` org, and unrecorded repos in it | Yes (unit tests: sync of a pre-seeded org answered 200) | **Fixed** broker `8a92775`: `owned_orgs` records each org the broker creates, with its Forgejo id. A foreign org, another project's org, or a same-name org with a new id is refused (409) before any write. A repo with no row is never adopted. |
 | GH-02 | High | Repo recorded before branch protection, so a protection failure leaves a known, unprotected repo | Yes (unit test: injected protection failure left the repo in ForwardAuth's map) | **Fixed** broker `8a92775`: rows are `pending` from before the create until protection and webhook succeed. Pending is `unknown_repo` to ForwardAuth and invisible to minting. A retry or the next sync activates it. |
-| GH-03 | High | Branch rules do not cover tags or other refs | Yes, live: an agent pushed `refs/tags/x`, `refs/tags/release/x`, `refs/notes/*`, `refs/kb-probe/*`, and an AGit push to `refs/for/main/<topic>` opened PR #120 | **Fixed for tags** broker `6ff3b84` (IT `b282208`) + harness `8f29237`: one tag protection `*`; its allowlist is the human writers (the admin when there are none, because Forgejo refuses an empty one). Step 5a now asserts that git tag pushes and `POST /tags` are refused. **Not fixed: notes, custom refs and AGit.** Forgejo 15 lets any writer update them. No CI ran for them, and an AGit PR still needs the `main` gate. Closing them needs a pre-receive policy: an MVP decision. |
+| GH-03 | High | Branch rules do not cover tags or other refs | Yes, live: an agent pushed `refs/tags/x`, `refs/tags/release/x`, `refs/notes/*`, `refs/kb-probe/*`, and an AGit push to `refs/for/main/<topic>` opened PR #120 | **Fixed for tags** broker `6ff3b84` (IT `b282208`) + harness `8f29237`: one tag protection `*`; its allowlist is the human writers (the admin when there are none, because Forgejo refuses an empty one). Step 5a now asserts that git tag pushes and `POST /tags` are refused. **Notes, custom refs and AGit: fixed by configuration** (review round 1), harness: `[git.config] include.path` in `forgejo/app.ini.tmpl` loads `forgejo/receive.gitconfig` (`receive.hideRefs = refs/`, `!refs/heads/`, `!refs/tags/`). git receive-pack refuses any update to a hidden ref, and Forgejo already relies on this for `refs/pull/` (its own default entry). Probed live: before, the agent pushed `refs/notes/x`, `refs/custom/x` and `refs/for/main/<topic>` (exit 0; the AGit push opened PR #129); after, all three are refused with "deny updating a hidden ref", while `agent/<login>/x` and a human's branch push are still accepted. Step 5a checks the three refs (RED 16/24 before, 24/24 after). Cost: it is instance-wide, so humans can no longer push notes, custom refs or AGit `refs/for/*` (a human `refs/notes/x` push was refused in the probe). P1's flow does not use them; fetching such refs is unaffected. |
 | GH-04 | High | Dev host-mode runner exposes its registration secret to jobs | Yes: `RUNNER_SECRET` is in the env of `kb-git-ci-runner`, which runs jobs in host mode as the same uid | **Not fixed: dev-only.** The runner exists for scenario steps 3, 4 and 6 (T14 ruling). The isolation options deliver the secret as a systemd credential the job never sees (T16, 5d). Production must use only isolated one-job runners. |
 | GH-05 | High | Public PHP machine routes: SQLite lock DoS and diagnostic leakage | Yes, live: each signed authz call set `KB_SID` and added a `sessions` row (210 → 211). T17 load: about 50 % `kanboard_unreachable` at N=10 and N=50 | **Fixed** GitHost `695a1dd` (the session and diagnostics fix above). Live after: no cookie, sessions unchanged. Load: N=10 50/50 and N=50 100/100 clone+push through Traefik (were 21/50 and 49/100) |
 | GH-06 | High | Bootstrap puts the admin token in process arguments | Yes: `token_status` passed it in `-H` to `docker exec` and curl | **Fixed** harness `80ac253`: sent on stdin as a curl config. `testing/git/bootstrap-argv-test.sh` runs the helpers against a shim `docker` with a sentinel token. RED: it found the token in argv. GREEN: argv clean, stdin carries it. |
@@ -169,10 +170,12 @@ Also from the Task 17 carry-overs. `BROKER_FAULT_SYNC_ONCE` now names the projec
 
 ## Open decisions for the MVP spec
 
-1. **Refs outside branches and tags.** Notes, custom namespaces and AGit `refs/for/*` are writable
-   by any project writer. Choose between: accept them (no consumer, and the `main` gate still
-   applies), a pre-receive hook asking the broker (needs Forgejo git hooks, which is a trust
-   trade-off the spec named), or a Forgejo patch or configuration to refuse them.
+1. **Refs outside branches and tags.** P1 refuses them with configuration
+   (`receive.hideRefs`, GH-03), for every pusher. The MVP decides whether that is the policy:
+   keep it (no AGit, no pushed notes for humans either), or, if humans need AGit or notes, scope
+   the refusal to agents with a pre-receive hook asking the broker (needs Forgejo git hooks, the
+   trust trade-off the spec named). The production `app.ini` must carry the same `[git.config]`
+   include.
 2. **Web UI revocation.** Adopt the offboarding path above, or put cookie sessions behind
    ForwardAuth. Either way, verify that `prohibit_login` ends an existing session.
 3. **Network segmentation** (GH-10) in the Dokploy deployment, as above.
