@@ -6,9 +6,12 @@
  *
  * Usage: php testing/ci-requires.php <path/to/plugin.json> [directory-feed-url-or-path]
  *
- * Each required plugin is resolved through the ModMenu directory feed: its `homepage` is the
- * repository and the tag in its `download` URL is the released version users install. Exits 1
- * when a dependency is not in the feed, or the listed release is older than `min_version`.
+ * Each `requires` and `recommends` plugin is resolved through the ModMenu directory feed: its
+ * `homepage` is the repository and the tag in its `download` URL is the released version users
+ * install. Recommended plugins are checked out too, because tests may load their classes (the
+ * AI features stub AiConnector's ProviderRegistry). Exits 1 when a required plugin is not in the
+ * feed or its listed release is older than `min_version`; the same problem with a recommended
+ * plugin only prints a warning and skips it.
  */
 
 declare(strict_types=1);
@@ -24,8 +27,13 @@ if ($pluginJson === '' || !is_file($pluginJson)) {
 }
 
 $plugin = json_decode((string) file_get_contents($pluginJson), true, flags: JSON_THROW_ON_ERROR);
-$requires = $plugin['requires'] ?? [];
-if ($requires === []) {
+$deps = [];
+foreach (['requires' => true, 'recommends' => false] as $key => $hard) {
+    foreach ($plugin[$key] ?? [] as $dep) {
+        $deps[$dep['plugin']] ??= $dep + ['hard' => $hard];
+    }
+}
+if ($deps === []) {
     exit(0);
 }
 
@@ -36,24 +44,28 @@ foreach ($feed['plugins'] ?? $feed as $entry) {
 }
 
 $status = 0;
-foreach ($requires as $dep) {
+// fail(): a required plugin fails the run; a recommended one is a warning and is skipped.
+$fail = static function (array $dep, string $message) use (&$status): void {
+    fwrite(STDERR, ($dep['hard'] ? '' : 'warning (recommends, skipped): ') . $message . "\n");
+    if ($dep['hard']) {
+        $status = 1;
+    }
+};
+foreach ($deps as $dep) {
     $name = $dep['plugin'];
     $entry = $listed[$name] ?? null;
     if ($entry === null) {
-        fwrite(STDERR, "{$name}: not listed in the directory feed\n");
-        $status = 1;
+        $fail($dep, "{$name}: not listed in the directory feed");
         continue;
     }
     if (!preg_match('#/releases/download/(v[^/]+)/#', $entry['download'], $m)) {
-        fwrite(STDERR, "{$name}: no release tag in download URL {$entry['download']}\n");
-        $status = 1;
+        $fail($dep, "{$name}: no release tag in download URL {$entry['download']}");
         continue;
     }
     $tag = $m[1];
     $min = (string) ($dep['min_version'] ?? '0');
     if (version_compare(ltrim($tag, 'v'), $min, '<')) {
-        fwrite(STDERR, "{$name}: listed release {$tag} is older than min_version {$min}\n");
-        $status = 1;
+        $fail($dep, "{$name}: listed release {$tag} is older than min_version {$min}");
         continue;
     }
     echo $name, ' ', rtrim($entry['homepage'], '/'), '.git ', $tag, "\n";

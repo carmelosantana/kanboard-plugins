@@ -186,7 +186,9 @@ composer install -d testing/kanboard-src
 ```
 
 `testing/kanboard-src/` is gitignored — it is large and not part of this repo.
-Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically by the runner.
+The runner links the plugins into a temp directory per run. It also creates any missing link in
+`testing/kanboard-src/plugins/`, because Kanboard's `AssetHelper` stats plugin assets there; it
+never repoints an existing link.
 
 ### Running a plugin's tests
 
@@ -195,14 +197,31 @@ Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically b
 ./testing/run-plugin-tests.sh ShadcnTheme   # one suite, PHPUnit output as-is
 ./testing/run-plugin-tests.sh --all         # every suite, then a pass/fail table
 ./testing/run-plugin-tests.sh --list        # the plugins it found
+./testing/run-plugin-tests.sh Agents/.claude/worktrees/my-branch   # a checkout at a path
 ```
 
 The script:
 1. Finds the plugins: every directory beside `testing/` that holds a `plugin.json`.
 2. Verifies `vendor/bin/phpunit` is present in `kanboard-src/`.
-3. Symlinks each plugin into `kanboard-src/plugins/` if missing, and writes a bootstrap that
-   registers every plugin's PSR-4 namespace.
-4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/units.sqlite.xml` (in-memory SQLite).
+3. Links each plugin into a temp plugins directory for this run (Kanboard reads `PLUGINS_DIR` from
+   the environment), and writes a bootstrap that registers every plugin's PSR-4 namespace.
+4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/plugin-units.sqlite.xml`: a copy
+   of Kanboard's `tests/units.sqlite.xml` (in-memory SQLite) without `stopOnError` and
+   `stopOnFailure`. Kanboard's own config stops at the first failure, which hid the real test count
+   (one suite showed 20 tests), so every run now finishes and prints the full count.
+
+**Testing a worktree or another checkout.** Pass a path instead of a name. The plugin name comes
+from the `namespace Kanboard\Plugin\X;` line in its `Plugin.php`, and that name points at your
+path in this run's plugins directory, so you never switch branches in a shared plugin checkout to
+test a change. One limit: asset timestamps still come from `kanboard-src/plugins/<Name>`, so a test
+that renders a CSS or JS file new to your worktree fails until that file exists there too. The :8081 stack still mounts `../<Plugin>`, so a live
+check of a worktree needs its own overlay (not provided yet).
+
+**Running from a harness worktree.** In a linked worktree of this repo, the runner falls back to
+the main checkout's `testing/kanboard-src/` and plugin checkouts, since both are gitignored.
+
+`testing/run-plugin-tests.test.sh` covers these cases against fixture plugins and a throwaway
+Kanboard tree; run it after changing the runner.
 
 `--all` runs every suite to completion even when one fails, writes one log per plugin to
 `testing/kanboard-src/test-logs/`, prints a Markdown table (plugin, PASS/FAIL/SKIP, PHPUnit's

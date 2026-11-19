@@ -53,7 +53,7 @@ See [`testing/README.md`](testing/README.md) for the stack, seeding and the test
 ## CI
 
 `.github/workflows/plugin-test.yml` is a reusable workflow (`workflow_call`) that checks out
-Kanboard v1.2.47, installs its dev dependencies, checks out the plugins named in `requires`, and runs
+Kanboard v1.2.47, installs its dev dependencies, checks out the plugins named in `requires` and `recommends` (tests may load a recommended plugin's classes), and runs
 the plugin's PHPUnit suite with `testing/run-plugin-tests.sh`. `.github/workflows/plugin-release.yml`
 checks the tag against `plugin.json` (and any version still hard-coded in `Plugin.php`), then builds
 and publishes the release zip. Each plugin repo calls them from two short files,
@@ -61,6 +61,10 @@ and publishes the release zip. Each plugin repo calls them from two short files,
 `release.yml` (tags: test, then release). `scripts/sync-workflows.sh <PluginDir>...` writes both
 into plugin checkouts, pinned to a harness commit on `origin/master`; third-party actions are
 pinned by SHA too.
+
+**Push explicitly.** Name the remote and the ref every time: `git push origin <branch>`,
+`git push origin main`, `git push origin vX.Y.Z`. A bare `git push` once published a feature branch
+by accident, and this harness's local `master` often carries other sessions' unpushed commits.
 
 Plugins keep their version in one place: `getPluginVersion()` reads `plugin.json` (Kanboard core
 never reads that file itself, so it is free to be the source).

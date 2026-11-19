@@ -6,7 +6,7 @@
 #       uses: carmelosantana/kanboard-plugins/.github/workflows/plugin-test.yml@<harness-sha>
 #
 # The plugin's directory name comes from its Plugin.php namespace. Plugins in its
-# plugin.json `requires` are checked out at the release the ModMenu directory lists.
+# plugin.json `requires` and `recommends` are checked out at the release the ModMenu directory lists.
 # The test runner is testing/run-plugin-tests.sh from this repo, at the same commit as
 # this workflow, so local runs and CI share one script.
 name: plugin-test
@@ -83,7 +83,7 @@ jobs:
           mv self "plugins/$NAME"
           php harness/testing/ci-requires.php "plugins/$NAME/plugin.json" > requires.txt
           while read -r dep repo tag; do
-            echo "requires: $dep $tag"
+            echo "dependency: $dep $tag"
             git clone --quiet --depth 1 --branch "$tag" "$repo" "plugins/$dep"
           done < requires.txt
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -93,5 +93,6 @@ jobs:
           PLUGINS_ROOT: plugins
           KB_SRC: kanboard
           PLUGIN: ${{ steps.layout.outputs.name }}
-        run: |
-          KB_SRC="$PWD/$KB_SRC" harness/testing/run-plugin-tests.sh "$PLUGIN"
+        # The runner never stops at the first failure, so PHPUnit's last line is the full
+        # count; ci-phpunit.sh writes it to the job summary and keeps PHPUnit's exit status.
+        run: KB_SRC="$PWD/$KB_SRC" harness/testing/ci-phpunit.sh "$PLUGIN"
