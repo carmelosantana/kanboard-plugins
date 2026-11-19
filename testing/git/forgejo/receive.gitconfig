@@ -1,0 +1,10 @@
+# Included into Forgejo's global git config by app.ini [git.config] include.path (GH-03).
+# git receive-pack refuses an update to a hidden ref ("deny updating a hidden ref"), so pushes
+# reach only branches (held by branch protection) and tags (held by tag protection). Notes,
+# custom namespaces and AGit's refs/for/ are refused for every pusher, humans included.
+# The last matching entry wins; Forgejo's own refs/pull/ entry stays covered by refs/.
+# Fetches are unaffected (receive.hideRefs, not transfer.hideRefs).
+[receive]
+	hideRefs = refs/
+	hideRefs = !refs/heads/
+	hideRefs = !refs/tags/

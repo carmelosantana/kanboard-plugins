@@ -479,6 +479,19 @@ step_5a() {
     check "  ... the tag was not created" "" \
       "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "refs/tags/${tag}" 2>/dev/null)"
   done
+  # GH-03 (review round 1): every ref outside refs/heads/ and refs/tags/ is a hidden ref
+  # (Forgejo's receive.hideRefs, forgejo/receive.gitconfig): notes, a custom namespace and AGit's
+  # refs/for/ are refused for everyone.
+  local ref
+  for ref in "refs/notes/scenario-5a-$$" "refs/custom/scenario-5a-$$" "refs/for/main/scenario-5a-$$"; do
+    echo "  \$ git push origin HEAD:${ref}"
+    out="$(run_git git_helper "$CORE_TASK" -C "$CLONE" push origin "HEAD:${ref}")"
+    echo "$out" | grep -iE 'hidden|rejected|declined|exit=' | sed 's/^/    /'
+    check "agent push to ${ref%-*}... is denied" yes "$(denied "$out")"
+    check "  ... as a hidden ref" yes "$(grep -qi 'hidden ref' <<<"$out" && echo yes || echo no)"
+    check "  ... the ref was not created" "" \
+      "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "${ref}" 2>/dev/null)"
+  done
   # F2: an agent may not post a commit status (kanboard/risk-gate is the broker's alone).
   local cred="$WORK/cred.5a" hdr="$WORK/hdr.5a"
   helper_get "$CORE_TASK" "$cred" 2>/dev/null
@@ -2032,7 +2045,7 @@ STEPS=(
   "2         step_2         clone through Traefik with the helper, branch agent/<login>/scenario-<ts>, commit, push accepted"
   "3         step_3         low-risk PR on agent/<login>/<task>-...: CI green, risk gate success, task panel set; a2's approval does not count; r1 approves + auto-merge -> merged (panel: merged)"
   "4         step_4         a change to .forgejo/workflows/ci.yml: risk gate pending (agent cannot forge it, 403) until a humans-high-risk member approves"
-  "5a        step_5a        push to another agent's prefix, to main and to tags denied by branch/tag protection (authz ok); status post 403"
+  "5a        step_5a        push to another agent's prefix, to main and to tags denied by branch/tag protection (authz ok); other refs hidden; status post 403"
   "5c        step_5c        force-push to main denied by branch protection (authz ok); main unchanged"
   "5d        step_5d        agent-branch workflow dumping all secrets/vars sees no deploy secret (fallback: deploy repo only); job cgroup CPU 2 / 4 GiB / 1024 pids; no internet, allowlist proxy and Traefik only; per option in CI_OPTIONS"
   "6         step_6         break main (ci/red): CI red on main -> broker opens revert/<sha7> (auto-revert, low risk) and comments it on the task -> r1 approves -> merged, main green; one PR and one comment per sha"

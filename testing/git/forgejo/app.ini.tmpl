@@ -88,6 +88,10 @@ ALLOWED_HOST_LIST = broker
 ; The dev runner (compose profile ci-dev) reaches Forgejo only through Traefik.
 ENABLED = true
 
+[git.config]
+; GH-03: pushes reach only refs/heads/ and refs/tags/ (see that file).
+include.path = /etc/forgejo/receive.gitconfig
+
 [mailer]
 ENABLED = false
 

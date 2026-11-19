@@ -62,6 +62,7 @@ services:
         condition: service_healthy
     volumes:
       - ./git/forgejo/app.ini.tmpl:/etc/templates/app.ini:ro
+      - ./git/forgejo/receive.gitconfig:/etc/forgejo/receive.gitconfig:ro
       - kb-git-forgejo-data:/var/lib/gitea
     # No ports: Forgejo is reachable only through Traefik.
 

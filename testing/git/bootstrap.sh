@@ -114,7 +114,7 @@ wait_forgejo || { echo "bootstrap: Forgejo is not healthy" >&2; exit 1; }
 # the rendered app.ini; otherwise re-render (Forgejo regenerates its internal secrets; access
 # tokens and auth sources live in the database and are kept).
 RENDERED=/var/lib/gitea/custom/conf/app.ini
-missing="$(grep -E '^[A-Z_]+ = [^$]*$' "$HERE/forgejo/app.ini.tmpl" | while IFS= read -r line; do
+missing="$(grep -E '^[A-Za-z_.]+ = [^$]*$' "$HERE/forgejo/app.ini.tmpl" | while IFS= read -r line; do
   docker exec "$FORGEJO_CONTAINER" grep -qxF "$line" "$RENDERED" || echo "$line"
 done)"
 if [[ -n "$missing" ]]; then

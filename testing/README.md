@@ -201,7 +201,7 @@ list`; `all` runs each once). Besides `preflight`, the live steps act as agent
 | `2` | clone through Traefik, branch `agent/<login>/scenario-<ts>`, commit, push accepted |
 | `3` | a low-risk PR: CI green on the dev runner, `kanboard/risk-gate` success from the broker; a2's approval (not in `git-reviewers`) does not count (merging now is 405); r1 schedules auto-merge, then approves, through Traefik (in that order: Forgejo checks a scheduled auto-merge only on a later status or review); merged on green |
 | `4` | a change to `.forgejo/workflows/ci.yml`: the gate stays `pending` with CI green and r1's approval, an agent's forged `kanboard/risk-gate` post is 403 `kanboard_deny`; a `humans-high-risk` member's approval turns it `success` and the PR merges |
-| `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; an agent status post is 403 |
+| `5a` | pushes to another agent's prefix and to `main` are refused by branch protection while the audit shows authz allowed them; tag pushes and `POST /tags` are refused; notes, custom refs and `refs/for/*` are refused as hidden refs; an agent status post is 403 |
 | `5c` | a force-push to `main` is refused by branch protection ("protected from force push") while authz allowed it; `main` does not move |
 | `6` | a PR adding `ci/red` merges green and turns `main` red; the broker opens `revert/<sha7>` (auto-revert label, low risk); r1 approves; it merges and `main` is green; one revert PR per sha |
 | `7` | `removeProjectUser`: the next fetch is denied; re-added (always, also on exit), a push to the own prefix works again; `closeTask`: the token is dead (`token_revoked`/`task_closed`) |
@@ -338,7 +338,9 @@ login lands in that user. Agents never touch Authentik.
 - **Forgejo** (`app.ini.tmpl`): `ENABLE_INTERNAL_SIGNIN = false` (no password form, for anyone;
   the admin uses the `forgejo` CLI), `ENABLE_BASIC_AUTHENTICATION = true` (the broker's token mint
   basic-auths as agents on the API), `[oauth2_client] ENABLE_AUTO_REGISTRATION = false` and
-  `ACCOUNT_LINKING = disabled`. `bootstrap.sh` re-renders `app.ini` when it lacks a template
+  `ACCOUNT_LINKING = disabled`, and `[git.config] include.path` to `forgejo/receive.gitconfig`
+  (mounted read-only): `receive.hideRefs` refuses pushes outside `refs/heads/` and `refs/tags/`
+  for everyone, AGit included (GH-03). `bootstrap.sh` re-renders `app.ini` when it lacks a template
   setting, and points the `authentik` source (same id) at Authentik with `forgejo admin auth
   update-oauth`. Traefik answers 403 on `/user/link_account_signin` and `_signup` (see below).
 - **Kanboard** gets the third-party OAuth2 plugin from `testing/git/vendor/OAuth2` (gitignored,
