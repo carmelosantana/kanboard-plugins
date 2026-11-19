@@ -195,6 +195,7 @@ Plugin symlinks into `testing/kanboard-src/plugins/` are created automatically b
 ./testing/run-plugin-tests.sh ShadcnTheme   # one suite, PHPUnit output as-is
 ./testing/run-plugin-tests.sh --all         # every suite, then a pass/fail table
 ./testing/run-plugin-tests.sh --list        # the plugins it found
+./testing/run-plugin-tests.sh Agents/.claude/worktrees/my-branch   # a checkout at a path
 ```
 
 The script:
@@ -202,7 +203,23 @@ The script:
 2. Verifies `vendor/bin/phpunit` is present in `kanboard-src/`.
 3. Symlinks each plugin into `kanboard-src/plugins/` if missing, and writes a bootstrap that
    registers every plugin's PSR-4 namespace.
-4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/units.sqlite.xml` (in-memory SQLite).
+4. Runs `vendor/bin/phpunit` from the Kanboard root with `tests/plugin-units.sqlite.xml`: a copy
+   of Kanboard's `tests/units.sqlite.xml` (in-memory SQLite) without `stopOnError` and
+   `stopOnFailure`. Kanboard's own config stops at the first failure, which hid the real test count
+   (one suite showed 20 tests), so every run now finishes and prints the full count.
+
+**Testing a worktree or another checkout.** Pass a path instead of a name. The plugin name comes
+from the `namespace Kanboard\Plugin\X;` line in its `Plugin.php`, and the run gets its own temp
+plugins directory (Kanboard reads `PLUGINS_DIR` from the environment) where that name points at
+your path. The shared `kanboard-src/plugins/` links stay as they are, so you never switch branches
+in a shared plugin checkout to test a change. The :8081 stack still mounts `../<Plugin>`, so a live
+check of a worktree needs its own overlay (not provided yet).
+
+**Running from a harness worktree.** In a linked worktree of this repo, the runner falls back to
+the main checkout's `testing/kanboard-src/` and plugin checkouts, since both are gitignored.
+
+`testing/run-plugin-tests.test.sh` covers these cases against fixture plugins and a throwaway
+Kanboard tree; run it after changing the runner.
 
 `--all` runs every suite to completion even when one fails, writes one log per plugin to
 `testing/kanboard-src/test-logs/`, prints a Markdown table (plugin, PASS/FAIL/SKIP, PHPUnit's
