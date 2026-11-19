@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–5 resolved (two risks accepted pending Carmelo, §8)
+- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–5 resolved (two risks accepted by Carmelo 2026-11-19, §8); plan approved
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -329,7 +329,7 @@ profile has no email address.
 
 ## 8. Accepted risks
 
-Recorded from the spec security review (round 5) for Carmelo's decision:
+Recorded from the spec security review (round 5); accepted by Carmelo 2026-11-19:
 - **Concurrent request during a switch.** Core's DB session handler doesn't lock, so a request still in
   flight on the admin's old session id when the switch happens can write that session back after Steward
   deleted it. The resurrected id is the admin's own pre-switch session, usable only by someone who already
