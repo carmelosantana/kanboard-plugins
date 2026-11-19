@@ -546,8 +546,15 @@ step_7() {
   # reconcile sweep (30 s), and report how long it took.
   local ok=no t0 n=0 b
   t0="$(date +%s)"
-  out="$(run_git git_helper "$task" -C "$clone" fetch)"
-  check "after re-adding, a fetch with the helper is allowed again" "exit=0" "$(last_exit "$out")"
+  # The same bound for the fetch: until the nudge's sync puts the agent back in its team, Forgejo
+  # itself still refuses it (seen once in T16 and once in T18 on the loaded shared stack).
+  while :; do
+    out="$(run_git git_helper "$task" -C "$clone" fetch)"
+    [[ "$(last_exit "$out")" == "exit=0" ]] || (($(date +%s) - t0 >= 10)) && break
+    sleep 1
+  done
+  echo "  fetch allowed again after $(($(date +%s) - t0)) s"
+  check "after re-adding, a fetch with the helper is allowed again (within 10 s)" "exit=0" "$(last_exit "$out")"
   ensure_fj_user_for "$task"
   git -C "$clone" checkout --quiet -B scenario-7 2>/dev/null
   while (($(date +%s) - t0 < 10)); do
