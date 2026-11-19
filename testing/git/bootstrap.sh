@@ -59,10 +59,12 @@ KANBOARD_URL="${KANBOARD_URL:-http://localhost:8081}"
 
 fj() { docker exec -u git "$FORGEJO_CONTAINER" forgejo "$@"; }
 
-# HTTP status of GET /api/v1/user with a token, asked from inside the Forgejo container.
+# HTTP status of GET /api/v1/user with a token, asked from inside the Forgejo container. The
+# token reaches curl on stdin (a curl config), never argv (GH-06; bootstrap-argv-test.sh).
 token_status() {
-  docker exec "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-    -H "Authorization: token $1" http://localhost:3000/api/v1/user
+  printf 'header = "Authorization: token %s"\n' "$1" |
+    docker exec -i "$FORGEJO_CONTAINER" curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - \
+      http://localhost:3000/api/v1/user
 }
 
 if grep -qE '^GITHOST_HMAC_SECRET=.{32,}$' "$HMAC_FILE" 2>/dev/null; then
