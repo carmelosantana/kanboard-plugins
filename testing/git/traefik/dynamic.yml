@@ -3,12 +3,19 @@
 # Every request to git.localhost lands on exactly one router; the highest priority wins.
 #   1100 git-link-account  /user/link_account_signin and _signup: always 403 (identity, below)
 #   1000 git-exempt        runner API, static assets, health: no ForwardAuth (spec)
-#    900 git-repo          git smart-HTTP (with or without .git), dumb-HTTP, LFS and the
-#                          token-auth web routes raw/archive/media: ForwardAuth (spec + F1)
+#    900 git-repo          git smart-HTTP (with or without .git), dumb-HTTP and the git-lfs
+#                          API (info/lfs/): ForwardAuth always, credential or not (spec + F1)
 #    800 git-api           everything else under /api/ (including /api/v1/*): ForwardAuth
 #    700 git-credentialed  any other request carrying Authorization or ?token=/?access_token=:
-#                          ForwardAuth (F1)
-#      1 git-web           the cookie-session web UI: no ForwardAuth in P1 (spec)
+#                          ForwardAuth (F1). This includes the web routes raw/, archive/ and
+#                          media/ (Raw, Download ZIP, README images and LFS files) when they
+#                          carry a credential.
+#      1 git-web           the cookie-session web UI: no ForwardAuth in P1 (spec), and raw/,
+#                          archive/, media/ without a credential (final review I3): a signed-in
+#                          browser sends only its session cookie, which Forgejo checks itself,
+#                          like every other web page; the broker's 401 would make the browser
+#                          show a Basic prompt. An anonymous caller gets Forgejo's 404 for a
+#                          private repo (scenario preflight).
 # The broker answers /authz with 200 (allow) or 403; the skeleton denies everything.
 #
 # git-link-account: Forgejo 15 shows an OIDC login with an unknown sub the "link account" page,
@@ -51,7 +58,7 @@ http:
     git-repo:
       rule: >-
         Host(`git.localhost`) && (PathRegexp(`^/[^/]+/[^/]+\.git(/|$)`)
-        || PathRegexp(`^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack|info/lfs/|HEAD$|objects/|raw/|archive/|media/)`))
+        || PathRegexp(`^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack|info/lfs/|HEAD$|objects/)`))
       priority: 900
       entryPoints: [web]
       middlewares: [broker-authz]

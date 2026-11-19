@@ -154,6 +154,19 @@ step_preflight() {
   check "GET /kb-x/r/raw/branch/main/README.md is 403" "403" \
     "$(status GET /kb-x/r/raw/branch/main/README.md "${bad[@]}")"
   check "GET /kb-x/r/archive/main.zip is 403" "403" "$(status GET /kb-x/r/archive/main.zip "${bad[@]}")"
+  check "GET /kb-x/r/media/branch/main/README.md is 403" "403" \
+    "$(status GET /kb-x/r/media/branch/main/README.md "${bad[@]}")"
+  # Final review I3: raw, archive and media go through ForwardAuth only with a credential, so a
+  # signed-in browser (session cookie only) gets no Basic prompt. Without one they fall through
+  # to Forgejo, which gives an anonymous caller nothing of a private repo (404, not the broker's
+  # challenge). Smart-HTTP stays behind ForwardAuth with or without a credential (above).
+  local p
+  for p in raw/branch/main/README.md archive/main.zip media/branch/main/README.md; do
+    check "GET /${REPO}/${p} without a credential: Forgejo's 404 (private repo), no broker challenge" "404" \
+      "$(challenge GET "/${REPO}/${p}")"
+  done
+  check "GET /${REPO}.git/info/refs?service=git-upload-pack without a credential is challenged by the broker" \
+    "401+broker" "$(challenge GET "/${REPO}.git/info/refs?service=git-upload-pack")"
   # Any credentialed request on a non-exempt path, and the rest of /api/, is checked too.
   check "GET /api/v1/user with a token is 403" "403" \
     "$(status GET /api/v1/user -H 'Authorization: token not-a-real-token')"
@@ -433,6 +446,13 @@ step_2() {
     "$(git_helper "$CORE_TASK" -C "$CLONE" ls-remote origin "refs/heads/$BRANCH" 2>/dev/null | cut -f1)"
   check "audit: the receive-pack was allowed (write, ok)" yes \
     "$(n="$(push_allows "$CORE_TASK" "$since")"; ((n >= 1)) && echo yes || echo "no ($n)")"
+  # Final review I3: a credentialed raw request is still checked by the broker, live.
+  agent_hdr "$AGENT_USERNAME" "$CORE_TASK" "$WORK/hdr.raw"
+  check "GET /${REPO}/raw/branch/main/README.md with the agent's token is 200" 200 \
+    "$(status GET "/${REPO}/raw/branch/main/README.md" -H @"$WORK/hdr.raw")"
+  check "  ... audit: the broker checked it (ok)" yes \
+    "$(has_reason ok "$(reasons_for_task "$CORE_TASK" "$since" /raw/branch/main/README.md)")"
+  rm -f "$WORK/hdr.raw"
   show_audit "$CORE_TASK" "$since"
 }
 
@@ -769,6 +789,10 @@ broker_post() { # broker_post <path> <json>
     -H "X-GitHost-Signature: $sig" --data-binary @- "http://broker:8080$1"
 }
 
+# The status of GET <path> on git.localhost with the cookies in <jar> only.
+web_code() { web "$1" -o /dev/null -w '%{http_code}' "${BASE}$2"; } # web_code <jar> <path>
+web_ok() { [[ "$(web_code "$1" "$2")" == 200 ]] && echo yes || echo no; } # web_ok <jar> <path>
+
 # The login of the Forgejo session in <jar> (from /user/settings), or nothing when signed out.
 fj_session_login() { # fj_session_login <jar>
   web "$1" "${BASE}/user/settings" | sed -n 's/.*<input name="name" value="\([^"]*\)".*/\1/p' | head -1
@@ -888,6 +912,15 @@ print(us[0]["id"], us[0]["login"]) if len(us)==1 else print("")' "${src:-0}" "$s
   n="$(fj_api "/api/v1/admin/users?source_id=${src}&login_name=$(urlencode "$sub")" |
     python3 -I -c 'import json,sys; print(sum(1 for u in json.load(sys.stdin) if u.get("login_name")==sys.argv[1]))' "$sub" 2>/dev/null)"
   check "exactly one Forgejo user is bound to the sub (no auto-created second account)" 1 "${n:-0}"
+  # Final review I3: the web UI's Raw, Download ZIP and README images/LFS (media) links work on
+  # the session cookie alone. They carry no credential, so they reach Forgejo's own session
+  # check (team permission, as every other web page) instead of the broker's Basic challenge.
+  local p t
+  for p in raw/branch/main/README.md media/branch/main/README.md archive/main.zip; do
+    t="$(wait_yes 60 web_ok "$jar" "/${REPO}/${p}")"
+    check "signed-in ${IDENTITY_USER}: GET /${REPO}/${p} with the session cookie is 200 (no Basic prompt)" yes \
+      "$([[ "$t" =~ ^[0-9]+$ ]] && echo yes || echo "no ($(web_code "$jar" "/${REPO}/${p}"))")"
+  done
 
   # 5. Password sign-in on the web is off (agents are local users guarded by a password), but
   #    API basic auth still works: the broker's mint flow basic-auths as the agent. Forgejo 15
