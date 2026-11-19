@@ -708,16 +708,20 @@ if ($r = $s->fetch(PDO::FETCH_NUM)) { echo $r[0], " ", $r[1]; }' -- "$1" 2>/dev/
 
 # An HMAC-signed broker call (the broker has no host port, so it is sent from kb-suite, as
 # GitHost does). Prints the body, then the status on its own line.
+# The GitHost HMAC signature (hex) over <ts> <nonce> <method> <path-and-query> <body>.
+hmac_sig() { # hmac_sig <ts> <nonce> <method> <path> <body>
+  env_value GITHOST_HMAC_SECRET "$HERE/hmac.env" | python3 -I -c '
+import hashlib,hmac,sys
+ts,nonce,method,path,body=sys.argv[1:]
+msg="\n".join([ts,nonce,method,path,hashlib.sha256(body.encode()).hexdigest()])
+print(hmac.new(sys.stdin.read().strip().encode(),msg.encode(),hashlib.sha256).hexdigest())' "$@"
+}
+
 broker_post() { # broker_post <path> <json>
   local ts nonce sig
   ts="$(date +%s)"
   nonce="scenario-$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
-  sig="$(env_value GITHOST_HMAC_SECRET "$HERE/hmac.env" | python3 -I -c '
-import hashlib,hmac,sys
-ts,nonce,method,path,body=sys.argv[1:]
-msg="\n".join([ts,nonce,method,path,hashlib.sha256(body.encode()).hexdigest()])
-print(hmac.new(sys.stdin.read().strip().encode(),msg.encode(),hashlib.sha256).hexdigest())' \
-    "$ts" "$nonce" POST "$1" "$2")"
+  sig="$(hmac_sig "$ts" "$nonce" POST "$1" "$2")"
   printf '%s' "$2" | docker exec -i "$KANBOARD_CONTAINER" curl -s --max-time 30 -w '\n%{http_code}' \
     -H 'Content-Type: application/json' -H "X-GitHost-Timestamp: $ts" -H "X-GitHost-Nonce: $nonce" \
     -H "X-GitHost-Signature: $sig" --data-binary @- "http://broker:8080$1"
@@ -1864,6 +1868,56 @@ for l in sys.stdin:
 # "yes" once a nudge line for the project has been written since <epoch>.
 nudge_logged() { [[ -n "$(audit_lines_for "$1" nudge "project_id=$PROJECT_ID")" ]] && echo yes || echo no; }
 reconcile_logged() { [[ -n "$(audit_lines_for "$1" sync "project_id=${PROJECT_ID}&trigger=reconcile")" ]] && echo yes || echo no; }
+# The plugin's githost/state for the project (signed GET, as the broker pulls it), JSON.
+kb_state() {
+  local path="/?controller=GitStateController&action=state&plugin=GitHost&project_id=${PROJECT_ID}" ts nonce
+  ts="$(date +%s)"
+  nonce="scenario-$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
+  curl -s --max-time 15 -H "X-GitHost-Timestamp: $ts" -H "X-GitHost-Nonce: $nonce" \
+    -H "X-GitHost-Signature: $(hmac_sig "$ts" "$nonce" GET "$path" "")" "${KANBOARD_URL}${path}"
+}
+# What the five Forgejo teams must hold for the project's githost/state, one "<team> <logins,>"
+# line each, by the broker's rules: an agent's login is its username (lowercased); a human's is
+# the Forgejo user bound to its Authentik sub (oauth2_user_id); a human without a sub is skipped.
+teams_expected() {
+  local team kind name sub login
+  kb_state | python3 -I -c '
+import json,sys
+p=[x for x in json.load(sys.stdin)["projects"] if x["project_id"]==int(sys.argv[1])][0]
+for k in ("managers","members","viewers","reviewers","humans_high_risk"):
+    print(k.replace("_","-"), "-", "-", "-")
+    for m in p["members"][k]:
+        print(k.replace("_","-"), m.get("kind"), m["username"], m.get("oauth2_user_id") or "-")' "$PROJECT_ID" |
+    while read -r team kind name sub; do
+      if [[ "$kind" == agent ]]; then login="${name,,}"
+      elif [[ "$kind" == human && "$sub" != - ]]; then
+        login="$(fj_api "/api/v1/admin/users?source_id=$(env_value FORGEJO_AUTHENTIK_SOURCE_ID "$HERE/.env")&login_name=$(urlencode "$sub")" |
+          python3 -I -c 'import json,sys; us=[u for u in json.load(sys.stdin) if u.get("login_name")==sys.argv[1]]; print(us[0]["login"].lower() if len(us)==1 else "?unbound")' "$sub")"
+      else login=""
+      fi
+      echo "$team $login"
+    done | python3 -I -c '
+import sys
+t={}
+for l in sys.stdin:
+    team,_,login=l.rstrip("\n").partition(" ")
+    t.setdefault(team,set())
+    if login: t[team].add(login)
+for k,v in t.items(): print(k, ",".join(sorted(v)))'
+}
+teams_actual() {
+  local team
+  for team in managers members viewers reviewers humans-high-risk; do echo "$team $(team_logins "$team")"; done
+}
+# "yes" when every Forgejo team equals githost/state; else "no" and the differing lines on stderr.
+teams_match() {
+  local e a
+  e="$(teams_expected)"
+  a="$(teams_actual)"
+  [[ -n "$e" && "$e" == "$a" ]] && { echo yes; return; }
+  diff <(echo "$e") <(echo "$a") | grep '^[<>]' | sed 's/^</    kanboard:/; s/^>/    forgejo: /' >&2
+  echo no
+}
 not_in_team() { [[ "$(in_team "$1" "$2")" == no ]] && echo yes || echo no; }
 
 step_9() {
@@ -1873,6 +1927,7 @@ step_9() {
   local a2="$OTHER_AGENT_USERNAME" id role since t_fail t_fix waited lines n
   id="${AGENT_IDS[$a2]}"
   check "a2 (${a2}) is in team members before the change" yes "$(in_team members "$a2")"
+  check "all five Forgejo teams equal Kanboard's githost/state before the change" yes "$(teams_match)"
 
   echo "  \$ BROKER_FAULT_SYNC_ONCE=1 compose.sh up -d --no-deps broker"
   since="$(date +%s)"
@@ -1903,6 +1958,7 @@ step_9() {
     "$(grep -q ' 500$' <<<"$(audit_lines_for "$since" sync "project_id=${PROJECT_ID}&trigger=nudge")" && echo yes || echo no)"
   t_fail="$(date +%s)"
   check "drift: Forgejo still has a2 in members after the failed sync" yes "$(in_team members "$a2")"
+  check "drift: the teams no longer equal githost/state" no "$(teams_match 2>/dev/null)"
 
   waited="$(wait_yes $((RECONCILE_SECS + 15)) not_in_team members "$a2")"
   t_fix="$(date +%s)"
@@ -1912,11 +1968,13 @@ step_9() {
   n="$(audit_lines_for "$t_fail" sync "project_id=${PROJECT_ID}&trigger=reconcile" | awk '$2 == 200' | wc -l)"
   check "audit: a reconcile sync of project ${PROJECT_ID} answered 200 after the fault" yes "$( ((n >= 1)) && echo yes || echo "no ($n)")"
   echo "  DRIFT|$((t_fix - t_fail))"
+  check "after the repair, all five Forgejo teams equal Kanboard's githost/state" yes "$(teams_match)"
 
   echo "  \$ addProjectUser(${PROJECT_ID}, ${id}, ${role})   (the flag has cleared: a normal nudge)"
   since="$(date +%s)"
   restore_member9
   waited="$(wait_yes 15 in_team members "$a2")"
+  check "after re-adding a2, the teams equal githost/state again" yes "$(teams_match)"
   check "the nudge after the fault syncs again: a2 back in members within 15 s" yes \
     "$([[ "$waited" =~ ^[0-9]+$ ]] && echo yes || echo "no ($waited)")"
   wait_yes 15 nudge_logged "$since" >/dev/null

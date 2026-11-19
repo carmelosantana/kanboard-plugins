@@ -102,7 +102,7 @@ host-side `traefik` run against `direct` shows clone +2 % and push +7 % at p50, 
 differs.
 
 **N=10 and N=50 fail through Traefik.** Every credential minted (0 failures at any N). But 23
-of 50 clones at N=10 and 43 of 100 at N=50 got HTTP 403 through Traefik, and so did 8 to 10
+of 50 clones at N=10 and 43 of 100 at N=50 got HTTP 403 through Traefik, and so did 6 to 10
 pushes after a good clone. Every failure is a ForwardAuth deny `kanboard_unreachable`: 29 at
 N=10 (`traefik`), 51 at N=50. Direct to Forgejo, everything passed. **The highest level that passed
 through Traefik is N=1.** The cause is in kb-suite, not in the broker, Traefik or Forgejo. The
@@ -127,10 +127,16 @@ Postgres/MySQL), and the 50-agent run should be repeated after the fix. Task 18 
 | 50 | traefik | 504 | 32 ms | 148 ms | 212 ms | allow/ok 296, deny/no_principal 157, deny/kanboard_unreachable 51 |
 | 50 | traefik-net | 487 | 30 ms | 77 ms | 133 ms | allow/ok 281, deny/no_principal 154, deny/kanboard_unreachable 52 |
 
-p95 < 50 ms holds at N=1 and N=10 and fails at N=50. `no_principal` is git's first request
+p95 < 50 ms holds at N=1 and N=10 and fails at N=50. The window is every authz line of the
+shared stack in the run's seconds, so another session's git traffic would be pooled in. The
+counts match the expected two `no_principal` per agent exactly, so none was. `no_principal` is git's first request
 without a credential, the 401 challenge, two per agent (clone and push).
 
 ### RAM (MiB, `docker stats`, peak of ~1 s samples over each run)
+
+Each cell is the highest peak over the three targets. The Forgejo cells at N=10 and N=50 name
+the target, because direct pushes reached Forgejo twice as often as the Traefik runs, where about
+half was denied before Forgejo.
 
 | Component | idle before | N=1 peak | N=10 peak | N=50 peak | idle after |
 | --- | --- | --- | --- | --- | --- |
@@ -161,10 +167,15 @@ Authentik takes no part in git traffic. Its ~935 MiB is the largest fixed cost o
 
 Scenario step 9 recreates the broker with `BROKER_FAULT_SYNC_ONCE=1` (cargo feature
 `fault-injection`, dev build only). It removes a2 from the project, and the nudge's sync fails
-with 500 before it touches Forgejo, so a2 stays in team `members`. The reconcile loop removes
-a2 25 s after the failure. Injected failures repaired within one sweep: 100 % (1/1 per run;
-every `scenario.sh 9` run passes). The bound is one tick (`BROKER_RECONCILE_SECS` = 30) plus
-the sweep.
+with 500 before it touches Forgejo, so a2 stays in team `members`. The reconcile loop then has
+to make all five Forgejo teams equal the plugin's `githost/state` again. The step's bound is one
+tick (`BROKER_RECONCILE_SECS` = 30) plus 5 s for the sweep, so 35 s.
+
+Observed, one injected failure per run, three recorded runs: **2 of 3 repaired within the 35 s
+bound**, both at 25 s. The third run took 46 s and missed the bound, so step 9 failed there. The
+cause was the sweep's token-delete backlog, described below. After the backlog drained, every run
+repaired within the bound (24-25 s, including the fix-round runs). The spec target, "100 % within
+one sweep", holds only when the sweep is not held up by token deletes.
 
 The bound assumes a fast sweep. Each sweep first deletes expired and revoked tokens in Forgejo
 (`tokens::sweep`), and only then pulls the state. Right after `load.sh teardown 50` had revoked a
