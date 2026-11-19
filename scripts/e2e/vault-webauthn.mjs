@@ -23,6 +23,12 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const BASE = process.env.KB_URL || 'http://localhost:8081';
+// This script creates and deletes users: refuse anything but a local dev stack, so a stray KB_URL can't aim it
+// elsewhere (T20 review M5).
+if (!['localhost', '127.0.0.1'].includes(new URL(BASE).hostname)) {
+  console.error(`refusing: KB_URL must be http://localhost or http://127.0.0.1, not ${BASE}`);
+  process.exit(2);
+}
 const CONTAINER = process.env.KB_CONTAINER || 'kb-suite';
 const CHROME = process.env.CHROME || '/usr/bin/google-chrome';
 const USER = 'vault-e2e-t20';
