@@ -1992,6 +1992,12 @@ step_9() {
   # load.sh teardown: hundreds of tokens) can hold the first sweep for a minute or more.
   check "the broker's start-up sweep has synced project ${PROJECT_ID}" yes \
     "$([[ "$(wait_yes 300 reconcile_logged "$since")" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+  # A slow first sweep ends close to the next tick (the interval runs from start-up), which then
+  # repairs the drift before it is seen. Start right after a tick, so a whole tick is left.
+  local t_sweep
+  t_sweep="$(date +%s)"
+  check "the tick after it has synced project ${PROJECT_ID} too" yes \
+    "$([[ "$(wait_yes $((RECONCILE_SECS + 300)) reconcile_logged "$((t_sweep + 1))")" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 
   role="$(rpc_admin getProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$id}" | json_get 'd["result"]')"
   [[ "$role" == project-* ]] || { check "a2 is a direct project member" yes "no ($role)"; return; }
