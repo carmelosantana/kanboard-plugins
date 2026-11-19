@@ -61,7 +61,7 @@
 ### Task 3: Settings schema, feature flags and settings page
 
 **Files:**
-- Create: `Model/SettingsSchema.php`, `Model/FeatureFlags.php`, `Controller/SettingsController.php`, `Template/config/sidebar.php`, `Template/config/settings.php`
+- Create: `Model/SettingsSchema.php`, `Model/FeatureFlags.php`, `Controller/StewardSettingsController.php`, `Template/config/sidebar.php`, `Template/config/settings.php`
 - Modify: `Plugin.php`
 - Test: `Test/SettingsTest.php`
 
@@ -71,7 +71,7 @@
   - `SettingsSchema::defaults(): array<string,string>` — every `steward_*` key with its default (features per Global Constraints; `steward_switch_idle_minutes` `'60'`; `steward_audit_retention_days` `'180'`).
   - `SettingsSchema::filter(array $values): array` — returns only known keys, casts booleans to `'1'`/`'0'`, clamps numbers (idle 5–480, retention 7–3650).
   - `FeatureFlags::isEnabled(string $feature): bool` (container key `stewardFeatures`); `switching` is false whenever `STEWARD_DISABLE_SWITCHING` is defined true **or** `REVERSE_PROXY_AUTH` is true.
-  - Routes: `SettingsController::show|save` (`APP_ADMIN`).
+  - Routes: `StewardSettingsController::show|save` (`APP_ADMIN`).
 
 - [ ] **Step 1: Failing tests:** `testDefaultsOnFreshInstall` (markdown on, others off); `testFilterDropsUnknownKeys` (`['steward_banner'=>'1','application_url'=>'x','api_token'=>'y']` → only `steward_banner`); `testKillSwitchConstant` and `testReverseProxyDisablesSwitching` (run in separate processes, `@runInSeparateProcess`); `testNonAdminGetsForbidden` on `show` and `save`; `testSaveWritesOnlySchemaKeys`. (The `settings.changed` audit assertion is added in Task 6, once the audit store exists.)
 - [ ] **Step 2:** Run → FAIL. Implement; hook `template:config:sidebar`; render with `$this->helper->layout->config()`.
@@ -85,7 +85,7 @@
 - Produces: `FeatureGate::MAP` — `array<string,string>` from `'Controller::action'` (Steward controllers only, `*` allowed for whole controller) to feature name; `FeatureGate::check(string $plugin, string $controller, string $action): bool` (true = allowed). Listener on `app.bootstrap` that, when the router resolves `plugin=Steward` to a disabled feature, sends a 404 and exits before ACL middleware. No-op when there is no router context (API, queue).
 - Every controller added by later tasks must add its row to `MAP`; `testEveryControllerActionIsMapped` (below) keeps it honest as tasks add controllers.
 
-- [ ] **Step 1: Failing tests:** for each feature off, `?controller=X&action=Y&plugin=Steward` returns 404 as anonymous, user and admin, with identical body; with it on, ACL applies as normal; `testEveryControllerActionIsMapped` (reflection over `Steward/Controller/*`).
+- [ ] **Step 1: Failing tests:** `testControllerNamesAreUnique` (every class in `Steward/Controller` starts with `Steward` and no core `app/Controller` class or other installed plugin's controller has the same short name); for each feature off, `?controller=X&action=Y&plugin=Steward` returns 404 as anonymous, user and admin, with identical body; with it on, ACL applies as normal; `testEveryControllerActionIsMapped` (reflection over `Steward/Controller/*`).
 - [ ] **Step 2:** Run → FAIL. Implement; ACL entries for every Steward controller are registered unconditionally in `initialize()`.
 - [ ] **Step 3:** Run → PASS. Commit `feat: disabled features answer 404 before ACL`.
 
@@ -107,9 +107,9 @@
 
 ### Task 6: Audit page and login events
 
-**Files:** Create `Controller/AuditController.php`, `Template/audit/index.php`, `Subscriber/LoginSubscriber.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/AuditControllerTest.php`, `Test/LoginSubscriberTest.php`
+**Files:** Create `Controller/StewardAuditController.php`, `Template/audit/index.php`, `Subscriber/LoginSubscriber.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/AuditControllerTest.php`, `Test/LoginSubscriberTest.php`
 
-**Interfaces:** `AuditController::index` (`APP_ADMIN`; always available, not behind a feature). `LoginSubscriber` listens to `auth.success` (`login.success`) and `auth.failure` (`login.failure`, username from the event cut to 64 chars).
+**Interfaces:** `StewardAuditController::index` (`APP_ADMIN`; always available, not behind a feature). `LoginSubscriber` listens to `auth.success` (`login.success`) and `auth.failure` (`login.failure`, username from the event cut to 64 chars).
 
 - [ ] **Step 1: Failing tests:** settings save audits `settings.changed` with key names only (never values); non-admin 403; filters by event/user/date; pagination 50/page; a row whose username is `<script>alert(1)</script>` and user agent `"><img src=x onerror=1>` renders escaped; no delete route exists; login success/failure write rows.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: audit log page and login events`.
@@ -129,24 +129,24 @@
 
 ### Task 8: Switch service — start
 
-**Files:** Create `Model/SwitchService.php`, `Controller/SwitchController.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/SwitchStartTest.php`
+**Files:** Create `Model/SwitchService.php`, `Controller/StewardSwitchController.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/SwitchStartTest.php`
 
 **Interfaces:**
 - Produces (container `stewardSwitching`):
-  - `SwitchService::start(int $targetId): ?string` — returns null on success, else the reason code. Steps in this order (spec §2.3): policy → `logInternal('switch.start', …, $switchId)` (false → refuse with reason `audit_failed`) → revoke the admin's remember-me (`rememberMeSessionModel->remove()` for the cookie's session id, then `rememberMeCookie->remove()`) → `session_unset()` → `userSession->initialize($target)` → `session_regenerate_id(true)` → `userSession->setPostAuthenticationAsValidated()` → `session_set('steward_switch', ['switch_id','admin_id','admin_username','started_at','last_seen'])`; never dispatches `auth.success`; removes `hasRememberMe`.
+  - `SwitchService::start(int $targetId): ?string` — returns null on success, else the reason code. Steps in this order (spec §2.3): policy → `logInternal('switch.start', …, $switchId)` (false → refuse with reason `audit_failed`) → revoke the admin's remember-me (`rememberMeSessionModel->remove()` for the cookie's session id, confirm deleted, then `rememberMeCookie->remove()`) → `session_unset()` → `userSession->initialize($target)` → `session_regenerate_id(true)` → `userSession->setPostAuthenticationAsValidated()` → `session_set('steward_switch', ['switch_id','admin_id','admin_username','started_at','last_seen'])`; never dispatches `auth.success`; removes `hasRememberMe`. Remember-me revocation happens **before** the session changes: delete the row, re-query to confirm it's gone, else refuse with reason `rememberme_failed` (session untouched).
   - `SwitchService::isSwitched(): bool`, `current(): ?array` (the `steward_switch` value).
-  - `SwitchController::start` — POST only, `checkCSRFForm()`, `user_id` from the form; `APP_ADMIN`. Refusal: flash `UNIFORM_MESSAGE`, audit `switch.refused` with the reason, redirect to the target's profile (or user list). Success: redirect to dashboard.
+  - `StewardSwitchController::start` — POST only, `checkCSRFForm()`, `user_id` from the form; `APP_ADMIN`. Refusal: flash `UNIFORM_MESSAGE`, audit `switch.refused` with the reason, redirect to the target's profile (or user list). Success: redirect to dashboard.
 
-- [ ] **Step 1: Failing tests:** GET → refused; missing/bad CSRF → refused; success sets `user.id` to target, `steward_switch.admin_id` to admin, 2FA validated; `last_logins` row count unchanged; no `remember_me` row for the target; the admin's `remember_me` row removed; `switch.start` row with a 64-hex `switch_id`; audit failure (drop table) → refused `audit_failed`, session unchanged; an LDAP-authenticated admin (`is_ldap_user=1`) can switch; with `SESSION_HANDLER=db`, both the pre-switch and the intermediate session ids are absent from the `sessions` table afterwards.
+- [ ] **Step 1: Failing tests:** GET → refused; missing/bad CSRF → refused; success sets `user.id` to target, `steward_switch.admin_id` to admin, 2FA validated; `last_logins` row count unchanged; no `remember_me` row for the target; the admin's `remember_me` row removed; `switch.start` row with a 64-hex `switch_id`; audit failure (drop table) → refused `audit_failed`, session unchanged; remember-me row that can't be deleted (mock the model to leave it) → refused `rememberme_failed`, session unchanged; an LDAP-authenticated admin (`is_ldap_user=1`) can switch; with `SESSION_HANDLER=db`, both the pre-switch and the intermediate session ids are absent from the `sessions` table afterwards.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: start a user switch`.
 
 ### Task 9: Switch back (logout + sign-in) and expiry
 
-**Files:** Modify `Model/SwitchService.php`, `Controller/SwitchController.php`; Test `Test/SwitchEndTest.php`
+**Files:** Modify `Model/SwitchService.php`, `Controller/StewardSwitchController.php`; Test `Test/SwitchEndTest.php`
 
 **Interfaces:**
 - `SwitchService::end(string $reason): void` — reasons `end` (user pressed Switch back), `expired`, `revoked`. Audits `switch.<reason>` (`switch.end` for `end`) with the switch id, calls `sessionManager->close()`, then `session_start()` and `session_set('redirectAfterLogin', <target profile path>)` only for `end`.
-- `SwitchController::back` — POST + CSRF, `APP_USER`, refused unless `isSwitched()`; calls `end('end')` and redirects to `AuthController::login`.
+- `StewardSwitchController::back` — POST + CSRF, `APP_USER`, refused unless `isSwitched()`; calls `end('end')` and redirects to `AuthController::login`.
 - Logout while switched: listener on `SessionManager::EVENT_DESTROY` audits `switch.end` (reason `logout`) once. A real login (`auth.success`) clears any leftover `steward_switch`.
 
 - [ ] **Step 1: Failing tests:** back → session destroyed, login page, `redirectAfterLogin` equals the target's profile path and is relative; after a normal login as admin the redirect lands there; no code path sets `user` to the admin; back when not switched → 403; GET back → refused; stale back after logout → login page; core logout while switched audits once.
@@ -157,13 +157,13 @@
 **Files:** Create `Model/SwitchActionTable.php`, `Model/SwitchGuard.php`, `Template/switch/forbidden.php`; Modify `Plugin.php`; Test `Test/SwitchGuardTest.php`, `Test/SwitchActionTableTest.php`
 
 **Interfaces:**
-- `SwitchActionTable::CORE` — `array<string,'read'|'write'|'blocked'>` keyed `'Controller::action'` covering **every public action of every controller in `app/Controller` of 1.2.47**. Blocked: everything in spec §2 "Always refused" (incl. `OAuthController::*`, `UserModificationController::*`, `UserCredentialController::*`, `UserApiAccessController::*`, `TwoFactorController::*`, `AvatarFileController::upload|remove`, `UserViewController` sessions/password-reset/integrations/external/share/notifications pages), all `Config*`, `Plugin*`, `User*` admin controllers, `ProjectCreationController` is `write` (the target may create private projects), Steward's `SettingsController`. GET-mutations (e.g. `TaskStatusController::close|open`, `TaskModificationController::assignToMe|start`, `SubtaskStatusController::change|timer`, `BoardAjaxController::collapse|expand`) are `write`.
+- `SwitchActionTable::CORE` — `array<string,'read'|'write'|'blocked'>` keyed `'Controller::action'` covering **every public action of every controller in `app/Controller` of 1.2.47**. Blocked: everything in spec §2 "Always refused" (incl. `OAuthController::*`, `UserModificationController::*`, `UserCredentialController::*`, `UserApiAccessController::*`, `TwoFactorController::*`, `AvatarFileController::upload|remove`, `UserViewController` sessions/password-reset/integrations/external/share/notifications pages), all `Config*`, `Plugin*`, `User*` admin controllers, `ProjectCreationController` is `write` (the target may create private projects), Steward's `StewardSettingsController`. GET-mutations (e.g. `TaskStatusController::close|open`, `TaskModificationController::assignToMe|start`, `SubtaskStatusController::change|timer`, `BoardAjaxController::collapse|expand`) are `write`.
 - `SwitchActionTable::classify(string $plugin, string $controller, string $action): string` — core pairs from `CORE`; unknown core pairs → `blocked`; plugin pairs from registrations, else `blocked`.
 - `SwitchService::allow(string $plugin, array $actions): void` — `['Controller::action' => 'read'|'write']`, keyed by plugin.
-- `SwitchGuard` on `app.bootstrap` (registered after `FeatureGate`): no-op unless a PHP session is active and `steward_switch` is set. Then, in order: admin re-check (exists, active, `Role::APP_ADMIN`) else `end('revoked')`; idle check (`time() - last_seen > idle*60`) else `end('expired')`; classify; `blocked` → 403 template; `write` or any non-GET → `logInternal('switch.action', admin, target, {method, controller, action, task_id, project_id}, switchId)` and 503 if it returns false; update `last_seen` only when not `X-Requested-With: XMLHttpRequest`.
+- `SwitchGuard` on `app.bootstrap`, **registered unconditionally** (not behind the `switching` flag), after `FeatureGate`: no-op unless a PHP session is active and `steward_switch` is set. Then, in order: switching disabled (flag off, kill switch or reverse-proxy auth) → `end('revoked')` with reason `disabled`; admin re-check (exists, active, `Role::APP_ADMIN`) else `end('revoked')`; idle check (`time() - last_seen > idle*60`) else `end('expired')`; classify; `blocked` → 403 template; `write` or any non-GET → `logInternal('switch.action', admin, target, {method, controller, action, task_id, project_id}, switchId)` and 503 if it returns false; update `last_seen` only when not `X-Requested-With: XMLHttpRequest`.
 - Ships registrations for suite plugins' view pages (read): Pulse, Presence, Bigboard, TimeReport report view, Agents roster view — only if present (`class_exists`).
 
-- [ ] **Step 1: Failing tests:** `testTableCoversEveryCoreAction` (reflect over `testing/kanboard-src/app/Controller/*.php` public methods excluding `Base`; every pair present); table-driven test over all `CORE` rows asserting allow/403 and an audit row for writes; unknown plugin action → 403 even on GET; plugin A's registration doesn't allow plugin B's `Controller::action` of the same name; demoted admin mid-switch → logged out, `switch.revoked`; idle 61 min → logged out `switch.expired`; AJAX requests don't move `last_seen`; audit insert failure on a write → 503 and the task is unchanged; guard is a no-op for a JSON-RPC call and a queue job (`JobHandler` path).
+- [ ] **Step 1: Failing tests:** `testTableCoversEveryCoreAction` (reflect over `testing/kanboard-src/app/Controller/*.php` public methods excluding `Base`; every pair present); table-driven test over all `CORE` rows asserting allow/403 and an audit row for writes; unknown plugin action → 403 even on GET; plugin A's registration doesn't allow plugin B's `Controller::action` of the same name; demoted admin mid-switch → logged out, `switch.revoked`; idle 61 min → logged out `switch.expired`; AJAX requests don't move `last_seen`; audit insert failure on a write → 503 and the task is unchanged; guard is a no-op for a JSON-RPC call and a queue job (`JobHandler` path); a switched session survives no request after switching is turned off (UI switch and kill-switch constant both tested).
 - [ ] **Step 2:** Run → FAIL. Build `CORE` by reading each core controller (record conditional mutations in comments). Implement. Run → PASS.
 - [ ] **Step 3:** Commit `feat: guard every request while switched`.
 
@@ -171,7 +171,7 @@
 
 **Files:** Create `Template/user/switch_button.php`, `Template/switch/confirm.php`, `Template/switch/banner.php`, `Template/header/switch_back.php`, `Assets/css/steward.css`; Modify `Plugin.php`; Test `Test/SwitchUiTest.php`
 
-**Interfaces:** `template:user:sidebar:actions` → button (only for admins, only when `SwitchPolicy` would allow, hidden when switching is off or reverse-proxy auth is on); the button opens `SwitchController::confirm` (GET, modal; `APP_ADMIN`) whose form POSTs to `start`. `template:layout:top` → banner "You are viewing Kanboard as **{name}** — Switch back" (a POST form), always above the announcement banner. `template:header:dropdown` → "Switch back" item (POST form). Banner partial `switch/banner.php` takes `level`, `message_html`, `form` so Task 26 reuses it.
+**Interfaces:** `template:user:sidebar:actions` → button (only for admins, only when `SwitchPolicy` would allow, hidden when switching is off or reverse-proxy auth is on); the button opens `StewardSwitchController::confirm` (GET, modal; `APP_ADMIN`) whose form POSTs to `start`. `template:layout:top` → banner "You are viewing Kanboard as **{name}** — Switch back" (a POST form), always above the announcement banner. `template:header:dropdown` → "Switch back" item (POST form). Banner partial `switch/banner.php` takes `level`, `message_html`, `form` so Task 26 reuses it.
 
 - [ ] **Step 1: Failing tests:** button hidden for non-admin, for admin targets, for self, for inactive users, when feature off, with reverse-proxy auth; confirm modal names the user and says actions are recorded as them; banner renders only when switched and escapes the name; dropdown item present when switched.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: switch button, confirmation and banner`.
@@ -190,19 +190,19 @@
 
 ### Task 13: Branding settings, storage and serving
 
-**Files:** Create `Controller/BrandingController.php`, `Template/config/branding.php`, `Model/Branding.php`; Modify `SettingsSchema` (`steward_site_name`, `steward_logo_path`, `steward_logo_hash`, `steward_favicon32_path`, `steward_favicon180_path`, `steward_favicon_hash`), `FeatureGate::MAP`; Test `Test/BrandingControllerTest.php`
+**Files:** Create `Controller/StewardBrandingController.php`, `Template/config/branding.php`, `Model/Branding.php`; Modify `SettingsSchema` (`steward_site_name`, `steward_logo_path`, `steward_logo_hash`, `steward_favicon32_path`, `steward_favicon180_path`, `steward_favicon_hash`), `FeatureGate::MAP`; Test `Test/BrandingControllerTest.php`
 
 **Interfaces:**
 - `Branding::save(string $slot, array $blobs, string $hash): void` writes to ObjectStorage `steward/branding/<slot>-<hash>.png`, swaps config, then deletes the old object; `Branding::remove(string $slot)`; `Branding::siteName(): string` (≤ 60 chars, trimmed).
-- `BrandingController::save` (`APP_ADMIN`, POST, CSRF) — upload logo/favicon, remove, site name; audits `branding.changed` (slot, action).
-- `BrandingController::image` (`APP_PUBLIC`) — `slot` in `['logo','favicon32','favicon180']`, else 404; headers `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, ETag = hash, `Cache-Control: public, max-age=31536000, immutable` when `h=<hash>` matches.
+- `StewardBrandingController::save` (`APP_ADMIN`, POST, CSRF) — upload logo/favicon, remove, site name; audits `branding.changed` (slot, action).
+- `StewardBrandingController::image` (`APP_PUBLIC`) — `slot` in `['logo','favicon32','favicon180']`, else 404; headers `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, ETag = hash, `Cache-Control: public, max-age=31536000, immutable` when `h=<hash>` matches.
 
 - [ ] **Step 1: Failing tests:** non-admin can't save; failed processing keeps the old asset and config; image serving headers; unknown slot 404; site name 61 chars rejected; `settings.changed`/`branding.changed` audited.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: branding settings and image serving`.
 
 ### Task 14: Apply branding (+ ShadcnTheme fallback and import)
 
-**Files:** Create `Helper/StewardBrandingHelper.php`, `Template/layout/favicon.php`, `Template/header/title.php` (override of core `header/title`), `Template/auth/logo.php`; Modify `Plugin.php`, `BrandingController` (`import`); Test `Test/BrandingApplyTest.php`
+**Files:** Create `Helper/StewardBrandingHelper.php`, `Template/layout/favicon.php`, `Template/header/title.php` (override of core `header/title`), `Template/auth/logo.php`; Modify `Plugin.php`, `StewardBrandingController` (`import`); Test `Test/BrandingApplyTest.php`
 
 **Interfaces:**
 - Helper `stewardBranding`: `logoUrl(): string`, `faviconUrl(int $size): string`, `siteName(): string` — `''` when unset. While the Steward logo slot is empty and `shadcn_logo_path` is set, `logoUrl()` returns ShadcnTheme's serve URL (`?controller=SettingsController&action=serveAsset&plugin=ShadcnTheme&slot=logo`) so no logo disappears (spec §5.6).
@@ -257,32 +257,32 @@
 
 ### Task 19: Per-project settings
 
-**Files:** Create `Model/ProjectPageSettings.php`, `Controller/ProjectPageSettingsController.php`, `Template/project/settings.php`, `Template/project/sidebar.php`; Modify `Plugin.php` (project ACL), `FeatureGate::MAP`; Test `Test/ProjectPageSettingsTest.php`
+**Files:** Create `Model/ProjectPageSettings.php`, `Controller/StewardProjectSettingsController.php`, `Template/project/settings.php`, `Template/project/sidebar.php`; Modify `Plugin.php` (project ACL), `FeatureGate::MAP`; Test `Test/ProjectPageSettingsTest.php`
 
 **Interfaces:**
 - `ProjectPageSettings` (stores in `project_has_metadata`, keys `steward_*`): `get(int $projectId): array{tagline:string, links:list<array{label:string,url:string}>, panels:list<string>, public_panels:list<string>, public:bool, listed:bool, show_names:bool}`; `save(int $projectId, array $values): array $errors`. Validation: tagline ≤ 160 plain text; ≤ 5 links, label ≤ 40, url `http(s)` only; panels ⊆ Home panel set (`header, description, progress, board, activity, completed, files`); public panels ⊆ (`header, description, progress, board, completed, activity`); `public` requires core `is_public`; `listed` requires `public` and a non-empty project `identifier`; audits `public.changed` when public/listed/show_names change.
-- `ProjectPageSettingsController::show|save` — project ACL `PROJECT_MANAGER`, `project_id` via `getProject()` (query), form body `project_id` ignored/refused if different. Sidebar link via `template:project:sidebar`.
+- `StewardProjectSettingsController::show|save` — project ACL `PROJECT_MANAGER`, `project_id` via `getProject()` (query), form body `project_id` ignored/refused if different. Sidebar link via `template:project:sidebar`.
 
 - [ ] **Step 1: Failing tests:** viewer and member get 403 on show and save; manager and admin succeed; body `project_id` ≠ query → refused; each validation; listed without identifier → error "Set a project identifier first"; public without core public access → error; audit rows.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: per-project page settings`.
 
 ### Task 20: Project Home
 
-**Files:** Create `Controller/ProjectHomeController.php`, `Model/PanelData.php`, `Template/project_home/show.php`, `Template/project_home/panel_*.php`, `Template/project_header/home_link.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/ProjectHomeTest.php`
+**Files:** Create `Controller/StewardProjectHomeController.php`, `Model/PanelData.php`, `Template/project_home/show.php`, `Template/project_home/panel_*.php`, `Template/project_header/home_link.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/ProjectHomeTest.php`
 
 **Interfaces:**
 - `PanelData::progress(int $projectId): array` (per column open count, closed count, % closed), `board(int $projectId, bool $public): array` (columns with task titles/ids; open tasks only), `completed(int $projectId, int $days = 14): array`, `activity(int $projectId, int $limit = 20): array` (core events, member view).
-- `ProjectHomeController::show` — project ACL `PROJECT_VIEWER` (core default), renders chosen panels in order; Home link via `template:project-header:view-switcher-before-project-overview`.
+- `StewardProjectHomeController::show` — project ACL `PROJECT_VIEWER` (core default), renders chosen panels in order; Home link via `template:project-header:view-switcher-before-project-overview`.
 
 - [ ] **Step 1: Failing tests:** non-member 403; panels in configured order; description through the Steward renderer; board snapshot of a project the viewer can see only; files panel lists attachments; defaults when unset.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: project Home page`.
 
 ### Task 21: Public project page
 
-**Files:** Create `Controller/PublicProjectController.php`, `Model/PublicActivity.php`, `Template/public/project.php`, `Template/public/panel_*.php`, `Assets/css/public.css`; Modify `Plugin.php` (route `public/project/:token`, ACL `APP_PUBLIC`), `FeatureGate::MAP`; Test `Test/PublicProjectTest.php`
+**Files:** Create `Controller/StewardPublicController.php`, `Model/PublicActivity.php`, `Template/public/project.php`, `Template/public/panel_*.php`, `Assets/css/public.css`; Modify `Plugin.php` (route `public/project/:token`, ACL `APP_PUBLIC`), `FeatureGate::MAP`; Test `Test/PublicProjectTest.php`
 
 **Interfaces:**
-- `PublicProjectController::show` — `token` → `projectModel->getByToken()`; 404 unless project `is_public`, Steward `public` on and feature `public_pages` on. Response header `X-Robots-Tag: noindex` unless listed. Uses `layout` with `no_layout`-style public chrome (Steward template), branding applies.
+- `StewardPublicController::show` — `token` → `projectModel->getByToken()`; 404 unless project `is_public`, Steward `public` on and feature `public_pages` on. Response header `X-Robots-Tag: noindex` unless listed. Uses `layout` with `no_layout`-style public chrome (Steward template), branding applies.
 - `PublicActivity::recent(int $projectId, bool $showNames, int $limit = 20): list<array{text:string, at:int}>` — only `task.create`, `task.move.column`, `task.close`, `task.open`; text "*{title}* moved to *{column}*" etc.; actor display name (`name`, else nothing — never username/email) prefixed only when `$showNames`.
 - Description via `text->markdownPublic()`; board snapshot titles are not links.
 
@@ -291,9 +291,9 @@
 
 ### Task 22: Listed projects and `/explore`
 
-**Files:** Create `Controller/ExploreController.php`, `Template/public/explore.php`; Modify `Plugin.php` (routes `explore`, `explore/:identifier`, ACL `APP_PUBLIC`), `FeatureGate::MAP`; Test `Test/ExploreTest.php`
+**Files:** Create `Controller/StewardExploreController.php`, `Template/public/explore.php`; Modify `Plugin.php` (routes `explore`, `explore/:identifier`, ACL `APP_PUBLIC`), `FeatureGate::MAP`; Test `Test/ExploreTest.php`
 
-**Interfaces:** `ExploreController::index` — 404 unless feature `explore` on; lists projects with `public`+`listed`+core `is_public`, sorted by name: name, tagline, link to `/explore/<identifier>`. `ExploreController::show` — resolves identifier, same checks, renders `PublicProjectController`'s page (no `noindex`). Neither page contains the core token.
+**Interfaces:** `StewardExploreController::index` — 404 unless feature `explore` on; lists projects with `public`+`listed`+core `is_public`, sorted by name: name, tagline, link to `/explore/<identifier>`. `StewardExploreController::show` — resolves identifier, same checks, renders `StewardPublicController`'s page (no `noindex`). Neither page contains the core token.
 
 - [ ] **Step 1: Failing tests:** directory off → 404; unlisted project absent; listed shows name/tagline only; `/explore/<id>` contains no token; identifier lookup case-insensitive; core routes `/p/1` and `/projects` still reach core.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: public project directory`.
@@ -302,21 +302,21 @@
 
 ### Task 23: Test email
 
-**Files:** Create `Controller/TestEmailController.php`, `Template/config/test_email.php`; Modify `Plugin.php` (`template:config:email` + Steward settings), `FeatureGate::MAP`; Test `Test/TestEmailTest.php`
+**Files:** Create `Controller/StewardTestEmailController.php`, `Template/config/test_email.php`; Modify `Plugin.php` (`template:config:email` + Steward settings), `FeatureGate::MAP`; Test `Test/TestEmailTest.php`
 
-**Interfaces:** `TestEmailController::send` (`APP_ADMIN`, POST, CSRF): recipient = current user's email only; refused with "Add an email address to your profile first" when empty; 30 s cooldown per admin (`user_metadata` `steward_test_email_at`) → "Please wait a few seconds"; sends synchronously via `emailClient->getTransport(MAIL_TRANSPORT or configured)->sendEmail(...)`; success flash "Handed to {transport} without error — check your inbox"; failure flash "The test email failed (ref {8-hex})" and logs the exception message with `/(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*\S+/i` replaced by `$1=[redacted]`; audits `email.test` {transport, ok, ref}.
+**Interfaces:** `StewardTestEmailController::send` (`APP_ADMIN`, POST, CSRF): recipient = current user's email only; refused with "Add an email address to your profile first" when empty; 30 s cooldown per admin (`user_metadata` `steward_test_email_at`) → "Please wait a few seconds"; sends synchronously via `emailClient->getTransport(MAIL_TRANSPORT or configured)->sendEmail(...)`; success flash "Handed to {transport} without error — check your inbox"; failure flash "The test email failed (ref {8-hex})" and logs the exception message with `/(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*\S+/i` replaced by `$1=[redacted]`; audits `email.test` {transport, ok, ref}.
 
 - [ ] **Step 1: Failing tests:** non-admin 403; no recipient field honoured (a posted `to` is ignored); empty email refused; cooldown; success with a fake transport; failure with a throwing fake transport whose message contains `password=hunter2` → flash has no exception text, log has `password=[redacted]`, audit row ok=false.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: send a test email`.
 
 ### Task 24: Announcement banner
 
-**Files:** Create `Model/Banner.php`, `Core/InlineMarkdown.php`, `Controller/BannerController.php`, `Template/config/banner.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/BannerTest.php`
+**Files:** Create `Model/Banner.php`, `Core/InlineMarkdown.php`, `Controller/StewardBannerController.php`, `Template/config/banner.php`; Modify `Plugin.php`, `FeatureGate::MAP`; Test `Test/BannerTest.php`
 
 **Interfaces:**
 - `InlineMarkdown::render(string $text): string` — output allow-list: text, `<em>`, `<strong>`, `<code>`, `<a href>` with `http(s)` only (`rel="noopener noreferrer"`); everything else escaped as text.
 - `Banner::current(): ?array{version:string, level:'info'|'warning', html:string, dismissible:bool, login:bool, public:bool}` — null outside start/end; `version` = hash of message+level+times.
-- `BannerController::save` (`APP_ADMIN`), `BannerController::dismiss` (`APP_USER`, POST, CSRF; stores `steward_banner_dismissed` = version in `user_metadata`); audits `banner.changed`.
+- `StewardBannerController::save` (`APP_ADMIN`), `StewardBannerController::dismiss` (`APP_USER`, POST, CSRF; stores `steward_banner_dismissed` = version in `user_metadata`); audits `banner.changed`.
 - Renders via `template:layout:top` below the switch banner, on the login page when `login`, on Steward public pages when `public`.
 
 - [ ] **Step 1: Failing tests:** message > 500 chars rejected; images/HTML/headings/lists/code blocks/mermaid render as text; `javascript:` link text-only; schedule window; dismissal hides until the message changes; not dismissible → no button and dismiss refused; order below switch banner.

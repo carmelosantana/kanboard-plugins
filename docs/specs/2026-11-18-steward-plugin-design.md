@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–3 resolved, round 4 pending
+- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–4 resolved, round 5 pending
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -72,7 +72,13 @@ the public what they are working on. Signed-in users have no project home page e
   action. So a disabled feature's actions are rejected with a uniform **404 from `app.bootstrap`**, using a
   complete `controller::action → feature` map, before ACL runs (for anonymous, user and admin alike); each
   action repeats the check as defence in depth; and ACL entries are registered for every controller
-  regardless of switches. Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
+  regardless of switches.
+- **Unique controller names:** Kanboard's ACL keys rules by controller and action name only, not by plugin,
+  so every Steward controller is prefixed `Steward` (e.g. `StewardSwitchController`), and a test fails if any
+  Steward controller name matches a core controller or another installed plugin's.
+- **The switch guard is always registered,** whatever the switches say: if a session holds `steward_switch`
+  while switching is off (UI switch, `STEWARD_DISABLE_SWITCHING` or reverse-proxy auth), the guard ends it
+  (`switch.revoked`, reason `disabled`) and logs the browser out. Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
   admin opts in, except safer/richer Markdown).
 - **Ops kill switch:** `define('STEWARD_DISABLE_SWITCHING', true)` in `config.php` disables switching
   regardless of the UI switch, for an admin who loses UI access.
@@ -111,11 +117,12 @@ the public what they are working on. Signed-in users have no project home page e
    an app admin, is not the actor. Any failure: one uniform message ("You can't switch to this user"),
    `switch.refused` audited with the real reason. Authorisation is checked **before** the target lookup.
 3. Switch: write `switch.start` first, with a fresh random `switch_id` (32 bytes, `random_bytes`); if the
-   audit write fails, refuse the switch. Clear every session key, call `userSession->initialize($target)`
+   audit write fails, refuse the switch. **Revoke the admin's remember-me login before touching the
+   session** (Decision 17): delete this browser's `remember_me` row and confirm it is gone, then clear the
+   cookie; if the row can't be confirmed deleted, refuse the switch. Then clear every session key, call `userSession->initialize($target)`
    (which itself regenerates with `false`), **then** `session_regenerate_id(true)` so neither the old nor the
    intermediate id stays alive, mark post-authentication (2FA) as validated (initialize resets it), and only
-   then store `steward_switch = {switch_id, admin_id, admin_username, started_at, last_seen}`. Revoke the
-   admin's remember-me session for this browser (Decision 17). **Do not** dispatch
+   then store `steward_switch = {switch_id, admin_id, admin_username, started_at, last_seen}`. **Do not** dispatch
    `auth.success` (it writes a `last_logins` row and may mint a remember-me cookie for the target) and
    remove `hasRememberMe`. Redirect to the dashboard (old CSRF tokens die with the
    old session id).
