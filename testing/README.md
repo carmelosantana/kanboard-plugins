@@ -206,12 +206,24 @@ list`; `all` runs each once). Besides `preflight`, the live steps act as agent
 | `6` | a PR adding `ci/red` merges green and turns `main` red; the broker opens `revert/<sha7>` (auto-revert label, low risk); r1 approves; it merges and `main` is green; one revert PR per sha |
 | `7` | `removeProjectUser`: the next fetch is denied; re-added (always, also on exit), a push to the own prefix works again; `closeTask`: the token is dead (`token_revoked`/`task_closed`) |
 | `8` | `docker pause kb-suite`: fetch denied (`kanboard_unreachable`), always unpaused by a trap; then allowed |
+| `9` | the broker recreated with `BROKER_FAULT_SYNC_ONCE=1` (cargo feature `fault-injection`, which only this overlay builds): removing a2 fails its nudge sync (500), Forgejo keeps a2 in `members`, and the reconcile loop repairs it within one 30 s tick; a2 re-added by a normal nudge, then the broker recreated without the flag (also on exit) |
 | `identity` | see [Identity](#identity-authentik) below: Kanboard and Forgejo logins through Authentik meet on the sub; no password web login |
 
 They read `KANBOARD_USERNAME`, `KANBOARD_API_KEY` and `AGENT_API_TOKEN` (or
 `AGENT_API_TOKEN_FILE`) from the environment or from the gitignored `testing/git/scenario.env`,
 print `PASS`/`FAIL` with the broker's audit lines, and can be re-run: the core task is reused
 and branch names are unique.
+
+Load runs and measurements (Task 17; results in `testing/git/metrics.md`) use
+`testing/git/load.sh`, which reuses `scenario.sh`'s helpers. It works with agents `load-a1..load-aN` on the :8081 dev
+stack, never the Kanboard MCP tools:
+
+```bash
+LOAD_ROUNDS=2 bash testing/git/load.sh run 50 traefik traefik-net direct   # credential -> clone -> commit -> push, at once
+bash testing/git/load.sh revlag                                            # git and web-UI revocation lag
+bash testing/git/load.sh prune '^agent/[^/]+/load-'                        # delete leftover branches (broker paused, rules restored)
+bash testing/git/load.sh teardown 50                                       # load agents out of project 28
+```
 
 ### Merge gate and the dev CI runner (steps 3, 4, 5c, 6)
 

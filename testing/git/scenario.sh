@@ -1006,10 +1006,11 @@ import json,sys; print(",".join(sorted(u["login"].lower() for u in json.load(sys
 }
 in_team() { [[ ",$(team_logins "$1")," == *",${2,,},"* ]] && echo yes || echo no; } # in_team <team> <login>
 
-# Makes <username> a scenario agent in the project and gives it an open task; sets
-# AGENT_IDS[<username>] and AGENT_TASKS[<username>]. Its API token is $WORK/<username>.apitoken.
-ensure_agent() { # ensure_agent <username> <reviewer 0|1>
-  local user="$1" tok="$WORK/$1.apitoken" owner id role task
+# Makes <username> a scenario agent in the project and gives it an open task titled <title>
+# (default "scenario merge gate"); sets AGENT_IDS[<username>] and AGENT_TASKS[<username>]. Its
+# API token is $WORK/<username>.apitoken. testing/git/load.sh makes its agents with it too.
+ensure_agent() { # ensure_agent <username> <reviewer 0|1> [title]
+  local user="$1" tok="$WORK/$1.apitoken" owner id role task title="${3:-scenario merge gate}"
   [[ -n "${AGENT_TASKS[$user]:-}" ]] && return 0
   owner="$(admin_user_id)"
   [[ "$owner" =~ ^[0-9]+$ ]] || { echo "  cannot read ${KANBOARD_USERNAME}'s user id" >&2; return 1; }
@@ -1023,11 +1024,11 @@ ensure_agent() { # ensure_agent <username> <reviewer 0|1>
   fi
   task="$(rpc "$user" "$(<"$tok")" getAllTasks "{\"project_id\":$PROJECT_ID,\"status_id\":1}" | python3 -I -c '
 import json,sys
-owner=int(sys.argv[1]); ts=[t for t in json.load(sys.stdin).get("result") or [] if t["title"]=="scenario merge gate" and int(t["owner_id"])==owner]
-print(min(int(t["id"]) for t in ts) if ts else "")' "$id" 2>/dev/null)"
+owner=int(sys.argv[1]); ts=[t for t in json.load(sys.stdin).get("result") or [] if t["title"]==sys.argv[2] and int(t["owner_id"])==owner]
+print(min(int(t["id"]) for t in ts) if ts else "")' "$id" "$title" 2>/dev/null)"
   if [[ -z "$task" ]]; then
     task="$(rpc "$user" "$(<"$tok")" createTask \
-      "{\"project_id\":$PROJECT_ID,\"title\":\"scenario merge gate\",\"owner_id\":$id}" | json_get 'd["result"]')"
+      "{\"project_id\":$PROJECT_ID,\"title\":\"$title\",\"owner_id\":$id}" | json_get 'd["result"]')"
   fi
   [[ "$task" =~ ^[0-9]+$ ]] || { echo "  $user: no task ($task)" >&2; return 1; }
   AGENT_TASKS[$user]="$task"
@@ -1882,9 +1883,11 @@ step_9() {
     "$(docker logs --since 2m "$BROKER_CONTAINER" 2>&1 | grep -q 'fault injection armed' && echo yes || echo no)"
 
   # The loop's first sweep starts with the broker; let it pass project ${PROJECT_ID} first, or
-  # it would pull the change itself and there would be no drift to repair.
+  # it would pull the change itself and there would be no drift to repair. Each sweep deletes
+  # expired and revoked tokens in Forgejo before it pulls the state, so a backlog (e.g. after
+  # load.sh teardown: hundreds of tokens) can hold the first sweep for a minute or more.
   check "the broker's start-up sweep has synced project ${PROJECT_ID}" yes \
-    "$([[ "$(wait_yes 60 reconcile_logged "$since")" =~ ^[0-9]+$ ]] && echo yes || echo no)"
+    "$([[ "$(wait_yes 300 reconcile_logged "$since")" =~ ^[0-9]+$ ]] && echo yes || echo no)"
 
   role="$(rpc_admin getProjectUserRole "{\"project_id\":$PROJECT_ID,\"user_id\":$id}" | json_get 'd["result"]')"
   [[ "$role" == project-* ]] || { check "a2 is a direct project member" yes "no ($role)"; return; }
@@ -1892,7 +1895,7 @@ step_9() {
   REMOVED9_ROLE="$role"
   REMOVED9_ID="$id"
   echo "  \$ removeProjectUser(${PROJECT_ID}, ${id}): $(rpc_admin removeProjectUser "{\"project_id\":$PROJECT_ID,\"user_id\":$id}")"
-  wait_yes 20 nudge_logged "$since" >/dev/null
+  wait_yes 60 nudge_logged "$since" >/dev/null
   lines="$(audit_lines_for "$since" nudge "project_id=$PROJECT_ID")"
   echo "  audit nudge lines: ${lines//$'\n'/; }"
   check "audit: the nudge's sync failed with 500 (fault injected)" 500 "$(head -1 <<<"$lines" | cut -d' ' -f2)"
@@ -2006,4 +2009,7 @@ main() {
   [[ "$pass" -eq "$total" ]]
 }
 
-main "$@"
+# Sourced (testing/git/load.sh reuses the helpers above): define only.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
