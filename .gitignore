@@ -8,6 +8,7 @@ testing/kanboard-src/
 # Plugins now live in their own repos (github.com/carmelosantana/kanboard-<slug>).
 # This repo keeps only the shared dev harness (testing/, scripts/) + docs. Each
 # plugin is checked out here as its own git repo and ignored by this one.
+/AgentChat/
 /Agents/
 /AiConnector/
 /BattleLobby/
