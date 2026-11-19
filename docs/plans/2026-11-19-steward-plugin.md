@@ -8,7 +8,7 @@
 
 **Tech Stack:** PHP 8.4, Kanboard 1.2.47 plugin API (also tested on 1.2.57), PHPUnit via core's harness, plain CSS, vanilla JS (`node --test` for JS units), vendored highlight.js and Mermaid.
 
-**Spec:** `docs/specs/2026-11-18-steward-plugin-design.md` — Decisions 1–21 and §1–§9 are binding. Read it before any task.
+**Spec:** `docs/specs/2026-11-18-steward-plugin-design.md` — Decisions 1–21 and §1–§10 are binding. Read it before any task.
 
 ## Global Constraints
 
@@ -89,6 +89,15 @@
 - [ ] **Step 2:** Run → FAIL. Implement; ACL entries for every Steward controller are registered unconditionally in `initialize()`.
 - [ ] **Step 3:** Run → PASS. Commit `feat: disabled features answer 404 before ACL`.
 
+### Task 4b: Runtime ACL check
+
+**Files:** Create `Model/AclCheck.php`; Modify `Plugin.php`; Test `Test/AclCheckTest.php`
+
+**Interfaces:** `AclCheck::EXPECTED` — Steward's application and project ACL rules; `AclCheck::verify(): bool` compares them with `applicationAccessMap`/`projectAccessMap` on `app.bootstrap` (after all plugins loaded); on mismatch sets `stewardAclBroken`, logs the conflicting rule, `FeatureGate` then 403s every Steward action and `SwitchPolicy` refuses with reason `acl_conflict`.
+
+- [ ] **Step 1: Failing tests:** clean install verifies; a fake plugin re-registering `StewardSettingsController` as `APP_PUBLIC` → every Steward action 403 and switching refused.
+- [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: refuse to run with tampered ACL rules`.
+
 ### Task 5: Audit log store
 
 **Files:**
@@ -133,11 +142,11 @@
 
 **Interfaces:**
 - Produces (container `stewardSwitching`):
-  - `SwitchService::start(int $targetId): ?string` — returns null on success, else the reason code. Steps in this order (spec §2.3): policy → `logInternal('switch.start', …, $switchId)` (false → refuse with reason `audit_failed`) → revoke the admin's remember-me (`rememberMeSessionModel->remove()` for the cookie's session id, confirm deleted, then `rememberMeCookie->remove()`) → `session_unset()` → `userSession->initialize($target)` → `session_regenerate_id(true)` → `userSession->setPostAuthenticationAsValidated()` → `session_set('steward_switch', ['switch_id','admin_id','admin_username','started_at','last_seen'])`; never dispatches `auth.success`; removes `hasRememberMe`. Remember-me revocation happens **before** the session changes: delete the row, re-query to confirm it's gone, else refuse with reason `rememberme_failed` (session untouched).
+  - `SwitchService::start(int $targetId): ?string` — returns null on success, else the reason code. Steps in this order (spec §2.3): policy → `logInternal('switch.start', …, $switchId)` (false → refuse with reason `audit_failed`) → revoke the admin's remember-me (`rememberMeSessionModel->remove()` for the cookie's session id, confirm deleted, then `rememberMeCookie->remove()`) → `session_regenerate_id(true)` (once) → `session_unset()` → `SwitchService::writeUser(array $target)` (copies `UserSession::initialize()` minus its `session_regenerate_id(false)`) → `userSession->setPostAuthenticationAsValidated()` → `session_set('steward_switch', ['switch_id','admin_id','admin_username','started_at','last_seen'])`; never dispatches `auth.success`; removes `hasRememberMe`. Remember-me revocation happens **before** the session changes: delete the row, re-query to confirm it's gone, else refuse with reason `rememberme_failed` (session untouched).
   - `SwitchService::isSwitched(): bool`, `current(): ?array` (the `steward_switch` value).
   - `StewardSwitchController::start` — POST only, `checkCSRFForm()`, `user_id` from the form; `APP_ADMIN`. Refusal: flash `UNIFORM_MESSAGE`, audit `switch.refused` with the reason, redirect to the target's profile (or user list). Success: redirect to dashboard.
 
-- [ ] **Step 1: Failing tests:** GET → refused; missing/bad CSRF → refused; success sets `user.id` to target, `steward_switch.admin_id` to admin, 2FA validated; `last_logins` row count unchanged; no `remember_me` row for the target; the admin's `remember_me` row removed; `switch.start` row with a 64-hex `switch_id`; audit failure (drop table) → refused `audit_failed`, session unchanged; remember-me row that can't be deleted (mock the model to leave it) → refused `rememberme_failed`, session unchanged; an LDAP-authenticated admin (`is_ldap_user=1`) can switch; with `SESSION_HANDLER=db`, both the pre-switch and the intermediate session ids are absent from the `sessions` table afterwards.
+- [ ] **Step 1: Failing tests:** GET → refused; missing/bad CSRF → refused; success sets `user.id` to target, `steward_switch.admin_id` to admin, 2FA validated; `last_logins` row count unchanged; no `remember_me` row for the target; the admin's `remember_me` row removed; `switch.start` row with a 64-hex `switch_id`; audit failure (drop table) → refused `audit_failed`, session unchanged; remember-me row that can't be deleted (mock the model to leave it) → refused `rememberme_failed`, session unchanged; an LDAP-authenticated admin (`is_ldap_user=1`) can switch; `writeUser()` produces the same `user` session array as core's `initialize()` for the same user (secrets stripped); with `SESSION_HANDLER=db`, the pre-switch session id is absent from the `sessions` table afterwards.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: start a user switch`.
 
 ### Task 9: Switch back (logout + sign-in) and expiry
@@ -282,11 +291,11 @@
 **Files:** Create `Controller/StewardPublicController.php`, `Model/PublicActivity.php`, `Template/public/project.php`, `Template/public/panel_*.php`, `Assets/css/public.css`; Modify `Plugin.php` (route `public/project/:token`, ACL `APP_PUBLIC`), `FeatureGate::MAP`; Test `Test/PublicProjectTest.php`
 
 **Interfaces:**
-- `StewardPublicController::show` — `token` → `projectModel->getByToken()`; 404 unless project `is_public`, Steward `public` on and feature `public_pages` on. Response header `X-Robots-Tag: noindex` unless listed. Uses `layout` with `no_layout`-style public chrome (Steward template), branding applies.
+- `StewardPublicController::show` — `token` → `projectModel->getByToken()`; 404 unless project `is_public`, Steward `public` on and feature `public_pages` on. Response headers `X-Robots-Tag: noindex` unless listed, and always `Referrer-Policy: no-referrer` (also on `/explore`). Uses `layout` with `no_layout`-style public chrome (Steward template), branding applies.
 - `PublicActivity::recent(int $projectId, bool $showNames, int $limit = 20): list<array{text:string, at:int}>` — only `task.create`, `task.move.column`, `task.close`, `task.open`; text "*{title}* moved to *{column}*" etc.; actor display name (`name`, else nothing — never username/email) prefixed only when `$showNames`.
 - Description via `text->markdownPublic()`; board snapshot titles are not links.
 
-- [ ] **Step 1: Failing tests:** 404 for each missing toggle; response HTML contains no `token=` and no project token string; no comment text, file name, email, username in output (seed each with a sentinel string and assert absent); names absent by default, present with the toggle; `#N` and `@user` plain; disable-then-enable public access → old URL 404, new URL works.
+- [ ] **Step 1: Failing tests:** 404 for each missing toggle; response HTML contains no `token=` and no project token string; no comment text, file name, email, username in output (seed each with a sentinel string and assert absent); names absent by default, present with the toggle; `#N` and `@user` plain; disable-then-enable public access → old URL 404, new URL works; `Referrer-Policy: no-referrer` present.
 - [ ] **Step 2:** Run → FAIL. Implement. Run → PASS. Commit `feat: public project page`.
 
 ### Task 22: Listed projects and `/explore`

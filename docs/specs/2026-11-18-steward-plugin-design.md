@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–4 resolved, round 5 pending
+- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–5 resolved (two risks accepted pending Carmelo, §8)
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -76,6 +76,9 @@ the public what they are working on. Signed-in users have no project home page e
 - **Unique controller names:** Kanboard's ACL keys rules by controller and action name only, not by plugin,
   so every Steward controller is prefixed `Steward` (e.g. `StewardSwitchController`), and a test fails if any
   Steward controller name matches a core controller or another installed plugin's.
+- **Runtime ACL check:** Kanboard's ACL lower-cases and overwrites rules by name, so a plugin loaded later
+  could replace Steward's. On `app.bootstrap` Steward compares its expected rules with the live access maps;
+  on any mismatch it refuses every Steward action (403) and every switch, and logs the conflict.
 - **The switch guard is always registered,** whatever the switches say: if a session holds `steward_switch`
   while switching is off (UI switch, `STEWARD_DISABLE_SWITCHING` or reverse-proxy auth), the guard ends it
   (`switch.revoked`, reason `disabled`) and logs the browser out. Defaults on fresh install: Markdown **on**, everything else **off** (nothing changes for users until an
@@ -119,10 +122,10 @@ the public what they are working on. Signed-in users have no project home page e
 3. Switch: write `switch.start` first, with a fresh random `switch_id` (32 bytes, `random_bytes`); if the
    audit write fails, refuse the switch. **Revoke the admin's remember-me login before touching the
    session** (Decision 17): delete this browser's `remember_me` row and confirm it is gone, then clear the
-   cookie; if the row can't be confirmed deleted, refuse the switch. Then clear every session key, call `userSession->initialize($target)`
-   (which itself regenerates with `false`), **then** `session_regenerate_id(true)` so neither the old nor the
-   intermediate id stays alive, mark post-authentication (2FA) as validated (initialize resets it), and only
-   then store `steward_switch = {switch_id, admin_id, admin_username, started_at, last_seen}`. **Do not** dispatch
+   cookie; if the row can't be confirmed deleted, refuse the switch. Then `session_regenerate_id(true)` **once**, clear every session key, and write the
+   target into the session the way `userSession->initialize()` does **minus its own `session_regenerate_id(false)`**
+   (same `user` shape and secret-stripping; a test compares the two), mark post-authentication (2FA) as
+   validated, and only then store `steward_switch = {switch_id, admin_id, admin_username, started_at, last_seen}`. **Do not** dispatch
    `auth.success` (it writes a `last_logins` row and may mint a remember-me cookie for the target) and
    remove `hasRememberMe`. Redirect to the dashboard (old CSRF tokens die with the
    old session id).
@@ -269,7 +272,9 @@ Per-project settings (project managers and admins, under the project's settings 
 - **Activity** is Steward's own minimal rendering of a safe subset of events (task created, moved, closed,
   reopened): "*Login fix* moved to *Done*". **Names hidden by default**; a per-project **Show names**
   toggle adds the actor's display name (never username or email).
-- Public pages carry `X-Robots-Tag: noindex` unless the project is *listed* (§5.4).
+- Public pages carry `X-Robots-Tag: noindex` unless the project is *listed* (§5.4), and always
+  `Referrer-Policy: no-referrer`, so a token in the page URL never leaves in a `Referer` header (remote
+  images in descriptions are allowed by core's CSP).
 - Turning off core public access clears the token and takes the page down; turning it back on issues a new
   token, so the old link stops working (core has no separate "regenerate"). A listed project's
   `/explore/:identifier` URL comes back with it.
@@ -322,14 +327,26 @@ profile has no email address.
   banner partial with the switch banner. The switch banner always sits above it.
 - Dismissal is per user per banner version (`user_metadata`), so editing the message shows it again.
 
-## 8. Security review gates
+## 8. Accepted risks
+
+Recorded from the spec security review (round 5) for Carmelo's decision:
+- **Concurrent request during a switch.** Core's DB session handler doesn't lock, so a request still in
+  flight on the admin's old session id when the switch happens can write that session back after Steward
+  deleted it. The resurrected id is the admin's own pre-switch session, usable only by someone who already
+  had it; core's logout has the same race. Steward narrows it (one `regenerate(true)`, no
+  `regenerate(false)`) but doesn't add session locking.
+- **Reverse-proxy auth.** With `REVERSE_PROXY_AUTH`, switching is off and any leftover switch is logged out;
+  the next request is signed in again as whoever the proxy says, which is the proxy's decision, not a
+  Steward escalation.
+
+## 9. Security review gates
 
 Steward changes who is who, and it can publish project data, so it gets the same gates as Vault:
 - **Spec:** `/security-review` and `/powerup:codex-security` on this document before the plan.
 - **Branch:** both again on the built branch, then `/codex:adversarial-review` once done.
 - The repo is public: until a release ships, commit messages and docs describe security fixes neutrally.
 
-## 9. Testing
+## 10. Testing
 
 - TDD; the full suite via `testing/run-plugin-tests.sh Steward`, run to completion, checking the real test
   count (the config stops at the first failure).
@@ -351,6 +368,9 @@ Steward changes who is who, and it can publish project data, so it gets the same
   admin, user and anonymous.
 - **Project ACL tests:** a project viewer and a member each get 403 on every per-project Steward action; a
   POST whose body `project_id` differs from the query's is refused.
+- **ACL tamper test:** a fake plugin that re-registers a Steward controller rule as `APP_PUBLIC` makes every
+  Steward action 403 and switching refused.
+- **Public headers:** public and explore pages send `Referrer-Policy: no-referrer`.
 - **Branding tests:** SVG, ICO, polyglot (PNG header + script), oversize file, oversize dimensions /
   pixel-count (decompression bomb), non-image rejected; failed encode keeps the old asset; served
   headers; fallback; non-admin can't reach settings or upload; settings save ignores unknown keys.
