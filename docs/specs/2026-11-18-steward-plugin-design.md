@@ -164,11 +164,18 @@ workers, so the guard does nothing at all when there is no PHP session or no `st
   permissions are keyed by `(plugin, controller, action)`, so one plugin's opt-in never covers another
   plugin's same-named controller. Steward ships
   registrations for the suite plugins' plain view pages; others opt in.
-- **Other plugins can tell:** `$this->container['stewardSwitching']->isSwitched()` and a `steward:switch`
-  hook let plugins holding secrets (e.g. Vault) refuse to unlock while switched; Vault should adopt it.
+- **Other plugins can tell:** `$this->container['stewardSwitching']->isSwitched()` lets plugins holding
+  secrets (e.g. Vault) refuse to unlock while switched; Vault should adopt it. (as built) No `steward:switch`
+  hook; `isSwitched()` is the only signal.
 - Core's `checkCurrentSession` wipes the session if the target's role or active flag changes, then runs
   pre-authentication. With the admin's remember-me revoked (Decision 17) that leaves the browser logged out,
   which is safe. Document it.
+- (as built) **What ends a switch** (each logs the browser out): the target is disabled or deleted, or its role
+  changes, or on Kanboard 1.2.57 its password changes (`switch.revoked`, `target_changed`, from core's own
+  session check, run before core's); the admin loses admin rights or is disabled (`switch.revoked`,
+  `not_admin`); idle timeout (`switch.expired`; there is no separate absolute limit, and PHP's own session
+  expiry ends a switch without an end row); switching turned off by the setting, `STEWARD_DISABLE_SWITCHING`
+  or reverse-proxy auth (`switch.revoked`, `disabled`); switch back (`switch.end`) or logout.
 - **Reverse-proxy auth:** when `REVERSE_PROXY_AUTH` is on, core re-authenticates from the proxy header on
   every request, which would undo a switch. Switching is unavailable in that mode (button hidden, action
   refused with a clear message). Database, LDAP and OAuth logins are tested individually.
