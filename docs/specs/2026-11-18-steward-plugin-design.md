@@ -1,6 +1,6 @@
 # Steward — admin tools, branding, Markdown and project pages for Kanboard (v1.0)
 
-- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–2 resolved, round 3 pending
+- **Status:** approved by Carmelo 2026-11-18; spec security review rounds 1–3 resolved, round 4 pending
 - **Plugin:** `Steward` (directory and PHP namespace `Kanboard\Plugin\Steward`), repo `carmelosantana/kanboard-steward`
 - **Working folder:** `kanboard-plugins/Steward` (new)
 - **Research:** `reports/Kanboard admin tools gaps.md` and `research_notes/Kanboard admin tools gaps/` (harness, untracked)
@@ -45,7 +45,7 @@ the public what they are working on. Signed-in users have no project home page e
 | 5 | **Project pages: both** a signed-in Home and an opt-in public page. | Carmelo |
 | 6 | **Public activity is anonymous by default,** with a per-project toggle to show names. | Carmelo |
 | 7 | **Switching to another app admin is refused** (hard block, not a confirmation). Switching to yourself, to an inactive user, and from inside a switch are refused too. | Builder's call, stated to Carmelo (prior art: django-hijack default; GitLab nested-switch CVE-2021-39896) |
-| 8 | **Account-security pages are blocked while switched, and writes fail closed:** password, 2FA, API token, email, username, avatar and sessions are refused for reading and writing; any state-changing request goes through only if its controller is on Steward's allow-list of everyday work controllers (§2). Other plugins' writes are refused unless they opt in. | Builder's call, stated to Carmelo; tightened by spec security review |
+| 8 | **Account-security pages are blocked while switched, and everything else fails closed per action:** password, 2FA, API token, email, username, avatar, sessions and OAuth linking are refused for reading and writing; every other core `(controller, action)` is classified read / write-allowed / blocked, unknown pairs blocked (§2). Other plugins' actions, reads included, are refused unless the plugin opts in. | Builder's call, stated to Carmelo; tightened by spec security review |
 | 9 | **The admin's identity lives only in `$_SESSION`.** No cookie, no hidden field, no URL carries it. | Brief |
 | 10 | **Test email goes only to the signed-in admin's own address.** No recipient field, so the button can't be used to send mail to others. | Builder's call |
 | 11 | **Public pages ride on core's per-project public access** (the token link) plus a second Steward toggle, so switching public board access on never publishes a landing page by accident. A project can additionally be *listed*, which gives it a clean URL and a directory entry; the directory itself is off until an admin enables it. | Builder's call, stated to Carmelo |
@@ -146,8 +146,12 @@ workers, so the guard does nothing at all when there is no PHP session or no `st
   board, task, subtask, comment, task file, link, tag, and project settings the target could already
   change) or **blocked**, including actions that mutate conditionally. Any pair not in the table is blocked
   while switched. Every pair is table-tested for allow/block and for its `switch.action` audit row.
+- **No unaudited switched writes:** the `switch.action` row is inserted in `app.bootstrap` **before** a
+  write-allowed action runs; if the insert fails, Steward answers 503 and the controller never runs.
 - **Other plugins default to blocked** while switched, reads included: a plugin's actions run only if it
-  registers them with `stewardSwitching->allow(['Controller::action' => 'read'|'write', ...])`. Steward ships
+  registers them with `stewardSwitching->allow('PluginName', ['Controller::action' => 'read'|'write', ...])`;
+  permissions are keyed by `(plugin, controller, action)`, so one plugin's opt-in never covers another
+  plugin's same-named controller. Steward ships
   registrations for the suite plugins' plain view pages; others opt in.
 - **Other plugins can tell:** `$this->container['stewardSwitching']->isSwitched()` and a `steward:switch`
   hook let plugins holding secrets (e.g. Vault) refuse to unlock while switched; Vault should adopt it.
@@ -331,7 +335,8 @@ Steward changes who is who, and it can publish project data, so it gets the same
   start (no silent re-login after expiry); both the old and the intermediate session ids are dead;
   account-security pages 403 for read and write; every core `(controller, action)` pair table-tested
   (read / write-allowed / blocked, unknown pairs blocked); `OAuthController` refused; an unregistered
-  plugin action refused, read or write; every state-changing request audited as `switch.action` with the `switch_id`; audit-write
+  plugin action refused, read or write; one plugin's opt-in doesn't cover another's same-named controller;
+  a failed `switch.action` insert gives 503 and leaves the resource unchanged; every state-changing request audited as `switch.action` with the `switch_id`; audit-write
   failure refuses the switch; reverse-proxy mode refuses switching; the guard is a no-op for JSON-RPC and
   the queue worker; logout ends everything; every path audited.
 - **Feature-switch tests:** with each feature off, every one of its actions returns the same 404 (from
