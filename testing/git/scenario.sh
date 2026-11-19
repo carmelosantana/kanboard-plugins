@@ -1839,8 +1839,8 @@ if rows:
 
 # ---------------------------------------------------------------------------------------------
 # Step 9: drift repair. The broker image the overlay builds has the cargo feature
-# fault-injection (dev only, ruling F9); started with BROKER_FAULT_SYNC_ONCE=1 it fails the next
-# nudge sync with a 500 before it touches Forgejo, once, then syncs normally. The step recreates
+# fault-injection (dev only, ruling F9); started with BROKER_FAULT_SYNC_ONCE=<project id> it fails
+# that project's next nudge sync with a 500 before it touches Forgejo, once, then syncs normally. The step recreates
 # the broker with the flag, removes a2 from the project (the plugin nudges, the nudge fails, so
 # Forgejo still has a2 in `members`), and expects the reconcile loop to repair it within one tick
 # (BROKER_RECONCILE_SECS, 30 s). Then it re-adds a2 (a normal nudge: the flag cleared) and
@@ -1856,7 +1856,7 @@ broker_health() {
 }
 broker_up() { [[ "$(broker_health)" == 200 ]] && echo yes || echo no; }
 
-# Recreates the broker container with BROKER_FAULT_SYNC_ONCE=<1|empty>; waits for /healthz.
+# Recreates the broker container with BROKER_FAULT_SYNC_ONCE=<project id|empty>; waits for /healthz.
 broker_recreate() { # broker_recreate <flag>
   BROKER_FAULT_SYNC_ONCE="$1" bash "$HERE/compose.sh" up -d --no-deps broker >/dev/null 2>&1
   wait_yes 60 broker_up >/dev/null
@@ -1951,10 +1951,10 @@ step_9() {
   check "a2 (${a2}) is in team members before the change" yes "$(in_team members "$a2")"
   check "all five Forgejo teams equal Kanboard's githost/state before the change" yes "$(teams_match)"
 
-  echo "  \$ BROKER_FAULT_SYNC_ONCE=1 compose.sh up -d --no-deps broker"
+  echo "  \$ BROKER_FAULT_SYNC_ONCE=${PROJECT_ID} compose.sh up -d --no-deps broker"
   since="$(date +%s)"
   FAULT_ARMED=1
-  broker_recreate 1
+  broker_recreate "$PROJECT_ID"
   check "the broker is back up with the flag" yes "$(broker_up)"
   check "the broker says the fault is armed (feature fault-injection)" yes \
     "$(docker logs --since 2m "$BROKER_CONTAINER" 2>&1 | grep -q 'fault injection armed' && echo yes || echo no)"
