@@ -148,7 +148,8 @@ workers, so the guard does nothing at all when there is no PHP session or no `st
   requests, so the board's auto-refresh polling can't keep an unattended switch alive.
 - **Always refused (read and write), 403 "not while switched":** `UserModificationController`,
   `UserCredentialController`, `UserApiAccessController`, `TwoFactorController`, `AvatarFileController`
-  (upload/remove), `UserViewController` session/password-reset/integration/external pages, every
+  (upload/remove), `UserViewController` summary (it shows the user's feed token)/session/password-reset/integration/external
+  pages, every
   `User*`/`Config*`/`Plugin*` admin controller, and Steward's own settings.
 - **`OAuthController` is always refused** (its GET callback links an external identity to the logged-in
   user, and `unlink` mutates by GET), as are any account-link callbacks.
@@ -293,8 +294,8 @@ core public access and the identifier still allow them.
 - Public pages always send `Referrer-Policy: no-referrer`, so a token in the page URL never leaves in a
   `Referer` header (remote images in descriptions are allowed by core's CSP). (as built) The token page
   `/public/project/:token` is always `noindex`, listed or not; only `/explore` and `/explore/:identifier` of a
-  listed project may be indexed, so an indexable URL never holds a token. Any copy of the project's token in a
-  Steward public page (e.g. pasted into the description) is replaced with `[hidden]`.
+  listed project may be indexed, so an indexable URL never holds a token. Any project's token in a Steward public
+  page (e.g. pasted into the description), literal or percent-encoded, is replaced with `[hidden]`.
 - Turning off core public access clears the token and takes the page down; turning it back on issues a new
   token, so the old link stops working (core has no separate "regenerate"). A listed project's
   `/explore/:identifier` URL comes back with it.
