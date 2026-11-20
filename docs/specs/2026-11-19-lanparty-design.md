@@ -208,6 +208,10 @@ Agents plugin is present, ordered, ties broken by the earlier `created_at`. `wee
 
 - Opaque-origin sandbox (no `allow-same-origin`, no `allow-top-navigation`, no `allow-popups`).
 - The host validates every SDK message: source window, nonce, op whitelist, argument types/sizes.
+- `asset()` fetches with `credentials: 'omit'` and `redirect: 'error'` (found in review): Kanboard sends any missing
+  non-static file to `index.php`, whose fallback is the signed-in dashboard, so a credentialed fetch would hand
+  the game the user's page and CSRF tokens. Game files are public and static; no cookie is needed.
+- The host caps in-flight SDK requests at 8 per game and refuses `.php` asset paths.
 - `asset()` paths are normalised client-side and checked again server-side when a controller serves
   admin files; `..`, absolute paths and URL schemes are rejected.
 - Admin file uploads (engine data) go to `DATA_DIR/lanparty/<slug>/<file-id>`, served only to signed-in users
