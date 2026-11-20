@@ -7,8 +7,10 @@
 # Starts a throwaway database container (official image, pinned by digest, data on tmpfs, no host files mounted) and
 # runs ./testing/run-plugin-tests.sh <PluginName> with DB_DRIVER=mysql|postgres in a throwaway PHP container built
 # from the kb-suite dev image (stock Kanboard plus sodium; it has pdo_mysql and pdo_pgsql, which the host PHP may
-# lack) plus php84-tokenizer and opcache.save_comments=1 for PHPUnit. Both share a private Docker network and are removed afterwards. Only testing/ (read-only), testing/kanboard-src
-# (read-write: the runner regenerates its bootstrap) and the plugin (read-only) are mounted. Exit code: the suite's.
+# lack) plus php84-tokenizer and opcache.save_comments=1 for PHPUnit. Both share an internal Docker network (no route out)
+# and are removed afterwards. Only testing/run-plugin-tests.sh (read-only), testing/kanboard-src (read-write: the
+# runner regenerates its bootstrap) and the plugin (read-only) are mounted: testing/.env and testing/git/*.env stay
+# on the host, which a preflight in the container checks before the suite runs. Exit code: the suite's (97: preflight).
 #
 # Env: KB_IMAGE (default kanboard-suite-kanboard:latest, the dev stack's image; build testing/Dockerfile.sodium to get it).
 set -euo pipefail
@@ -35,7 +37,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker network create "$net" >/dev/null
+docker network create --internal "$net" >/dev/null
 if [[ "$ENGINE" == mariadb ]]; then
   docker run -d --name "$db" --network "$net" --tmpfs /var/lib/mysql:rw \
     -e MARIADB_ROOT_PASSWORD="$password" -e MARIADB_DATABASE=kanboard_unit_test "$MARIADB_IMAGE" >/dev/null
@@ -63,9 +65,16 @@ FROM $KB_IMAGE
 RUN apk add --no-cache php84-tokenizer && printf 'opcache.save_comments=1\\n' > /etc/php84/conf.d/zz-realdb-tests.ini
 DOCKERFILE
 
+# Preflight, inside the PHP container before the suite: no host secret is visible (testing/.env and testing/git/*.env
+# stay outside the mounts; only the existence test runs, nothing is read) and there is no default route (the network
+# is --internal: the suite reaches the database and nothing else). Exit 97 on a breach, before any test runs.
+preflight='for f in testing/.env testing/git; do if test -e "$f"; then echo "preflight: $f is visible in the container" >&2; exit 97; fi; done
+if awk '"'"'NR > 1 && $2 == "00000000" { found = 1 } END { exit !found }'"'"' /proc/net/route; then echo "preflight: the container has a default route (egress)" >&2; exit 97; fi
+echo "preflight: no testing/.env or testing/git, no default route"'
+
 docker run --rm --network "$net" --user "$(id -u):$(id -g)" --entrypoint bash \
-  -v "${REPO_ROOT}/testing:${REPO_ROOT}/testing:ro" \
+  -v "${REPO_ROOT}/testing/run-plugin-tests.sh:${REPO_ROOT}/testing/run-plugin-tests.sh:ro" \
   -v "${REPO_ROOT}/testing/kanboard-src:${REPO_ROOT}/testing/kanboard-src:rw" \
   -v "${REPO_ROOT}/${PLUGIN}:${REPO_ROOT}/${PLUGIN}:ro" \
-  -e HOME=/tmp "${env[@]}" -w "$REPO_ROOT" "$php_image" \
+  -e HOME=/tmp "${env[@]}" -w "$REPO_ROOT" "$php_image" -c "$preflight"' && exec "$0" "$1"' \
   "${REPO_ROOT}/testing/run-plugin-tests.sh" "$PLUGIN"
