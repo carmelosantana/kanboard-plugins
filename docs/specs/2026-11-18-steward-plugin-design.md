@@ -108,7 +108,8 @@ the public what they are working on. Signed-in users have no project home page e
   other suite plugins; events from it must be namespaced `plugin.<name>.<event>` (others rejected), so they
   can't pass as Steward's own. Hook `steward:audit` fires after each write.
 - **Audit page:** `Settings → Steward → Audit log`, admin only: newest first, paginated, filter by event,
-  user, date range. Read-only; no delete button. **Retention:** 180 days (setting), pruned at most once a
+  user, date range, and (as built) switch: each row shows its switch id short, linking to that switch's rows
+  (exact match on the full id, at most 64 characters; a longer value is ignored). Read-only; no delete button. **Retention:** 180 days (setting), pruned at most once a
   day on write.
 
 ## 2. User switching
@@ -201,7 +202,9 @@ apart from the target's own, made at the same time in another browser. The banne
   `Content-Type: image/png`, `X-Content-Type-Options: nosniff`, CSP `default-src 'none'; sandbox`, ETag =
   content hash, long cache with the hash in the URL.
 - **Applying:** favicon links via `template:layout:head` (after core's, which browsers then prefer; verify in
-  Chrome and Firefox; fall back to a `layout` override only if a browser picks core's). Logo and site name
+  Chrome and Firefox; fall back to a `layout` override only if a browser picks core's). (as built) When a
+  Steward favicon is set, the `layout` override removes core's six icon links from the head, so browsers only
+  see Steward's (if core's markup ever differs, nothing is removed). Logo and site name
   via a `header/title` template override and on the login page via `template:auth:login-form:before`.
   `<title>` uses the site name instead of "Kanboard" where core falls back to it (as built: a thin
   `Template/layout.php` override, since core's layout has no hook for the title).
