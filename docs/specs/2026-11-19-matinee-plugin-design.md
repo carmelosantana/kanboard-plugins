@@ -110,7 +110,9 @@ No Plex account is needed for viewers. Nothing has to be installed on the Plex s
 - `KeyStore` resolves the 32-byte root key.
   - When `MATINEE_KEY` (base64, 32 bytes after decoding) is set, it is used and `key_id = "env"`.
   - Otherwise `DATA_DIR/matinee/secret.key`, `key_id = "file"`.
-  - The key file is created atomically on first use (tmp + rename, 0600), and its directory with 0700.
+  - The key file is created on first use as §11 S12 describes (`flock`, `fopen 'x'`, chmod 0600 before the
+    write, re-read). Its directory is created with 0700. An existing directory that is a symlink, or is
+    group- or world-writable, is refused. A symlinked key file is refused too.
   - A malformed env key, or a key file of the wrong size, fails closed with an admin-visible notice. Matinee
     never generates a replacement over an existing bad file.
 - `Subkeys`: `sodium_crypto_kdf_derive_from_key(32, 1, "mtntoken", root)` for tokens and
@@ -374,7 +376,7 @@ place the gate is **PASS**. The phase that must land each one is in brackets.
   - Browse query parameters are allow-listed: start, size, and sort from an enum.
 - **S12 Low: key creation race and key ids** [P1]
   - The key file is created with `fopen(…, 'x')` under `flock`, then re-read, and the bytes on disk are used.
-  - `key_id` is the first 8 hex characters of `BLAKE2b(root, key "mtn-kid")`.
+  - `key_id` is the first 8 hex characters of `sodium_crypto_generichash("mtn-kid", root)`, a BLAKE2b keyed by the root. A 7-byte key would be invalid.
   - `KeyStore` exposes every configured key (env and file). Opening tries the row's `key_id`. A row sealed
     under a non-active key is re-sealed with the active key on the next successful open.
 - **S13 Low: refs and sections** [P2, P5]
