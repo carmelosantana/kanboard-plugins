@@ -8,17 +8,19 @@
 # runs ./testing/run-plugin-tests.sh <PluginName> with DB_DRIVER=mysql|postgres in a throwaway PHP container built
 # from the kb-suite dev image (stock Kanboard plus sodium; it has pdo_mysql and pdo_pgsql, which the host PHP may
 # lack) plus php84-tokenizer and opcache.save_comments=1 for PHPUnit. Both share an internal Docker network (no route out)
-# and are removed afterwards. Only testing/run-plugin-tests.sh (read-only), testing/kanboard-src (read-write: the
-# runner regenerates its bootstrap) and the plugin (read-only) are mounted: testing/.env and testing/git/*.env stay
-# on the host, which a preflight in the container checks before the suite runs. Exit code: the suite's (97: preflight).
+# and are removed afterwards. Only testing/run-plugin-tests.sh, testing/kanboard-src and the plugin are mounted, all
+# read-only (so is kanboard-src/.git: nothing in the container can plant a hook that later runs on the host). The
+# paths a run regenerates, kanboard-src/tests/plugin-bootstrap.php and PHPUnit's tests/.phpunit.result.cache, are
+# throwaway host files mounted over them. testing/.env and testing/git/*.env stay on the host, which a preflight in the
+# container checks before the suite runs. Exit code: the suite's (97: preflight).
 #
-# Env: KB_IMAGE (default kanboard-suite-kanboard:latest, the dev stack's image; build testing/Dockerfile.sodium to get it).
+# Env: KB_IMAGE (default: built here from testing/Dockerfile.sodium, whose base is pinned by digest).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PLUGIN="${1:-}"
 ENGINE="${2:-}"
-KB_IMAGE="${KB_IMAGE:-kanboard-suite-kanboard:latest}"
+KB_IMAGE="${KB_IMAGE:-}"
 MARIADB_IMAGE='mariadb:11.4@sha256:611a2fcc5fa7c6ceb8644c6f74b25ede004ff6c3a6b38c8f8c23d3bbf6c26430'
 POSTGRES_IMAGE='postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb'
 
@@ -31,9 +33,11 @@ id="realdb-$$-$RANDOM"
 net="$id-net"
 db="$id-db"
 password="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
+scratch="$(mktemp -d)"
 cleanup() {
   docker rm -f -v "$db" >/dev/null 2>&1 || true
   docker network rm "$net" >/dev/null 2>&1 || true
+  rm -rf "$scratch"
 }
 trap cleanup EXIT
 
@@ -57,6 +61,12 @@ done
 docker exec "$db" "${ready[@]}" >/dev/null
 echo "$ENGINE ready ($([[ "$ENGINE" == mariadb ]] && echo "$MARIADB_IMAGE" || echo "$POSTGRES_IMAGE")); running $PLUGIN with DB_DRIVER=${env[1]#DB_DRIVER=}"
 
+# The Kanboard-plus-sodium base, unless KB_IMAGE names one: built from stdin (no build context).
+if [[ -z "$KB_IMAGE" ]]; then
+  KB_IMAGE=realdb-kb-sodium:local
+  docker build -q -t "$KB_IMAGE" - < "${REPO_ROOT}/testing/Dockerfile.sodium" >/dev/null
+fi
+
 # PHPUnit needs ext-tokenizer, which the Kanboard image leaves out (Alpine package, same repository as php84-sodium),
 # and doc comments: the image sets opcache.save_comments=0, which hides @dataProvider from PHPUnit.
 php_image=realdb-php:local
@@ -66,15 +76,27 @@ RUN apk add --no-cache php84-tokenizer && printf 'opcache.save_comments=1\\n' > 
 DOCKERFILE
 
 # Preflight, inside the PHP container before the suite: no host secret is visible (testing/.env and testing/git/*.env
-# stay outside the mounts; only the existence test runs, nothing is read) and there is no default route (the network
-# is --internal: the suite reaches the database and nothing else). Exit 97 on a breach, before any test runs.
+# stay outside the mounts; only the existence test runs, nothing is read), there is no default route (the network
+# is --internal: the suite reaches the database and nothing else), and kanboard-src and its .git can't be written.
+# Exit 97 on a breach, before any test runs.
 preflight='for f in testing/.env testing/git; do if test -e "$f"; then echo "preflight: $f is visible in the container" >&2; exit 97; fi; done
 if awk '"'"'NR > 1 && $2 == "00000000" { found = 1 } END { exit !found }'"'"' /proc/net/route; then echo "preflight: the container has a default route (egress)" >&2; exit 97; fi
-echo "preflight: no testing/.env or testing/git, no default route"'
+for d in testing/kanboard-src testing/kanboard-src/.git; do if touch "$d/.realdb-write-probe" 2>/dev/null; then rm -f "$d/.realdb-write-probe"; echo "preflight: $d is writable" >&2; exit 97; fi; done
+echo "preflight: no testing/.env or testing/git, no default route, kanboard-src and its .git read-only"'
+
+# The read-only tree needs, on the host, the plugin's symlink and the mount points of the regenerated files.
+kb_src="${REPO_ROOT}/testing/kanboard-src"
+[[ -e "${kb_src}/plugins/${PLUGIN}" ]] || ln -s "${REPO_ROOT}/${PLUGIN}" "${kb_src}/plugins/${PLUGIN}"
+for f in plugin-bootstrap.php .phpunit.result.cache; do
+  [[ -e "${kb_src}/tests/$f" ]] || : > "${kb_src}/tests/$f"
+  : > "${scratch}/$f"
+done
 
 docker run --rm --network "$net" --user "$(id -u):$(id -g)" --entrypoint bash \
   -v "${REPO_ROOT}/testing/run-plugin-tests.sh:${REPO_ROOT}/testing/run-plugin-tests.sh:ro" \
-  -v "${REPO_ROOT}/testing/kanboard-src:${REPO_ROOT}/testing/kanboard-src:rw" \
+  -v "${kb_src}:${kb_src}:ro" \
+  -v "${scratch}/plugin-bootstrap.php:${kb_src}/tests/plugin-bootstrap.php:rw" \
+  -v "${scratch}/.phpunit.result.cache:${kb_src}/tests/.phpunit.result.cache:rw" \
   -v "${REPO_ROOT}/${PLUGIN}:${REPO_ROOT}/${PLUGIN}:ro" \
   -e HOME=/tmp "${env[@]}" -w "$REPO_ROOT" "$php_image" -c "$preflight"' && exec "$0" "$1"' \
   "${REPO_ROOT}/testing/run-plugin-tests.sh" "$PLUGIN"

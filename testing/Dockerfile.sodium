@@ -1,6 +1,5 @@
 # Dev image for kb-suite: stock Kanboard plus PHP's sodium extension, which Vault needs.
-# Base digest when this was written:
-#   kanboard/kanboard@sha256:f023ba2b1bd509d446cb3f59038e8f90613d53e1b93faec94bb4eba3071e611b
+# The base is pinned by digest (the tag alone could be re-pushed); the tag stays for readers.
 # The upgrade keeps every php84 package on one version, so the core and php84-sodium match.
-FROM kanboard/kanboard:v1.2.47
+FROM kanboard/kanboard:v1.2.47@sha256:f023ba2b1bd509d446cb3f59038e8f90613d53e1b93faec94bb4eba3071e611b
 RUN apk upgrade --no-cache php84 'php84-*' && apk add --no-cache php84-sodium
