@@ -40,7 +40,7 @@ The wayfinding map has the full table (18 rulings). The ones that shape the code
 | 9 | Own tables, three DB drivers. |
 | 10 | Scores: client-reported, server-bounded (`scoring.max`, integer, 5 s rate limit per user and game). |
 | 15 | Every signed-in user plays and sees all leaderboards; agent users are excluded from leaderboards. |
-| 16 | Saves: one JSON blob per user per game in `user_metadata`, ≤ 64 KB. |
+| 16 | Saves: one JSON blob per user per game, ≤ 64 KB, in a plugin table `lanparty_saves` (amended during build: core `user_has_metadata.value` is VARCHAR(255) on MySQL/Postgres). |
 
 ## Architecture
 
@@ -166,6 +166,10 @@ lanparty_scores
   level VARCHAR(32) NULL, seed VARCHAR(64) NULL, meta TEXT NULL, created_at INTEGER
   index (game_slug, score), index (user_id, game_slug)
 
+lanparty_saves
+  user_id FK users ON DELETE CASCADE, game_slug VARCHAR(32), data TEXT (MEDIUMTEXT on MySQL), updated_at INTEGER;
+  PK (user_id, game_slug)
+
 lanparty_rooms                 (phase 2)
   id PK, code CHAR(6) unique, game_slug, host_user_id, status ('open','playing','closed'),
   max_players, created_at, updated_at
@@ -208,7 +212,7 @@ Agents plugin is present, ordered, ties broken by the earlier `created_at`. `wee
   admin files; `..`, absolute paths and URL schemes are rejected.
 - Admin file uploads (engine data) go to `DATA_DIR/lanparty/<slug>/<file-id>`, served only to signed-in users
   through `FileController::get`, with the extension checked against the slot's `accept`.
-- Scores: integer only, `0 ≤ score ≤ scoring.max`, `level`/`seed` matched by `^[A-Za-z0-9_.-]{0,64}$`,
+- Scores: integer only, `0 ≤ score ≤ scoring.max`, `level` matched by `^[A-Za-z0-9_.-]{0,32}$` and `seed` by `^[A-Za-z0-9_.-]{0,64}$`,
   `meta` ≤ 1 KB valid JSON. Rate limit per user and game: 5 s (checked against the last row).
 - No game ever receives the CSRF token, session cookie or another user's data beyond leaderboard names.
 
