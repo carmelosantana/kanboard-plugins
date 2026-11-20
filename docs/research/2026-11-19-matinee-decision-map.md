@@ -262,3 +262,4 @@ browse and player layouts borrow from Veranda's design handoff, kept to plain CS
 - **Q7:** Should there also be an option for real Plex friend invites (plex.tv shared-server API, for people
   with Plex accounts)? I left it out of v1 because it needs everyone to have a Plex account and the API is
   unofficial.
+- **Q8:** Plex remote access often uses a custom forwarded port. Public addresses currently accept only 32400, 443 and 80. Should admins be able to allow extra public ports? This comes from the UrlGuard review, finding M5.
