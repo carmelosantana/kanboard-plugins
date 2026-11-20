@@ -195,7 +195,7 @@ async function newContext() {
 // Every attribute the password-manager rule cares about, per password-ish input on the page.
 const AUTOCOMPLETE = `[...document.querySelectorAll('input[type=password], form')].map((e) => ({
   tag: e.tagName.toLowerCase(), id: e.id || Object.keys(e.dataset).join(','), ac: e.getAttribute('autocomplete'),
-  pm: ['data-lpignore', 'data-1p-ignore', 'data-bwignore'].every((a) => e.hasAttribute(a)) }))`;
+  pm: e.getAttribute('data-lpignore') === 'true' && ['data-1p-ignore', 'data-bwignore'].every((a) => e.hasAttribute(a)) }))`;
 
 try {
   dropFixtures();
@@ -259,9 +259,15 @@ try {
   await a.go(page('VaultController', 'index'));
   check(JSON.stringify(await a.evaluate(AUTOCOMPLETE)) === JSON.stringify([
     { tag: 'form', id: 'vaultForm', ac: null, pm: false },
-    { tag: 'input', id: 'vault-new-passphrase', ac: 'new-password', pm: false },
-    { tag: 'input', id: 'vault-new-confirm', ac: 'new-password', pm: false },
-  ]), `enrol form: the passphrase inputs are new-password (${JSON.stringify(await a.evaluate(AUTOCOMPLETE))})`);
+    { tag: 'input', id: 'vault-new-passphrase', ac: 'off', pm: true },
+    { tag: 'input', id: 'vault-new-confirm', ac: 'off', pm: true },
+  ]), `enrol form (R70): the passphrase inputs are autocomplete=off with the 1p/lp/bw ignore hints (${JSON.stringify(await a.evaluate(AUTOCOMPLETE))})`);
+  // R70 changed only attributes: the T13 generator partial still fills both enrolment fields and shows the value.
+  await a.click('[data-vault-form="enrol"] [data-vault-action="generate"]');
+  await a.waitFor(`document.getElementById('vault-new-passphrase').value.split('-').length >= 6`, 'the generator filled the new passphrase');
+  const gen = await a.evaluate(`({ p: document.getElementById('vault-new-passphrase').value, c: document.getElementById('vault-new-confirm').value,
+    show: document.querySelector('[data-vault-gen-show]').textContent })`);
+  check(gen.p === gen.c && gen.p === gen.show, `enrol: the generator fills passphrase and confirmation and shows it (${gen.p.split('-').length} words)`);
   await a.evaluate(`(() => { document.getElementById('vault-new-passphrase').value = ${JSON.stringify(A.passphrase)};
     document.getElementById('vault-new-confirm').value = ${JSON.stringify(A.passphrase)};
     document.querySelector('[data-vault-form="enrol"] button[type="submit"]').click(); return true; })()`);
@@ -272,7 +278,7 @@ try {
   await a.waitFor(`(document.getElementById('vault-app') || {getAttribute: () => ''}).getAttribute('data-vault-state') === 'locked'`, 'A locked from the toolbar');
   check(Number(one('SELECT COUNT(*) AS n FROM vault_sessions WHERE user_id = ?', [A.id]).n) === 0, 'A: Lock removes the vault session');
   const lockedAc = await a.evaluate(AUTOCOMPLETE);
-  check(lockedAc.length === 2 && lockedAc[1].id === 'vault-passphrase' && lockedAc[1].ac === 'current-password', `unlock form: the passphrase input is current-password, as T11 designed (${JSON.stringify(lockedAc)})`);
+  check(lockedAc.length === 2 && lockedAc[1].id === 'vault-passphrase' && lockedAc[1].ac === 'off' && lockedAc[1].pm, `unlock form (R70): the passphrase input is autocomplete=off with the 1p/lp/bw ignore hints (${JSON.stringify(lockedAc)})`);
   await a.evaluate(`(() => { document.getElementById('vault-passphrase').value = 'not the passphrase at all';
     document.querySelector('[data-vault-form="unlock"] button[type="submit"]').click(); return true; })()`);
   await a.waitFor(`(document.querySelector('[data-vault-form="unlock"] .vault-error') || {}).textContent === 'Unlock failed.'`, 'wrong passphrase refused');
@@ -458,7 +464,7 @@ try {
   // ── Import, then export ──────────────────────────────────────────────────────────────────────────────────────
   const kpxc = KPXC.argon2id;
   await a.go(page('ImportController', 'index'));
-  check(JSON.stringify(await a.evaluate(AUTOCOMPLETE)) === JSON.stringify([{ tag: 'form', id: 'vaultImportForm', ac: 'off', pm: false }, { tag: 'input', id: 'vault-import-password', ac: 'off', pm: false }]), 'import: the KDBX password input is autocomplete=off');
+  check(JSON.stringify(await a.evaluate(AUTOCOMPLETE)) === JSON.stringify([{ tag: 'form', id: 'vaultImportForm', ac: 'off', pm: false }, { tag: 'input', id: 'vault-import-password', ac: 'off', pm: true }]), 'import (R70): the KDBX password input is autocomplete=off with the 1p/lp/bw ignore hints');
   await a.setFiles('[data-vault-import-file]', [join(FIXTURES, kpxc.file)]);
   await a.evaluate(`(() => { document.querySelector('[data-vault-import-password]').value = ${JSON.stringify(KDBX_PASSWORD)};
     document.querySelector('[data-vault-import-submit]').click(); return true; })()`);
@@ -498,7 +504,7 @@ try {
     return { st, ac, file, entries, started: downloads.length > n };
   };
   let ex = await exportRun(a, A, { passphrase: 'not my passphrase at all' });
-  check(JSON.stringify(ex.ac.map((x) => [x.id, x.ac])) === JSON.stringify([['vaultExportForm', 'off'], ['vault-export-passphrase', 'current-password'], ['vault-new-passphrase', 'new-password'], ['vault-new-confirm', 'new-password']]), `export: re-auth current-password, export password new-password, form off (${JSON.stringify(ex.ac.map((x) => [x.id, x.ac]))})`);
+  check(JSON.stringify(ex.ac.map((x) => [x.id, x.ac, x.pm])) === JSON.stringify([['vaultExportForm', 'off', false], ['vault-export-passphrase', 'off', true], ['vault-new-passphrase', 'off', true], ['vault-new-confirm', 'off', true]]), `export (R70): re-auth and export password inputs autocomplete=off with the 1p/lp/bw ignore hints, form off (${JSON.stringify(ex.ac.map((x) => [x.id, x.ac, x.pm]))})`);
   check(ex.st.bad && !ex.started && !ex.file, `export with a wrong passphrase: refused ("${ex.st.text}"), nothing downloaded`);
   ex = await exportRun(a, A, { passphrase: A.passphrase });
   const mine = ex.entries && ex.entries.find((e) => e.title === ENTRY.title);
