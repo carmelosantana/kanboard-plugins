@@ -467,15 +467,15 @@ Avatar menu → **Vault** (also in the dashboard sidebar). It's a full-width pag
 
 `vault_audit` is append-only: the plugin never updates rows and deletes them only through retention. Each action has an **allowlisted** set of columns. There is no free-form `detail_json`.
 
-**Columns:** `id, created_at, actor_user_id, actor_kind (human|agent|public|cli), action, object_type, object_id, share_hash, target_user_id, ip_trunc (IPv4 /24, IPv6 /48), ua_family (browser and OS major only), via (ui|api|cli), count (for batch actions)`.
+**Columns:** `id, created_at, actor_user_id, actor_kind (human|agent|public|cli|system), action, object_type, object_id, share_hash, target_user_id, ip_trunc (IPv4 /24, IPv6 /48), ua_family (browser and OS major only), via (ui|api|cli), count (for batch actions)`.
 
 **Actions:**
 
 | Area | Actions |
 |---|---|
-| Sessions | `enroll`, `unlock`, `unlock_failed`, `lock` |
+| Sessions | `enroll`, `unlock`, `unlock_failed`, `lock`, `unlock_refused` (addendum A1) |
 | Entries and groups | `read`, `create`, `update`, `delete` |
-| Access | `grant`, `revoke`, `rekey`, `rotate` |
+| Access | `grant`, `revoke`, `rekey`, `rotate`, `integrity_error` (addendum A1) |
 | Bulk | `import`, `export` |
 | One-time shares | `share_create`, `share_reveal`, `share_revoke`, `share_expire` |
 | Throttling | `rate_limited`, `bad_vault_key` |
@@ -488,9 +488,9 @@ Avatar menu → **Vault** (also in the dashboard sidebar). It's a full-width pag
 | Action | Also allowed (non-null) |
 |---|---|
 | `enroll`, `lock`, `hw_key_add`, `hw_key_remove`, `recovery_code_create` | `actor_user_id` |
-| `unlock`, `unlock_failed`, `recovery_used`, `hw_signcount` | `actor_user_id`, `ip_trunc`, `ua_family` |
+| `unlock`, `unlock_failed`, `unlock_refused`, `recovery_used`, `hw_signcount` | `actor_user_id`, `ip_trunc`, `ua_family` |
 | `read` | `actor_user_id`, `object_type`, `object_id`, `ip_trunc` |
-| `create`, `update`, `delete`, `rekey` | `actor_user_id`, `object_type`, `object_id` |
+| `create`, `update`, `delete`, `rekey`, `integrity_error` | `actor_user_id`, `object_type`, `object_id` |
 | `grant`, `revoke` | `actor_user_id`, `object_type`, `object_id`, `target_user_id` |
 | `rotate`, `import`, `export` | `actor_user_id`, `count` |
 | `share_create`, `share_revoke` | `actor_user_id`, `share_hash` |
@@ -660,6 +660,178 @@ TDD with PHPUnit in the dev stack (`testing/run-plugin-tests.sh`), always runnin
 - Rollback protection.
 - Per-project vaults: sharing is per user or agent.
 - Updating the MCP client (a follow-up in its own repo).
+
+## Addenda (as built)
+
+Where the implementation refines or departs from the sections above. Each item names the ruling it comes from
+(R*n*, recorded in the build ledger). Where an addendum and an earlier section disagree, the addendum is what was
+built.
+
+### A1. Audit
+
+- **`integrity_error`** (R37). Columns: `actor_user_id`, `object_type`, `object_id`. It records an object the
+  rotation sweep kept because its DEK opened but its payload or `crypto_v` check failed (R31 revised: "the DEK is
+  kept: the object stays old-gen and is reported as integrity_error, and finish stays refused"). Why: "an R31
+  integrity fault must be operator-visible", because "a silent integrity fault keeps sk1 in the bridge unseen".
+  Written at most once a day per object.
+- **`unlock_refused`** (R72). Columns: `actor_user_id`, `ip_trunc`, `ua_family`. It records an unlock, a
+  recovery-code use or an enrolment refused while a Steward switch-user session is active (A10). It is never a failed
+  guess: no streak, no back-off, no IP token.
+- **`actor_kind = system`** (R39): "a system action in a web request needs a distinct actor_kind", for example a
+  share expiry or a rate-limit summary written by the opportunistic purge.
+- **`rate_limited` is aggregated** (R39, R42): one row per bucket per 10-minute window, written once the window has
+  closed, so a guessing run can't flood `vault_audit`.
+- **`ua_family`** is the browser and its major version, and the OS **without** a version (R42), built only from a
+  fixed list of names.
+- R38: "A move is recorded as update. A failed recovery code is recorded as unlock_failed and counts toward the 5."
+
+### A2. Agent API reasons
+
+Besides the spec's reasons, the API answers `payload_invalid` and `payload_too_large` for a bad or oversized
+`fields` value, and `error` for an unexpected failure, which is logged by exception class only (R55: "The extra
+reasons payload_invalid and error are accepted").
+
+### A3. Schema versions 2–4
+
+The schema files carry four versions. The test suite migrates a fresh database through all four on SQLite, MariaDB
+11.4 and Postgres 17.
+
+- **v1 refinements.** R5: "provenance columns use `ON DELETE SET NULL` instead of cascading:
+  `vault_entries.created_by`, `vault_grants.granted_by`, `vault_audit.actor_user_id`/`target_user_id`." Ownership
+  columns keep the cascade. R8: SQLite surrogate keys use `AUTOINCREMENT`, so ids are never reused.
+- **v2** (R26, R35): a principal outlives its Kanboard user row. `vault_principals.user_id` loses its FK to `users`;
+  a new `live_user_id` references `users` `ON DELETE SET NULL`; `vault_grants.grantee_id` and
+  `vault_keys.principal_id` cascade off `vault_principals`. The purge finds principals whose user is gone, queues a
+  re-key for every object they had a key or grant on, then deletes the principal. Why (R26): "Kanboard has no
+  user-removal hook", and a cascade off `users` would delete keys without queueing re-keys. v2 also adds
+  `vault_meta.org_pk` (the org public key lives on the lock row, never in settings), `vault_meta.last_purge_at`, and
+  `vault_principals.rotate_requested` and `notices`.
+- **v3** (R39, R32): `actor_kind` gains `system`; `vault_rotations` keeps the sweep cursor (`sweep_type`,
+  `sweep_id`).
+- **v4** (R56): `vault_share_reservations.share_expires_at` (the expiry is in the share's AD, so finalising stores
+  exactly the reserved one); `vault_shares.crypto_v`; on MySQL the share ciphertext becomes `MEDIUMTEXT` (a 64 KB
+  payload is about 87 KB in base64).
+
+### A4. KDF parameters
+
+| Use | Parameters |
+|---|---|
+| Vault wraps (server, libsodium) | Argon2id, `ops = 3`, `mem = 64 MiB`, a 16-byte salt per wrap (as specified). |
+| One-time-link passphrase (browser, R59) | "Argon2id t3, m64MiB, p1, a 32-byte output, an empty HKDF salt, NFC passphrases"; the AD field types are pinned by a PHP test-vector file. |
+| KeePassXC export (browser) | KDBX 4.0, Argon2id with 64 MiB, 8 iterations and 2 lanes, ChaCha20, GZip. About 7 s for 10,000 entries. |
+
+### A5. KeePassXC import
+
+- **YubiKey files** (R67): "yubikey_cr is detected at open time (an invalid_key on a CR-scheme file shows the
+  YubiKey message and sends nothing), because KeePassXC writes no header marker".
+- **Argon2 timeout** (R66): one Argon2 job may run for 120 s, then its worker is terminated. It fails closed.
+- **Decompression cap** (R67): kdbxweb patch 04 caps the decompressed size at 256 MiB and stops a gzip stream that
+  inflates past its declared size. A legitimate database larger than that, decompressed, can't be imported.
+- **File size** (R67): "50 MB is read as 50 MiB."
+- R67: the 20,000-entry limit "may overshoot by one batch under parallel requests, which is acceptable (it's a DoS
+  bound, and per-batch and per-entry limits still hold)". Group notes and icons are dropped and reported.
+- kdbxweb carries five local patches, not three: verify the final HMAC block (01), keep tabs (02), zero keys on a
+  failed load (03), the decompression cap (04), and zero the save path's keys (05). Each is in `VENDOR.md` with a test.
+
+### A6. KeePassXC export
+
+- Export is lossy in three documented ways: U+FFFE and U+FFFF become U+FFFD; a value holding a control character
+  other than tab and LF (or CR) is written protected so its bytes survive; tags are joined by `;`, so a tag holding
+  `,`, `;` or `:` splits on re-import.
+- Cancel can't recall the export POST, so the server still runs and audits the attempted export.
+
+### A7. Hardware keys
+
+- **signCount** (R60): "signCount uses the WebAuthn standard rule (either value non-zero means new must be
+  greater), which is stricter than the spec's wording."
+- **The nine design decisions** (R62, from the T20 build):
+  1. Challenge purposes: `register`, `ceremony` (any assertion inside an unlocked ceremony), `unlock` (the locked
+     page). A user may hold up to the key maximum plus two open challenges per purpose; expired ones are deleted at
+     issue and by the purge.
+  2. A challenge is consumed by one `DELETE … WHERE user_id AND purpose AND hash AND expires_at > now` in the same
+     exclusive transaction as the verification, which commits even when verification fails, so a failed attempt
+     burns it.
+  3. `prf_salt = BLAKE2b-256(enc("prf_salt", register challenge))`: the server chooses it and stores nothing between
+     challenge and registration.
+  4. The credential id is stored as base64url of the `authData` id (the wrap AD carries that text; the KEK takes the
+     raw bytes). The client's claimed id must equal it.
+  5. Registration is a create, then an assertion by the new key (most keys return no PRF output at create), plus
+     existing keys: the second key needs the first key's fresh assertion; a third or later key needs one existing key
+     to prove the passphrase. The stored sign count is the post-assertion count.
+  6. "Rotate with my keys", and a passphrase change for key users, **require every registered key**; a missing one
+     is `rotation_needs_factors` (remove it first), rather than "removed after the user confirms". A fail-closed
+     simplification of *Key rotation*.
+  7. Removal: three or more keys → another key's assertion only; two to one → also the passphrase, proved with the
+     remaining key, and a bare `passphrase` wrap is restored; the last key → the passphrase alone. Never below two
+     while keys are required.
+  8. The relying-party binding also refuses when the request's Host isn't the Application URL's host
+     (`rp_id_mismatch`): the browser would fail the ceremony anyway, and this says why.
+  9. UV: the browser asks for `userVerification: 'preferred'`; the server requires UP only.
+- R62: "A PIN change on a key alters its PRF output, which fails closed"; the docs say to keep the second key.
+  "WebAuthn needs JS, so no native fallback on the key page or the R54-with-keys path is accepted."
+- For key users, a queued rotation (for example after the policy is lowered) runs at the next "Rotate with my keys"
+  ceremony, not at unlock.
+- R65: "A wrong PRF at enrolment or rotation counts as a failed guess, the same as unlock." Without JS, Enter on the
+  two-key unlock form submits natively and counts as a failed guess.
+- **Proxies and Cloudflare Tunnel** (R63): "rpBinding's Host check may refuse a proxy that rewrites Host. cloudflared
+  forwards the original Host by default unless httpHostHeader is set." The README documents it.
+
+### A8. Permissions and recovery
+
+- **R47:** "Grants to agents are Read only, enforced in GrantModel::grant". This matches "Read + own writes": agents
+  read what's shared and write only their own objects. A roster agent can't enrol as a human.
+- **R50:** "renaming or editing a group's metadata requires the owner. Decision 10 defines Edit as 'edit entries and
+  add entries', nothing more, so an Edit grantee on a group may edit and add entries inside it but not rename the
+  group."
+- **R54:** "vault/recovery-code requires the current passphrase through the same throttled check as the passphrase
+  change", plus a fresh hardware-key assertion for users with keys. Why: "a session alone must not escalate to a
+  persistent factor".
+- **R9:** the recovery code's two check characters are the top 10 bits of CRC-16/T10-DIF (polynomial `0x8BB7`). An
+  exhaustive test shows it catches every single substitution and every adjacent transposition.
+- **R36:** a passphrase change re-seals the org wrap to the new key and drops the personal recovery wrap, with a
+  one-time notice to make a new code.
+- **R51:** the group-3 confirmation of a new recovery code runs in the browser only. Checking it on the server would
+  mean storing part of the code, which weakens it offline; the risk is availability only.
+- **R33:** unlock succeeds as soon as a pending rotation has produced and checked the new key; the rest of the
+  rotation continues in batches on later requests.
+
+### A9. Browser inputs (R70)
+
+"Every input that takes the vault passphrase (unlock, export re-auth, enrolment, passphrase change, recovery) uses
+autocomplete="off" plus data-1p-ignore, data-lpignore="true" and data-bwignore, and the E2E asserts exactly that. The
+export password and share passphrases follow the same rule." Why: "a vault passphrase stored in the browser's
+password manager widens the leaked-browser-profile path the threat model doesn't need". Best effort only: a browser
+may still offer to save.
+
+### A10. Transport, sessions and Steward
+
+- **R20:** the plain-HTTP localhost exception needs both the environment variable `VAULT_DEV_INSECURE_LOCALHOST=1` and
+  an exact localhost Host. The Host header alone isn't enough, because it fails open behind a localhost proxy.
+- **R41:** Vault's HTTPS gate honours `X-Forwarded-Proto` only when `REMOTE_ADDR` is inside
+  `vault_trusted_proxy_cidrs`, because Kanboard's own `Request::isHTTPS()` trusts it from any client.
+- **R71** (the "other host or port" requirement): "another localhost port unlocking normally is acceptable. Cookies
+  aren't port-scoped, and WebAuthn origin pinning (rp_id_mismatch, T20) is the pinning that matters. The RF1
+  requirement that counts is 'no silent lock-out', and that is met."
+- **R72** (Steward): when the Steward plugin's switch-user session is active (its `stewardSwitching` service reports
+  `isSwitched()`), Vault refuses to unlock (passphrase or hardware key), to use a recovery code and to enrol, before
+  any Argon2, throttle or secret, with error `switched`, audited as `unlock_refused`. An already-unlocked session in
+  that browser locks on its next Vault request. Without Steward nothing changes; a Steward service that throws counts
+  as switched (fail closed). Other devices' sessions stay unlocked, since they belong to the real user.
+- A disabled user's vault sessions are deleted by the purge, because Kanboard ends a disabled user's session without
+  a logout event.
+
+### A11. One-time shares
+
+- R57: "Token-bucket semantics for 20/10min and 200/day (about 400 in a rolling 24 h) match the unlock buckets." "The
+  public reveal taking the install-wide lock is an availability trade-off outside the threat model."
+- R58/R59: share labels are re-sealed to the new key during a rotation; mid-rotation a label reads as unavailable
+  (fails closed).
+
+### A12. Browser E2E (R68, R69)
+
+The browser tests drive headless Chrome over the raw DevTools protocol with Node's built-in WebSocket, not
+Playwright. Why (R68): "Carmelo prefers zero dependencies and the supply-chain policy; the existing pattern works."
+So the E2E is Chromium only (R69); Firefox- and WebKit-only bugs are a known gap, named in the README.
 
 ## Review log
 
