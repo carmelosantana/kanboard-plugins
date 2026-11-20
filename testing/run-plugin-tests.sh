@@ -15,6 +15,7 @@
 #   PLUGINS_ROOT  where plugin checkouts live   (default: the repo root)
 #   KB_SRC        the Kanboard source checkout  (default: testing/kanboard-src)
 #   LOG_DIR       --all writes one log per suite here (default: $KB_SRC/test-logs)
+#   DB_DRIVER     sqlite (default), mysql or postgres: the Kanboard units config to use
 #
 # One-time local setup:
 #   git clone --depth 1 --branch v1.2.47 https://github.com/kanboard/kanboard.git testing/kanboard-src
@@ -28,7 +29,9 @@ KB_SRC="${KB_SRC:-${REPO_ROOT}/testing/kanboard-src}"
 PLUGINS_DIR="${KB_SRC}/plugins"
 BOOTSTRAP="${KB_SRC}/tests/plugin-bootstrap.php"
 PHPUNIT="${KB_SRC}/vendor/bin/phpunit"
-CONFIG="${KB_SRC}/tests/units.sqlite.xml"
+# DB_DRIVER picks Kanboard's units.<driver>.xml (sqlite, mysql or postgres); Kanboard reads DB_HOSTNAME, DB_USERNAME
+# and DB_PASSWORD from the environment too. testing/run-realdb-tests.sh runs a suite on MariaDB or Postgres this way.
+CONFIG="${KB_SRC}/tests/units.${DB_DRIVER:-sqlite}.xml"
 LOG_DIR="${LOG_DIR:-${KB_SRC}/test-logs}"
 
 discover_plugins() {
