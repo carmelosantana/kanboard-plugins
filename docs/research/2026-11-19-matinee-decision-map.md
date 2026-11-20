@@ -118,6 +118,7 @@ decrypt without anyone's passphrase. Vault's design is the wrong shape for that.
   media and art paths, and only for paths that pass Veranda's regexes, with an allow-listed content type.
 - Loopback is "private", so a Plex on the Kanboard host needs the LAN opt-in.
 **Why:** Any user may add a server URL (R3), and the server makes the request.
+**Superseded in part by the spec security gate (S1):** a blanket LAN opt-in is replaced by an admin list of private targets (host or CIDR plus port). Connect errors are generic, and attempts are rate-limited.
 **Cost if wrong:** If the default (LAN off) is too strict for Carmelo's home Plex, an admin ticks one box.
 That is the right default for a public Kanboard.
 
