@@ -61,8 +61,8 @@ Browser                                                     Kanboard (PHP-FPM)
 ```
 
 - **Routes** are registered with `$this->route->addRoute()`; links use `$this->helper->url->href()`.
-- **JSON endpoints** check the session and a CSRF token sent as a header by the host bridge (the game never
-  sees it). Responses are `application/json` through `$this->response->json()`.
+- **JSON endpoints** check the session and Kanboard's reusable CSRF token, which the host bridge posts as
+  `csrf_token` (`checkReusableCSRFParam()`, as Presence does). The game never sees it. Responses are `application/json` through `$this->response->json()`.
 - **Assets:** `lanparty.css` and `lanparty.js`/`lanparty-host.js` are injected only on LanParty routes
   (controller layout), never sitewide, except a tiny header-link icon that needs no asset.
 
